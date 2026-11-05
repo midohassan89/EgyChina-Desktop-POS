@@ -1,0 +1,67 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:EgyChina.Pos.App.ViewModels"
+        x:Class="EgyChina.Pos.App.Views.CustomerWindow"
+        x:DataType="vm:PosSession"
+        Title="شاشة العميل — ايجي شاينا"
+        FlowDirection="RightToLeft"
+        WindowStartupLocation="Manual"
+        Background="#101614"
+        RequestedThemeVariant="Dark"
+        MinWidth="420"
+        MinHeight="520">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <StackPanel Margin="32,28,32,12" Spacing="4">
+      <TextBlock Text="ايجي شاينا ماركت" FontSize="36" FontWeight="Bold" Foreground="#F6F1E4" />
+      <TextBlock Text="سوق العبور" FontSize="18" Foreground="#E3C57A" />
+      <TextBlock Text="{Binding DisplayBanner}"
+                 FontSize="14"
+                 Foreground="#8FA399"
+                 TextWrapping="Wrap"
+                 IsVisible="{Binding HasDisplayBanner}"
+                 Margin="0,8,0,0" />
+    </StackPanel>
+
+    <Panel Grid.Row="1" Margin="32,8">
+      <TextBlock Text="في انتظار المسح"
+                 FontSize="32"
+                 Foreground="#8FA399"
+                 HorizontalAlignment="Center"
+                 VerticalAlignment="Center"
+                 IsVisible="{Binding IsCartEmpty}" />
+      <ScrollViewer HorizontalScrollBarVisibility="Disabled" IsVisible="{Binding HasLines}">
+        <ItemsControl ItemsSource="{Binding Lines}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:CartLine">
+              <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" Margin="0,0,0,16">
+                <TextBlock Text="{Binding NameAr}" FontSize="26" Foreground="#F6F1E4" TextWrapping="Wrap" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding LineTotalText}"
+                           FontSize="26"
+                           Foreground="#E3C57A"
+                           Margin="16,0,0,0" />
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="12" Margin="0,4,0,0">
+                  <TextBlock Text="{Binding NameZh}" FontSize="16" Foreground="#8FA399" FlowDirection="LeftToRight"
+                             IsVisible="{Binding HasNameZh}" />
+                  <TextBlock Text="{Binding QtyText}" FontSize="16" Foreground="#8FA399" FlowDirection="LeftToRight" />
+                </StackPanel>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Panel>
+
+    <Border Grid.Row="2" Background="#0B1210" Padding="32,18">
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Text="الإجمالي" FontSize="24" Foreground="#F6F1E4" VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1"
+                   Text="{Binding TotalText}"
+                   FontSize="48"
+                   FontWeight="Bold"
+                   Foreground="#E3C57A" />
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

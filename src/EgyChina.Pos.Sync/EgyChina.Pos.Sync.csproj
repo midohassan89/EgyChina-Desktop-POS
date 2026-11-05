@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>EgyChina.Pos.Sync</RootNamespace>
+    <Description>Placeholder outbox worker. Probes health only; does not post sales.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EgyChina.Pos.Core\EgyChina.Pos.Core.csproj" />
+    <ProjectReference Include="..\EgyChina.Pos.Data\EgyChina.Pos.Data.csproj" />
+  </ItemGroup>
+</Project>

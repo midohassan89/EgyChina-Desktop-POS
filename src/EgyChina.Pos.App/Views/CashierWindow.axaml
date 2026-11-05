@@ -1,0 +1,158 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:EgyChina.Pos.App.ViewModels"
+        xmlns:core="using:EgyChina.Pos.Core"
+        x:Class="EgyChina.Pos.App.Views.CashierWindow"
+        x:DataType="vm:PosSession"
+        x:Name="CashierRoot"
+        Title="ايجي شاينا — نقطة البيع"
+        FlowDirection="RightToLeft"
+        WindowStartupLocation="Manual"
+        Background="#F3F0E8"
+        MinWidth="880"
+        MinHeight="640">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+    <Border Grid.Row="0" Background="#12382F" Padding="18,12">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Spacing="2">
+          <TextBlock Text="ايجي شاينا ماركت" FontSize="22" FontWeight="Bold" Foreground="#F6F1E4" />
+          <TextBlock Text="سوق العبور  ·  نقطة البيع" FontSize="13" Foreground="#D5C7A4" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Left" MaxWidth="460">
+          <TextBlock Text="{Binding ClockText}" FontSize="20" FontWeight="SemiBold" Foreground="#F6F1E4"
+                     FlowDirection="LeftToRight" HorizontalAlignment="Left" />
+          <TextBlock Text="{Binding OnlineText}" Foreground="#E3C57A" FontSize="13" />
+          <TextBlock Text="{Binding SyncMessage}" Foreground="#F6F1E4" FontSize="13" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding OutboxCaption}" Foreground="#D5C7A4" FontSize="12" />
+          <TextBlock Text="{Binding ScreenModeText}" Foreground="#D5C7A4" FontSize="12" TextWrapping="Wrap" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Row="1" Margin="12" ColumnDefinitions="1.45*,12,*">
+      <DockPanel Grid.Column="0">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
+          <TextBox x:Name="BarcodeBox"
+                   Grid.Column="0"
+                   Text="{Binding Barcode}"
+                   PlaceholderText="امسح الباركود ثم Enter"
+                   FontSize="20"
+                   MinHeight="48"
+                   KeyDown="OnBarcodeKeyDown" />
+          <Button Grid.Column="2"
+                  Content="إدخال"
+                  MinWidth="96"
+                  Click="OnBarcodeSubmit" />
+        </Grid>
+        <TextBlock DockPanel.Dock="Top" Text="{Binding ScanHint}" Margin="0,0,0,8" Foreground="#3E4A3A" TextWrapping="Wrap" />
+        <TextBox DockPanel.Dock="Top"
+                 Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+                 PlaceholderText="بحث بالاسم أو الباركود"
+                 MinHeight="44"
+                 Margin="0,0,0,8" />
+        <TextBlock DockPanel.Dock="Top"
+                   Text="لا توجد أصناف مطابقة"
+                   IsVisible="{Binding HasNoSearchResults}"
+                   Margin="0,12,0,0"
+                   Foreground="#6E675C" />
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+          <ItemsControl ItemsSource="{Binding VisibleProducts}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="core:CatalogProduct">
+                <Border Width="230"
+                        Margin="0,0,8,8"
+                        Padding="12,10"
+                        Background="#FFFcfaf4"
+                        BorderBrush="#DDD6C8"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Cursor="Hand"
+                        Tapped="OnProductTapped">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="{Binding NameAr}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#1C1A16" />
+                    <TextBlock Text="{Binding NameZh}" FontSize="13" Foreground="#6E675C" FlowDirection="LeftToRight"
+                               IsVisible="{Binding HasNameZh}" />
+                    <TextBlock Text="{Binding PriceEgpText}" FontSize="16" FontWeight="Bold" Foreground="#12382F" />
+                    <TextBlock Text="{Binding Barcode}" FontSize="12" Foreground="#8A8172" FlowDirection="LeftToRight" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </DockPanel>
+
+      <Border Grid.Column="2" Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="12" Padding="12">
+        <DockPanel>
+          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+            <TextBlock Text="السلة" FontSize="20" FontWeight="Bold" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding LineCountText}" VerticalAlignment="Center" Foreground="#6E675C" />
+          </Grid>
+          <Button DockPanel.Dock="Bottom"
+                  Content="تفريغ السلة"
+                  Command="{Binding ClearCartCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  Margin="0,8,0,0" />
+          <TextBlock DockPanel.Dock="Top"
+                     Text="السلة فارغة"
+                     IsVisible="{Binding IsCartEmpty}"
+                     Margin="0,24,0,0"
+                     HorizontalAlignment="Center"
+                     Foreground="#8A8172" />
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding Lines}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:CartLine">
+                  <Border BorderBrush="#E6E0D4" BorderThickness="0,0,0,1" Padding="0,8">
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                      <TextBlock Text="{Binding NameAr}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                      <TextBlock Grid.Column="1" Text="{Binding LineTotalText}" FontWeight="SemiBold" />
+                      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0" FlowDirection="LeftToRight">
+                        <Button Content="-" Command="{Binding DecrementCommand}" MinWidth="44" Padding="0" />
+                        <TextBlock Text="{Binding QtyText}" VerticalAlignment="Center" MinWidth="36" HorizontalAlignment="Center" />
+                        <Button Content="+" Command="{Binding IncrementCommand}" MinWidth="44" Padding="0" />
+                      </StackPanel>
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+    </Grid>
+
+    <Border Grid.Row="2" Background="#E7E1D4" Padding="16,10">
+      <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+          <StackPanel Spacing="2" VerticalAlignment="Center">
+            <TextBlock Text="الإجمالي" Foreground="#6E675C" FontSize="13" />
+            <TextBlock Text="{Binding TotalText}" FontSize="32" FontWeight="Bold" Foreground="#12382F" />
+          </StackPanel>
+          <Button Grid.Column="2"
+                  Content="شاشة العميل"
+                  Command="{Binding ShowCustomerDisplayCommand}"
+                  Margin="0,0,8,0" />
+          <Button Grid.Column="3"
+                  Content="إتمام الدفع"
+                  IsEnabled="False"
+                  MinWidth="160"
+                  Background="#12382F"
+                  Foreground="#F6F1E4" />
+        </Grid>
+        <StackPanel Grid.Row="1" Spacing="2">
+          <TextBlock Text="{Binding ShellNotice}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#6E675C" />
+          <TextBlock Text="{Binding DatabasePath}" FontSize="11" Foreground="#8A8172" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

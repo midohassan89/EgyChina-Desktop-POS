@@ -4,9 +4,9 @@ using EgyChina.Pos.Data;
 namespace EgyChina.Pos.Sync;
 
 /// <summary>
-/// Background tick for the outbox. This build never POSTs a sale.
-/// With no <see cref="SyncOptions.BaseAddress"/> it only records that the device API is not configured.
-/// With a base address it GETs <c>health</c> and stores the status code.
+/// Background tick. Posts pending sales to the live <c>/api/checkout</c> route only when the
+/// verified gates are set: Auth.js cookie, money scale, and payment-method string.
+/// Anything less stays local. A sale is marked synced only after a full 2xx response.
 /// </summary>
 public sealed class SyncWorker : IAsyncDisposable
 {
@@ -63,35 +63,46 @@ public sealed class SyncWorker : IAsyncDisposable
 
     public async Task TickAsync(CancellationToken cancellationToken)
     {
-        var pending = _database.CountPendingOutbox();
-        if (_options.BaseAddress is null || _http is null)
+        var block = _options.TransmissionBlock();
+        if (block is not null || _http is null || _options.BaseAddress is null || _options.SessionCookie is null)
         {
-            _database.WriteCursor(CursorStream, NotConfiguredCursor, null);
-            _status.Update(false, "المزامنة المحلية تعمل. عنوان الخادم غير مضبوط.", pending);
+            var pending = _database.CountPendingOutbox();
+            var (cursor, message) = block switch
+            {
+                "auth-missing" => ("auth-missing", "المزامنة تنتظر جلسة Auth.js. لا يُرسل بيع."),
+                "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
+                "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
+                _ => (NotConfiguredCursor, "المزامنة المحلية تعمل. عنوان الخادم غير مضبوط."),
+            };
+            _database.WriteCursor(CursorStream, cursor, null);
+            _status.Update(false, message, pending);
             return;
         }
 
+        var sync = new SaleOutboxSync(_database, new ErpPosClient(_options.BaseAddress, _options.SessionCookie, _http), _options);
+        SyncTickResult result;
         try
         {
-            using var response = await _http.GetAsync(HealthUri(_options.BaseAddress), cancellationToken)
-                .ConfigureAwait(false);
-            var code = (int)response.StatusCode;
-            _database.WriteCursor(CursorStream, $"http-{code}", response.IsSuccessStatusCode ? null : $"HTTP {code}");
-            var message = response.IsSuccessStatusCode
-                ? "الخادم يستجيب."
-                : $"الخادم رد برقم {code}. لا يُرسل بيع في هذه النسخة.";
-            _status.Update(response.IsSuccessStatusCode, message, pending);
+            result = await sync.RunAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+
+        var left = result.Pending >= 0 ? result.Pending : _database.CountPendingOutbox();
+        var online = result.Code is "idle";
+        var text = result.Code switch
         {
-            PosLog.Error("sync health probe failed", ex);
-            _database.WriteCursor(CursorStream, "unreachable", ex.Message);
-            _status.Update(false, "تعذر الوصول إلى خادم المزامنة.", pending);
-        }
+            "unauthorized" => "الخادم رد 401. المبيعات ما زالت على هذا الجهاز.",
+            "transport" => "انقطع الرد قبل تأكيد القبول. البيع ما زال في صندوق الصادر.",
+            "catalog-rejected" => "تعذر قراءة الأصناف من /api/products. لم يُقبل بيع.",
+            "idle" when result.Accepted > 0 => "قُبلت مبيعات على الخادم دون تكرار محلي.",
+            "idle" when left == 0 => "لا توجد مبيعات بانتظار الإرسال.",
+            _ => "صندوق الصادر ينتظر رقم صنف من الـ ERP أو رداً مكتملاً.",
+        };
+        _database.WriteCursor(CursorStream, result.Code, result.Detail);
+        _status.Update(online, text, left);
     }
 
     public async ValueTask DisposeAsync()
@@ -118,12 +129,12 @@ public sealed class SyncWorker : IAsyncDisposable
         _cts?.Dispose();
     }
 
-    public static Uri HealthUri(Uri baseAddress)
+    public static Uri CheckoutUri(Uri baseAddress)
     {
         var text = baseAddress.ToString();
         if (!text.EndsWith('/'))
             text += "/";
-        return new Uri(new Uri(text, UriKind.Absolute), "health");
+        return new Uri(new Uri(text, UriKind.Absolute), "api/checkout");
     }
 
     private async Task Loop(CancellationToken cancellationToken)

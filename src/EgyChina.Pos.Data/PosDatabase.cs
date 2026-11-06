@@ -61,14 +61,15 @@ public sealed class PosDatabase
             var version = ScalarLong(connection, "SELECT COALESCE(MAX(version), 0) FROM schema_migration");
             if (version < 1)
             {
-                ApplyMigrationScript(connection);
-                using var mark = connection.CreateCommand();
-                mark.CommandText = """
-                    INSERT INTO schema_migration (version, name, applied_at)
-                    VALUES (1, 'init', $at);
-                    """;
-                mark.Parameters.AddWithValue("$at", Now());
-                mark.ExecuteNonQuery();
+                ApplyMigrationScript(connection, "001_init.sql");
+                MarkMigration(connection, 1, "init");
+                version = 1;
+            }
+
+            if (version < 2)
+            {
+                ApplyMigrationScript(connection, "002_erp_product_link.sql");
+                MarkMigration(connection, 2, "erp-product-link");
             }
 
             EnsureTerminal(connection);
@@ -161,8 +162,220 @@ public sealed class PosDatabase
         lock (_gate)
         {
             using var connection = Open();
-            return (int)ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'pending'");
+            return (int)ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status IN ('pending', 'inflight')");
         }
+    }
+
+    public void RecoverInflightOutbox()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            Exec(connection, "UPDATE outbox SET status = 'pending' WHERE status = 'inflight'");
+        }
+    }
+
+    public IReadOnlyList<PendingOutboxRow> ListPendingSales(int limit)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, aggregate_id, event_type, payload_json, attempt_count
+                FROM outbox
+                WHERE status = 'pending' AND event_type = 'SaleCompleted'
+                ORDER BY created_at
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$limit", limit);
+            using var reader = command.ExecuteReader();
+            var rows = new List<PendingOutboxRow>();
+            while (reader.Read())
+            {
+                rows.Add(new PendingOutboxRow(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.GetString(3),
+                    reader.GetInt32(4)));
+            }
+
+            return rows;
+        }
+    }
+
+    public bool MarkOutboxInflight(string outboxId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE outbox
+                SET status = 'inflight'
+                WHERE id = $id AND status = 'pending'
+                """;
+            command.Parameters.AddWithValue("$id", outboxId);
+            return command.ExecuteNonQuery() == 1;
+        }
+    }
+
+    public void RecordOutboxFailure(string outboxId, string error)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE outbox
+                SET status = 'pending',
+                    attempt_count = attempt_count + 1,
+                    last_error = $error,
+                    next_attempt_at = $now
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$id", outboxId);
+            command.Parameters.AddWithValue("$error", error);
+            command.Parameters.AddWithValue("$now", Now());
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Acknowledges one sale only after the ERP returned a completed success response.
+    /// Receipt totals are not rewritten.
+    /// </summary>
+    public void MarkSaleAccepted(string outboxId, string saleId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            using (var outbox = connection.CreateCommand())
+            {
+                outbox.CommandText = """
+                    UPDATE outbox
+                    SET status = 'done', last_error = NULL
+                    WHERE id = $id AND status = 'inflight'
+                    """;
+                outbox.Parameters.AddWithValue("$id", outboxId);
+                if (outbox.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("Outbox row was not in flight.");
+            }
+
+            using (var sale = connection.CreateCommand())
+            {
+                sale.CommandText = """
+                    UPDATE sale
+                    SET sync_status = 'synced'
+                    WHERE id = $id
+                    """;
+                sale.Parameters.AddWithValue("$id", saleId);
+                sale.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+    }
+
+    public string? GetSaleCompletedAt(string saleId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT completed_at FROM sale WHERE id = $id";
+            command.Parameters.AddWithValue("$id", saleId);
+            return command.ExecuteScalar() as string;
+        }
+    }
+
+    public long? TryGetErpNumericId(string localProductId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT erp_numeric_id FROM product WHERE id = $id";
+            command.Parameters.AddWithValue("$id", localProductId);
+            var value = command.ExecuteScalar();
+            return value is long number ? number : null;
+        }
+    }
+
+    public void LinkErpNumericId(string localProductId, long erpNumericId, string? prismaId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE product
+                SET erp_numeric_id = $erp, prisma_id = COALESCE($prisma, prisma_id)
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$erp", erpNumericId);
+            command.Parameters.AddWithValue("$prisma", (object?)prismaId ?? DBNull.Value);
+            command.Parameters.AddWithValue("$id", localProductId);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Applies a GET /api/products body. Links sku to the numeric id. Does not change shelf prices.
+    /// </summary>
+    public int LinkCatalogFromErpJson(string json)
+    {
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var root = document.RootElement;
+        var linked = 0;
+        if (root.TryGetProperty("products", out var products) && products.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var product in products.EnumerateArray())
+            {
+                if (!product.TryGetProperty("sku", out var skuNode) || skuNode.ValueKind != System.Text.Json.JsonValueKind.String)
+                    continue;
+                if (!product.TryGetProperty("id", out var idNode) || idNode.ValueKind != System.Text.Json.JsonValueKind.Number || !idNode.TryGetInt64(out var numericId) || numericId <= 0)
+                    continue;
+                var prisma = product.TryGetProperty("prismaId", out var prismaNode) && prismaNode.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? prismaNode.GetString()
+                    : null;
+                lock (_gate)
+                {
+                    using var connection = Open();
+                    using var command = connection.CreateCommand();
+                    command.CommandText = """
+                        UPDATE product
+                        SET erp_numeric_id = $erp, prisma_id = COALESCE($prisma, prisma_id)
+                        WHERE sku = $sku
+                        """;
+                    command.Parameters.AddWithValue("$erp", numericId);
+                    command.Parameters.AddWithValue("$prisma", (object?)prisma ?? DBNull.Value);
+                    command.Parameters.AddWithValue("$sku", skuNode.GetString());
+                    linked += command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        if (root.TryGetProperty("removedPrismaIds", out var removed) && removed.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var item in removed.EnumerateArray())
+            {
+                if (item.ValueKind != System.Text.Json.JsonValueKind.String)
+                    continue;
+                lock (_gate)
+                {
+                    using var connection = Open();
+                    using var command = connection.CreateCommand();
+                    command.CommandText = "UPDATE product SET is_active = 0 WHERE prisma_id = $id";
+                    command.Parameters.AddWithValue("$id", item.GetString());
+                    command.ExecuteNonQuery();
+                }
+            }
+        }
+
+        return linked;
     }
 
     public void WriteCursor(string stream, string? cursor, string? error)
@@ -332,7 +545,7 @@ public sealed class PosDatabase
             }
 
             var idempotencyKey = $"{terminalId}:sale:{saleId}";
-            var payload = BuildSalePayload(saleId, receiptNo, total, tenderMinor, lines);
+            var payload = BuildSalePayload(saleId, receiptNo, total, tenderMinor, now, lines);
             using (var outbox = connection.CreateCommand())
             {
                 outbox.CommandText = """
@@ -395,11 +608,24 @@ public sealed class PosDatabase
         return connection;
     }
 
-    private static void ApplyMigrationScript(SqliteConnection connection)
+    private static void ApplyMigrationScript(SqliteConnection connection, string fileName)
     {
-        var sql = ReadMigration("001_init.sql");
+        var sql = ReadMigration(fileName);
         foreach (var statement in SplitStatements(sql))
             Exec(connection, statement);
+    }
+
+    private static void MarkMigration(SqliteConnection connection, int version, string name)
+    {
+        using var mark = connection.CreateCommand();
+        mark.CommandText = """
+            INSERT INTO schema_migration (version, name, applied_at)
+            VALUES ($version, $name, $at);
+            """;
+        mark.Parameters.AddWithValue("$version", version);
+        mark.Parameters.AddWithValue("$name", name);
+        mark.Parameters.AddWithValue("$at", Now());
+        mark.ExecuteNonQuery();
     }
 
     private static string ReadMigration(string fileName)
@@ -436,9 +662,10 @@ public sealed class PosDatabase
         int receiptNo,
         long total,
         long tenderMinor,
+        string createdAt,
         IReadOnlyList<CashSaleLine> lines)
     {
-        // ASSUMPTION: this is the SaleCompleted body in docs/erp-sync-contract.md. Nothing sends it yet.
+        // Local outbox document. ErpCheckoutMapper turns it into the live POST /api/checkout body.
         var payload = new
         {
             saleId,
@@ -450,6 +677,7 @@ public sealed class PosDatabase
             discountMinor = 0L,
             taxMinor = 0L,
             totalMinor = total,
+            createdAt,
             fx = (object?)null,
             lines = lines.Select((line, index) => new
             {

@@ -1,307 +1,102 @@
-# ERP sync contract (proposed)
+# ERP sync contract
 
-Status: **proposal**. Nothing in this file was confirmed by an authenticated call.
+This file separates what was read from the running ERP on 6 Nov 2026 from what is still blocked. The desktop app posts only the call the browser already makes. It does not invent a device API.
 
-The desktop till needs a device API. It must not scrape the browser POS and it must not reuse the Auth.js session cookie as its long-lived credential.
+## Source access
 
-## What is actually known
-
-On 5 Nov 2026, unauthenticated:
-
-- `https://erp.echinamart.com/pos` redirects to the staff login. The browser POS is a Next.js page behind Auth.js credentials.
-- `GET /api/auth/providers` returns a credentials provider. `GET /api/auth/session` returns `null` without a cookie.
-- `GET /api/health`, `/api/pos`, `/api/products`, `/api/sales`, and `/api/shifts` each returned `401 {"error":"Unauthorized"}`.
-
-The identical 401 means “not logged in”, not “this route is implemented”. The Expo app `egychina-pos-app` surely calls the ERP already. **ASSUMPTION:** that client uses a staff session, not a terminal outbox. This contract does not copy it. If the Expo app already has a bearer-token API that can accept an idempotency key, extend that instead of adding a parallel one — this needs a yes or no from the ERP repo, which is not in this workspace.
-
-WooCommerce is out of scope. Do not add routes under a Woo name.
-
-## Conventions
-
-Base URL, **ASSUMPTION:** `https://erp.echinamart.com/api/pos/v1/`
-
-The shell’s probe joins `health` onto `EGYCHINA_POS_API`. The value must be absolute and should end with `/`.
-
-Headers once a device exists:
-
-```http
-Authorization: Bearer <device-token>
-Content-Type: application/json
-Accept: application/json
-User-Agent: EgyChina-POS/<version>
-```
-
-Ids that the till creates are UUID strings. Money is a JSON integer in minor units. Rates are integers `rateNumerator` and `rateDenominator`. Times are UTC ISO-8601. The server treats timestamps as information. The idempotency key is the identity of the event.
-
-Errors:
-
-```json
-{ "error": "short_code", "message": "Arabic or English, safe to log" }
-```
-
-| HTTP | Meaning |
+| Check | Result |
 | --- | --- |
-| 401 | Missing or bad device token |
-| 409 | Idempotency key reused with a different body |
-| 422 | Body cannot be stored. Client may mark the outbox row `dead` |
-| 429 | Back off. Honor `Retry-After` if present |
-| 5xx or network | Stay `pending`. Never `dead` |
+| Origin `repo list` for this token | Empty. The ERP repository is not in this account. |
+| `gh` auth | Not logged in. |
+| Public web search for `removedPrismaIds` and `supermarket-pos` | No matching repository. |
+| Production source maps | 404. |
 
-## Rounding
+Blocker: the ERP project source is not available from this session. Server idempotency, the money unit, and the allowed `paymentMethod` strings cannot be read from Prisma. Do not treat the local test stand-in as the ERP.
 
-Both sides use half-up, away from zero on the absolute value:
+## Verified from the live client
 
-```text
-sign(amount) * floor((abs(amount) * rateNumerator + rateDenominator / 2) / rateDenominator)
-```
+Page `https://erp.echinamart.com/login` loaded
 
-This is `Money.ApplyRate` in `EgyChina.Pos.Core`. Example locked by a unit test: `100` minor at `7107/1000` = `711`.
+`/_next/static/chunks/9608-782a6c6dc71e73b4.js`
 
-**ASSUMPTION:** the server sends the customer rate with margin already included, and also sends `marginBps` so the till can store it. The till must not apply `marginBps` itself.
+and the auth chunk `6199-69bb8dda627e9669.js`. Build id `iQKkIOQUffLs92zrpKc_h`.
 
-## Endpoints
+Auth is Auth.js (next-auth). The browser calls `fetch` with no `Authorization` header, so the credential is the same-origin session cookie. Cookie names observed on the login redirect: `__Host-authjs.csrf-token` and `__Secure-authjs.callback-url`. The session cookie itself is not set until someone logs in. There is no device or terminal enrollment call in this bundle.
 
-All of the following are **ASSUMPTION**. None are implemented in this repo, and none were confirmed on the server.
+Catalog:
 
-### `GET /api/pos/v1/health`
+- `GET /api/products` for a full copy
+- `GET /api/products?updatedSince=<ISO>` when a local copy and `lastSyncedAt` already exist
+- Success JSON uses `serverTime`, `products`, and on a delta `removedPrismaIds`
+- Failure JSON uses `{ "error": "<string>" }`
+- Product objects in that client expose `id`, `sku`, `prismaId`, `name`, `posKey`, `parentId`, `isPackage`
+- A missing `posKey` is filled as `prismaId`, or `wc-<id>-<sku>`
 
-No auth, so a new till can tell “DNS works” from “token rejected”.
+Checkout:
 
-```json
-{ "ok": true, "version": "2026.11.0" }
-```
-
-The shell already GETs this URL when `EGYCHINA_POS_API` is set. It does not send a token and it does not POST.
-
-### `POST /api/pos/v1/terminals/enroll`
-
-First-run pairing. A supervisor does this once per PC. **ASSUMPTION:** the human proves they may enroll a till with a one-time code from the ERP admin UI, not with their everyday cashier PIN.
-
-Request:
+`POST /api/checkout` with `Content-Type: application/json` and this body:
 
 ```json
 {
-  "enrollmentCode": "string",
-  "terminalId": "uuid-generated-on-the-pc",
-  "storeCode": "OBOUR",
-  "name": "كاشير ١",
-  "appVersion": "0.1.0",
-  "os": "win-x64"
-}
-```
-
-Response:
-
-```json
-{
-  "deviceToken": "opaque",
-  "terminalId": "uuid",
-  "storeCode": "OBOUR",
-  "storeNameAr": "سوق العبور"
-}
-```
-
-The token is stored with DPAPI, not in SQLite. Compromised enrollment codes are revoked server-side.
-
-### `GET /api/pos/v1/catalog/changes?cursor=<opaque>`
-
-Server-wins replica. Cursor is opaque. Empty cursor means “from the start”.
-
-```json
-{
-  "cursor": "opaque-next",
-  "products": [
-    {
-      "id": "erp-product-id",
-      "sku": "string",
-      "barcode": "622… or null",
-      "nameAr": "أرز",
-      "nameEn": "optional",
-      "nameZh": "optional",
-      "unitAr": "قطعة",
-      "taxRateBps": 0,
-      "isActive": true,
-      "prices": [{ "currency": "EGP", "amountMinor": 8500 }]
-    }
-  ],
-  "deletedIds": ["erp-product-id"]
-}
-```
-
-The till upserts `products`, deletes `deletedIds`, and advances `sync_cursor` for stream `catalog` in one local transaction. Prices on a product replace that product’s `product_price` rows.
-
-**ASSUMPTION:** `amountMinor` is the tax-inclusive shelf price. See the architecture.
-
-A page should be bounded (suggest 500 products) so a 2-core PC can commit and draw between pages.
-
-### `GET /api/pos/v1/rates/current`
-
-```json
-{
-  "id": "erp-rate-id",
-  "baseCurrency": "CNY",
-  "quoteCurrency": "EGP",
-  "rateNumerator": 7107,
-  "rateDenominator": 1000,
-  "marginBps": 300,
-  "effectiveAt": "2026-11-05T00:00:00Z"
-}
-```
-
-### `GET /api/pos/v1/cashiers`
-
-```json
-{
-  "cashiers": [
-    {
-      "id": "erp-user-id",
-      "displayName": "الاسم",
-      "role": "cashier",
-      "pinHash": "base64",
-      "pinSalt": "base64",
-      "pinAlgorithm": "PBKDF2-HMAC-SHA256",
-      "pinIterations": 210000,
-      "isActive": true,
-      "updatedAt": "2026-11-05T00:00:00Z"
-    }
-  ]
-}
-```
-
-**ASSUMPTION:** the ERP is willing to sync PIN verifiers to tills so login works offline. If it is not, offline login is impossible and phase 1 needs a different answer (a small set of till PINs issued only for the lane). Do not send the plaintext PIN.
-
-### `GET /api/pos/v1/assets/qr/{code}`
-
-`code` is `instapay` or `wechat`. Response is the PNG bytes (`image/png`) or JSON `{ "sha256": "…", "notModified": true }` when the till sends `If-None-Match`. The till stores the blob in `qr_asset`.
-
-**ASSUMPTION:** these are static merchant QRs, not per-sale amount QRs.
-
-### `POST /api/pos/v1/sync/events`
-
-Push a batch of outbox rows. Suggest a max of 50 events or 256 KB.
-
-```json
-{
-  "terminalId": "uuid",
-  "events": [
-    {
-      "idempotencyKey": "terminalId:sale:saleId",
-      "type": "SaleCompleted",
-      "occurredAt": "2026-11-05T12:00:00Z",
-      "payload": {}
-    }
-  ]
-}
-```
-
-```json
-{
-  "results": [
-    {
-      "idempotencyKey": "terminalId:sale:saleId",
-      "status": "accepted",
-      "serverId": "erp-sale-id"
-    }
-  ]
-}
-```
-
-`status` is `accepted` or `rejected`. A replay of the same key and the same body returns the original `serverId` and `accepted`. The same key with a different body is `409` on the whole request or `rejected` on that row — pick one in the ERP implementation and test it. Recommended: **409 for the request**, so a mixed batch is not half-applied. The till then sends the offending event alone and can mark it `dead` only on 422.
-
-Event types for phase 1: `ShiftOpened`, `ShiftClosed`, `SaleCompleted`.
-
-Phase 2 adds `SaleVoided`, `ReturnCompleted`. Voids are new events. The till does not expect the server to delete the original sale.
-
-#### `SaleCompleted` payload
-
-Self-contained. The server must accept it even if the product id was deleted after the sale.
-
-```json
-{
-  "saleId": "uuid",
-  "shiftId": "uuid",
-  "cashierId": "erp-user-id",
-  "receiptNo": 1042,
-  "currency": "EGP",
-  "subtotalMinor": 14750,
-  "discountMinor": 0,
-  "taxMinor": 0,
-  "totalMinor": 14750,
-  "fx": null,
+  "paymentMethod": "<value from the sale>",
+  "amount": "<absolute value of total>",
+  "total": "<sale total>",
+  "isReturn": false,
+  "shiftId": null,
+  "localId": "<client sale id>",
+  "createdAt": "<ISO time>",
+  "customerName": null,
+  "employeeId": null,
+  "wooOrderId": null,
   "lines": [
     {
-      "lineNo": 1,
-      "productId": "erp-product-id",
-      "barcode": "2000000000018",
-      "nameAr": "أرز مصري ٥ كجم",
-      "qtyMilli": 1000,
-      "unitPriceMinor": 8500,
-      "discountMinor": 0,
-      "lineTotalMinor": 8500
-    }
-  ],
-  "payments": [
-    {
-      "method": "cash_egp",
-      "currency": "EGP",
-      "amountMinor": 20000,
-      "amountEgpMinor": 20000,
-      "reference": null
+      "productId": 0,
+      "name": "",
+      "qty": 1,
+      "unitPrice": 0,
+      "lineTotal": 0,
+      "stockMultiplier": 1
     }
   ]
 }
 ```
 
-When CNY is used, `fx` is:
+`productId` is a positive number. The same field is sent to `POST /api/pos/restock` as `wcId` for returns. This desktop build does not call restock and does not talk to WooCommerce. `wooOrderId` is sent as null because the live client includes the property.
 
-```json
-{
-  "baseCurrency": "CNY",
-  "rateNumerator": 7107,
-  "rateDenominator": 1000,
-  "marginBps": 300
-}
-```
+The client treats any completed HTTP success as synced. It does not read a server id from the body. On failure it keeps the sale pending and stores `error`. A network failure stops the batch. The retry key the client uses is `localId`.
 
-and the payment row carries `amountMinor` in fen plus `amountEgpMinor` computed with `Money.ApplyRate`.
+`/api/products` and `/api/checkout` without a session returned the same 401 `{"error":"Unauthorized"}` gate as the other `/api/*` paths checked on 5 Nov 2026. That confirms the routes are behind the auth gate. It does not show a success body.
 
-#### `ShiftOpened` / `ShiftClosed`
+## Not verified
 
-```json
-{
-  "shiftId": "uuid",
-  "cashierId": "erp-user-id",
-  "openedAt": "2026-11-05T08:00:00Z",
-  "openingFloatMinor": 500000,
-  "closedAt": null,
-  "closingCashMinor": null
-}
-```
+These stay closed. The worker will not send a sale while any of them is unknown.
 
-`ShiftClosed` fills `closedAt` and `closingCashMinor`.
+| Gap | Why it matters |
+| --- | --- |
+| ERP repository | Cannot add or review server idempotency. |
+| `localId` dedupe | A lost 2xx followed by a retry may create a second stock movement if the server does not ignore a repeated `localId`. The client retries the same id. That is necessary and not proven safe. |
+| Money unit | The bundle forwards `total` and `unitPrice` as JSON numbers. It does not say pounds versus piasters. `EGYCHINA_POS_MONEY_SCALE` must be `major` or `minor` only after someone checks the server. Default is unverified, and nothing is posted. |
+| `paymentMethod` strings | The field is required by the client and the allowed values are not in the bundle. Set `EGYCHINA_POS_PAYMENT_METHOD` only to a value taken from the ERP source or a captured browser request. |
+| Device credential | None exists in the shipped client. `EGYCHINA_POS_COOKIE` is a staff Auth.js session, it expires, and it is not a till identity. |
+| Price field on `products` | Not referenced by the sync chunk. Catalog pull links `sku` to numeric `id` and does not change shelf prices. |
 
-### `GET /api/pos/v1/releases/latest?channel=stable&os=win-x64`
+The earlier `/api/pos/v1/*` device API in this document was a proposal. It is not what the browser calls. Do not implement it unless it appears in the ERP source.
 
-Phase 1 can ship without this and copy folders by hand.
+## What the desktop does with this
 
-```json
-{
-  "version": "0.2.0",
-  "url": "https://erp.echinamart.com/…/EgyChina.Pos-win-x64.zip",
-  "sha256": "hex",
-  "signature": "base64 Authenticode or a minisign signature"
-}
-```
+`EGYCHINA_POS_API` is the site origin, for example `https://erp.echinamart.com/`. The worker appends `api/checkout` and `api/products`.
 
-The till downloads only when no shift is open, checks the hash and the signature, and keeps the previous directory.
+Transmission starts only when all of these are set:
 
-## Open questions for the ERP repo
+- `EGYCHINA_POS_API`
+- `EGYCHINA_POS_COOKIE` (the session cookie; never commit it)
+- `EGYCHINA_POS_MONEY_SCALE` = `major` or `minor`
+- `EGYCHINA_POS_PAYMENT_METHOD`
 
-1. Does `egychina-pos-app` already have a token and a sale POST we should extend?
-2. Are shelf prices tax-inclusive for every department that will hit this till?
-3. Who is allowed to enroll a terminal, and where does the one-time code live in the admin UI?
-4. Is offline oversell acceptable for the hypermarket?
-5. Static QR, or does finance want an amount embedded in the QR?
-6. Can PIN verifiers leave the server, or do cashiers need online login only?
-7. A redacted copy of the current `/pos` receipt layout, so phase 2 matches it.
-8. The Windows printer queue name on a cashier PC, and whether the Xprinter is RAW-capable in that driver.
+Optional: `EGYCHINA_POS_CATALOG_PULL=1` also calls `GET /api/products` and stores the numeric id on the local product with the same `sku`. Prices stay as they were.
+
+A row is marked `done` and the sale `synced` only after the response body has been read and the status is 2xx. A dropped response, a 401, or a 5xx leaves the row pending. The next tick sends the same `localId`. Receipt numbers and minor-unit totals in SQLite are not rewritten.
+
+Demo barcodes stay pending until a catalog pull links their `sku` to a positive numeric `id`. The worker does not invent that id.
+
+No test in this repo calls `erp.echinamart.com`. The HTTP tests use a local stand-in.

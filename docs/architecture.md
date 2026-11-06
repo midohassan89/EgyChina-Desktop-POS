@@ -105,7 +105,7 @@ Copy is Arabic. Digits and money stay Western (`85.00 ج.م`) under the invarian
 | `EgyChina.Pos.App` | Windows, session, screen placement | PIN screen, tender, shift UI |
 | `EgyChina.Pos.Core` | Money math, catalog row, sync status, `IReceiptPrinter` | Sale and tender types |
 | `EgyChina.Pos.Data` | SQLite open, migration, demo seed, log, paths | Repositories used by the sale transaction |
-| `EgyChina.Pos.Sync` | Worker loop, health probe only, no POST | Outbox push and catalog pull |
+| `EgyChina.Pos.Sync` | Outbox post to the live `/api/checkout` route, gated until cookie, money scale, and payment method are set | Server-side idempotency once the ERP repo is available |
 | `EgyChina.Pos.Tests` | WAL, seed, outbox idempotency, rounding, worker | Sale transaction tests |
 | `EgyChina.Pos.Printing` | Not created | Raw Winspool ESC/POS in phase 1 |
 
@@ -213,9 +213,9 @@ Currencies in scope: `EGP`, `CNY`. Tender methods in the schema: `cash_egp`, `ca
 
 The worker is a `PeriodicTimer` (30 seconds) on a background task. It never blocks the UI thread.
 
-Today, with `EGYCHINA_POS_API` unset, each tick counts `outbox` rows still `pending` and writes `sync_cursor.stream = worker`, cursor `not-configured`. It does not open a socket.
+With no `EGYCHINA_POS_API`, each tick stays local and writes cursor `not-configured`. It does not open a socket.
 
-If the variable is an absolute `http` or `https` URL, the tick sends `GET {base}/health` with a 5 second timeout and no `Authorization` header. Any other HTTP method is out of scope until the contract is implemented. Pointing the variable at the live ERP must not create sales.
+When the origin, the Auth.js session cookie, a money scale, and a payment-method string are all set, the tick posts pending sales to the live `POST /api/checkout` route. A sale is marked synced only after a full HTTP 2xx. Details, and what is still not visible in the ERP source, are in [erp-sync-contract.md](erp-sync-contract.md).
 
 Full request and response shapes, cursors, and the list of new routes: [erp-sync-contract.md](erp-sync-contract.md).
 
@@ -329,7 +329,7 @@ Implemented:
 - SQLite file, WAL, the migration, demo catalog, terminal row, placeholder local cashier.
 - Scan box, search, shared cart, totals on both windows.
 - Cash EGP checkout: tender, change, committed sale, and a pending outbox row. The cart clears after commit.
-- Sync worker tick. It counts the outbox and does not POST.
+- Sync worker. It posts to `/api/checkout` only when the verified gates are set, and it marks a sale synced only after a full 2xx. Default configuration does not open a socket.
 - Log file, single instance, startup error window.
 
 Not implemented, on purpose:

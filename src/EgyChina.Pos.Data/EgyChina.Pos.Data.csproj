@@ -14,6 +14,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Migrations\001_init.sql" />
+    <EmbeddedResource Include="Migrations\*.sql" />
   </ItemGroup>
 </Project>

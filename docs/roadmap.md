@@ -25,7 +25,7 @@ Offline cash EGP is in the app. It does not wait for `catalog.source=erp`, so th
 - **إتمام الدفع** is enabled only when the cart has lines.
 - Tender and change are minor units. Confirm is enabled only when the cash received covers the total.
 - One SQLite transaction writes `sale`, `sale_line`, `payment` (`cash_egp`), the receipt number, and a `pending` outbox row. The key is `{terminalId}:sale:{saleId}`.
-- The payload matches the proposed `SaleCompleted` body in [erp-sync-contract.md](erp-sync-contract.md). **ASSUMPTION:** the ERP will accept that body. This build does not POST it.
+- The outbox can post to the live `POST /api/checkout` route from the browser bundle. See [erp-sync-contract.md](erp-sync-contract.md). It sends only when the Auth.js cookie, money scale, and payment-method string are configured. A sale is marked synced only after a full HTTP 2xx. Server-side dedupe of `localId` is not verified, because the ERP repository is not available here.
 - Cashier and customer windows bind the same totals. After commit the cart clears and both show the change and the receipt number.
 - Sales are stamped with the placeholder cashier `local-cashier` until PIN login exists. That row is not a PIN verifier.
 

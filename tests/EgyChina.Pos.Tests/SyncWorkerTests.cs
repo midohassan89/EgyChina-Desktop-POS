@@ -1,4 +1,3 @@
-using System.Net;
 using EgyChina.Pos.Core;
 using Xunit;
 using EgyChina.Pos.Data;
@@ -50,48 +49,32 @@ public sealed class SyncWorkerTests : IDisposable
     }
 
     [Fact]
-    public void Health_uri_keeps_the_version_prefix()
+    public void Checkout_uri_is_the_live_browser_route()
     {
-        var uri = SyncWorker.HealthUri(new Uri("https://erp.echinamart.com/api/pos/v1"));
-        Assert.Equal("https://erp.echinamart.com/api/pos/v1/health", uri.ToString());
+        var uri = SyncWorker.CheckoutUri(new Uri("https://erp.echinamart.com"));
+        Assert.Equal("https://erp.echinamart.com/api/checkout", uri.ToString());
     }
 
     [Fact]
-    public async Task Tick_records_an_http_status_without_posting()
+    public async Task Tick_with_only_a_base_address_does_not_open_a_socket()
     {
-        var listener = StartListener(out var port);
-        var seen = string.Empty;
-        var serve = Task.Run(async () =>
-        {
-            var context = await listener.GetContextAsync();
-            seen = context.Request.HttpMethod + " " + context.Request.Url?.AbsolutePath;
-            context.Response.StatusCode = 401;
-            context.Response.Close();
-        });
-
         var database = NewDatabase();
+        database.CompleteCashSale(
+            [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
+            8500);
         var status = new SyncStatus();
         var worker = new SyncWorker(database, status, new SyncOptions
         {
-            BaseAddress = new Uri($"http://127.0.0.1:{port}/api/pos/v1/"),
+            BaseAddress = new Uri("https://erp.echinamart.com/"),
             Interval = TimeSpan.FromHours(1),
         });
 
-        try
-        {
-            await worker.TickAsync(CancellationToken.None);
-            await serve.WaitAsync(TimeSpan.FromSeconds(5));
-        }
-        finally
-        {
-            listener.Close();
-            await worker.DisposeAsync();
-        }
+        await worker.TickAsync(CancellationToken.None);
 
-        Assert.Equal("GET /api/pos/v1/health", seen);
-        Assert.Equal("http-401", database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
-        Assert.Contains("401", status.Read().Message, StringComparison.Ordinal);
-        Assert.False(status.Read().IsOnline);
+        Assert.Equal("auth-missing", database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
+        Assert.Equal(1, database.CountPendingOutbox());
+        Assert.Contains("Auth.js", status.Read().Message, StringComparison.Ordinal);
+        await worker.DisposeAsync();
     }
 
     private PosDatabase NewDatabase()
@@ -101,24 +84,4 @@ public sealed class SyncWorkerTests : IDisposable
         return database;
     }
 
-    private static HttpListener StartListener(out int port)
-    {
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            port = Random.Shared.Next(20000, 45000);
-            var listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            try
-            {
-                listener.Start();
-                return listener;
-            }
-            catch (HttpListenerException)
-            {
-                listener.Close();
-            }
-        }
-
-        throw new InvalidOperationException("Could not bind a local port for the sync probe test.");
-    }
 }

@@ -44,7 +44,7 @@ Demo barcodes, shelf prices in Egyptian pounds:
 
 Type a code into the barcode box and press Enter, or click the tile. The total on the customer window follows the cart. **إتمام الدفع** turns on when the cart has lines. Enter the cash received (or keep the exact amount) and confirm. The cart clears, both windows show the change and the receipt number, and the sale stays in the local outbox.
 
-The sync line says the server address is not set. That is expected. The worker does not POST, including after a sale.
+The sync line stays local until `EGYCHINA_POS_API`, `EGYCHINA_POS_COOKIE`, `EGYCHINA_POS_MONEY_SCALE` (`major` or `minor`), and `EGYCHINA_POS_PAYMENT_METHOD` are all set. Those last three are not filled in by this repo: the ERP source was not available, and the browser bundle does not show the money unit or the allowed payment-method strings. With them unset, nothing is posted. See [the contract note](docs/erp-sync-contract.md).
 
 Optional probe only (still no sale upload):
 

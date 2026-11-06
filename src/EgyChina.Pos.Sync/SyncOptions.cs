@@ -5,32 +5,84 @@ namespace EgyChina.Pos.Sync;
 public sealed class SyncOptions
 {
     public const string EnvironmentVariable = "EGYCHINA_POS_API";
+    public const string CookieVariable = "EGYCHINA_POS_COOKIE";
+    public const string PaymentMethodVariable = "EGYCHINA_POS_PAYMENT_METHOD";
+    public const string MoneyScaleVariable = "EGYCHINA_POS_MONEY_SCALE";
+    public const string CatalogPullVariable = "EGYCHINA_POS_CATALOG_PULL";
 
     /// <summary>
-    /// Absolute base URL ending with <c>/</c>, for example
-    /// <c>https://erp.echinamart.com/api/pos/v1/</c> once that API exists.
-    /// Null means the worker stays local and does not open a socket.
+    /// Site origin, for example <c>https://erp.echinamart.com/</c>.
+    /// The worker appends <c>api/checkout</c> and <c>api/products</c>. Null means no socket is opened.
     /// </summary>
     public Uri? BaseAddress { get; init; }
+
+    /// <summary>
+    /// Auth.js session cookie. This is the only credential the shipped browser client sends.
+    /// There is no device token in that client. Never log this value.
+    /// </summary>
+    public string? SessionCookie { get; init; }
+
+    /// <summary>
+    /// Value of <c>paymentMethod</c> on <c>POST /api/checkout</c>.
+    /// The live bundle sends the field and does not show the allowed strings.
+    /// </summary>
+    public string? PaymentMethod { get; init; }
+
+    public ErpMoneyScale MoneyScale { get; init; } = ErpMoneyScale.Unverified;
+
+    public bool CatalogPull { get; init; }
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
     public TimeSpan HttpTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
+    public string? TransmissionBlock()
+    {
+        if (BaseAddress is null)
+            return "not-configured";
+        if (string.IsNullOrWhiteSpace(SessionCookie))
+            return "auth-missing";
+        if (MoneyScale == ErpMoneyScale.Unverified)
+            return "money-scale-unverified";
+        if (string.IsNullOrWhiteSpace(PaymentMethod))
+            return "payment-method-unverified";
+        return null;
+    }
+
+    public bool CanTransmit => TransmissionBlock() is null;
+
     public static SyncOptions FromEnvironment()
     {
         var raw = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        if (string.IsNullOrWhiteSpace(raw))
-            return new SyncOptions();
-
-        var text = raw.Trim();
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri)
-            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+        Uri? uri = null;
+        if (!string.IsNullOrWhiteSpace(raw))
         {
-            PosLog.Error($"{EnvironmentVariable} is not an absolute http(s) URL.");
-            return new SyncOptions();
+            var text = raw.Trim();
+            if (!Uri.TryCreate(text, UriKind.Absolute, out var parsed)
+                || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp))
+            {
+                PosLog.Error($"{EnvironmentVariable} is not an absolute http(s) URL.");
+            }
+            else
+            {
+                uri = parsed;
+            }
         }
 
-        return new SyncOptions { BaseAddress = uri };
+        var scale = Environment.GetEnvironmentVariable(MoneyScaleVariable)?.Trim().ToLowerInvariant() switch
+        {
+            "major" => ErpMoneyScale.MajorUnits,
+            "minor" => ErpMoneyScale.MinorUnits,
+            _ => ErpMoneyScale.Unverified,
+        };
+
+        return new SyncOptions
+        {
+            BaseAddress = uri,
+            SessionCookie = Environment.GetEnvironmentVariable(CookieVariable),
+            PaymentMethod = Environment.GetEnvironmentVariable(PaymentMethodVariable),
+            MoneyScale = scale,
+            CatalogPull = string.Equals(Environment.GetEnvironmentVariable(CatalogPullVariable), "1", StringComparison.Ordinal),
+        };
     }
 }

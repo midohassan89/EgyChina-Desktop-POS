@@ -1,3 +1,4 @@
+using System.Text.Json;
 using EgyChina.Pos.Core;
 using Microsoft.Data.Sqlite;
 
@@ -9,6 +10,7 @@ namespace EgyChina.Pos.Data;
 public sealed class PosDatabase
 {
     public const string DefaultStoreCode = "OBOUR";
+    public const string LocalCashierId = "local-cashier";
     public const string DemoRiceBarcode = "2000000000018";
     public const string DemoOilBarcode = "2000000000025";
     public const string DemoTeaBarcode = "2000000000032";
@@ -70,6 +72,7 @@ public sealed class PosDatabase
             }
 
             EnsureTerminal(connection);
+            EnsureLocalCashier(connection);
             SeedDemoCatalogIfNeeded(connection);
             tx.Commit();
         }
@@ -218,6 +221,152 @@ public sealed class PosDatabase
         }
     }
 
+    /// <summary>
+    /// Commits one cash EGP sale, its lines, its payment, and the outbox row in a single transaction.
+    /// Does not talk to the network. The payload matches the proposed SaleCompleted shape; posting it is still an ASSUMPTION.
+    /// </summary>
+    public CompletedCashSale CompleteCashSale(IReadOnlyList<CashSaleLine> lines, long tenderMinor)
+    {
+        if (lines is null || lines.Count == 0)
+            throw new ArgumentException("A cash sale needs at least one line.", nameof(lines));
+        if (tenderMinor < 0)
+            throw new ArgumentOutOfRangeException(nameof(tenderMinor));
+
+        long total = 0;
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line.ProductId))
+                throw new ArgumentException("Each line needs a product id.", nameof(lines));
+            if (string.IsNullOrWhiteSpace(line.NameAr))
+                throw new ArgumentException("Each line needs an Arabic name.", nameof(lines));
+            if (line.Qty < 1)
+                throw new ArgumentOutOfRangeException(nameof(lines), "Quantity must be at least 1.");
+            if (line.UnitPriceMinor < 0)
+                throw new ArgumentOutOfRangeException(nameof(lines), "Unit price cannot be negative.");
+            total = checked(total + line.LineTotalMinor);
+        }
+
+        if (tenderMinor < total)
+            throw new InvalidOperationException("Tender is below the sale total.");
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            EnsureLocalCashier(connection);
+
+            var terminalId = ScalarString(connection, "SELECT id FROM terminal LIMIT 1");
+            if (string.IsNullOrEmpty(terminalId))
+                throw new InvalidOperationException("Terminal row is missing.");
+
+            var receiptNo = checked((int)ScalarLong(connection, "SELECT next_no FROM receipt_counter WHERE id = 1"));
+            using (var bump = connection.CreateCommand())
+            {
+                bump.CommandText = "UPDATE receipt_counter SET next_no = next_no + 1 WHERE id = 1";
+                bump.ExecuteNonQuery();
+            }
+
+            var saleId = Guid.NewGuid().ToString("D");
+            var now = Now();
+            using (var sale = connection.CreateCommand())
+            {
+                sale.CommandText = """
+                    INSERT INTO sale (
+                      id, server_id, shift_id, cashier_id, receipt_no, status, currency,
+                      subtotal_minor, discount_minor, tax_minor, total_minor,
+                      created_at, completed_at, sync_status
+                    ) VALUES (
+                      $id, NULL, NULL, $cashier, $receipt, 'completed', 'EGP',
+                      $total, 0, 0, $total,
+                      $now, $now, 'pending'
+                    );
+                    """;
+                sale.Parameters.AddWithValue("$id", saleId);
+                sale.Parameters.AddWithValue("$cashier", LocalCashierId);
+                sale.Parameters.AddWithValue("$receipt", receiptNo);
+                sale.Parameters.AddWithValue("$total", total);
+                sale.Parameters.AddWithValue("$now", now);
+                sale.ExecuteNonQuery();
+            }
+
+            var lineNo = 1;
+            foreach (var line in lines)
+            {
+                using var insert = connection.CreateCommand();
+                insert.CommandText = """
+                    INSERT INTO sale_line (
+                      id, sale_id, line_no, product_id, barcode, name_ar,
+                      qty_milli, unit_price_minor, discount_minor, line_total_minor
+                    ) VALUES (
+                      $id, $sale, $lineNo, $product, $barcode, $name,
+                      $qty, $price, 0, $lineTotal
+                    );
+                    """;
+                insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+                insert.Parameters.AddWithValue("$sale", saleId);
+                insert.Parameters.AddWithValue("$lineNo", lineNo);
+                insert.Parameters.AddWithValue("$product", line.ProductId);
+                insert.Parameters.AddWithValue("$barcode", (object?)line.Barcode ?? DBNull.Value);
+                insert.Parameters.AddWithValue("$name", line.NameAr);
+                insert.Parameters.AddWithValue("$qty", line.QtyMilli);
+                insert.Parameters.AddWithValue("$price", line.UnitPriceMinor);
+                insert.Parameters.AddWithValue("$lineTotal", line.LineTotalMinor);
+                insert.ExecuteNonQuery();
+                lineNo++;
+            }
+
+            using (var payment = connection.CreateCommand())
+            {
+                payment.CommandText = """
+                    INSERT INTO payment (
+                      id, sale_id, method, currency, amount_minor, amount_egp_minor, reference, created_at
+                    ) VALUES (
+                      $id, $sale, 'cash_egp', 'EGP', $tender, $tender, NULL, $now
+                    );
+                    """;
+                payment.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+                payment.Parameters.AddWithValue("$sale", saleId);
+                payment.Parameters.AddWithValue("$tender", tenderMinor);
+                payment.Parameters.AddWithValue("$now", now);
+                payment.ExecuteNonQuery();
+            }
+
+            var idempotencyKey = $"{terminalId}:sale:{saleId}";
+            var payload = BuildSalePayload(saleId, receiptNo, total, tenderMinor, lines);
+            using (var outbox = connection.CreateCommand())
+            {
+                outbox.CommandText = """
+                    INSERT INTO outbox (
+                      id, aggregate_type, aggregate_id, event_type, payload_json,
+                      idempotency_key, created_at, attempt_count, next_attempt_at, status
+                    ) VALUES (
+                      $id, 'sale', $sale, 'SaleCompleted', $payload,
+                      $key, $now, 0, $now, 'pending'
+                    );
+                    """;
+                outbox.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
+                outbox.Parameters.AddWithValue("$sale", saleId);
+                outbox.Parameters.AddWithValue("$payload", payload);
+                outbox.Parameters.AddWithValue("$key", idempotencyKey);
+                outbox.Parameters.AddWithValue("$now", now);
+                outbox.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            var completed = new CompletedCashSale(
+                saleId,
+                terminalId,
+                LocalCashierId,
+                receiptNo,
+                total,
+                tenderMinor,
+                tenderMinor - total,
+                idempotencyKey);
+            PosLog.Info($"cash sale committed receipt={receiptNo} total={total} tender={tenderMinor}");
+            return completed;
+        }
+    }
+
     public long ForeignKeysEnabled()
     {
         lock (_gate)
@@ -280,6 +429,66 @@ public sealed class PosDatabase
 
             yield return statement;
         }
+    }
+
+    private static string BuildSalePayload(
+        string saleId,
+        int receiptNo,
+        long total,
+        long tenderMinor,
+        IReadOnlyList<CashSaleLine> lines)
+    {
+        // ASSUMPTION: this is the SaleCompleted body in docs/erp-sync-contract.md. Nothing sends it yet.
+        var payload = new
+        {
+            saleId,
+            shiftId = (string?)null,
+            cashierId = LocalCashierId,
+            receiptNo,
+            currency = "EGP",
+            subtotalMinor = total,
+            discountMinor = 0L,
+            taxMinor = 0L,
+            totalMinor = total,
+            fx = (object?)null,
+            lines = lines.Select((line, index) => new
+            {
+                lineNo = index + 1,
+                productId = line.ProductId,
+                barcode = line.Barcode,
+                nameAr = line.NameAr,
+                qtyMilli = line.QtyMilli,
+                unitPriceMinor = line.UnitPriceMinor,
+                discountMinor = 0L,
+                lineTotalMinor = line.LineTotalMinor,
+            }).ToArray(),
+            payments = new[]
+            {
+                new
+                {
+                    method = "cash_egp",
+                    currency = "EGP",
+                    amountMinor = tenderMinor,
+                    amountEgpMinor = tenderMinor,
+                    reference = (string?)null,
+                },
+            },
+        };
+        return JsonSerializer.Serialize(payload);
+    }
+
+    private static void EnsureLocalCashier(SqliteConnection connection)
+    {
+        // Placeholder until PIN sync. Not a verifier and not a person.
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO cashier (id, display_name, role, pin_hash, pin_salt, is_active, updated_at)
+            VALUES ($id, 'كاشير محلي', 'cashier', 'pending-pin-sync', 'local', 1, $now)
+            ON CONFLICT (id) DO NOTHING;
+            """;
+        command.Parameters.AddWithValue("$id", LocalCashierId);
+        command.Parameters.AddWithValue("$now", Now());
+        command.ExecuteNonQuery();
     }
 
     private static void EnsureTerminal(SqliteConnection connection)
@@ -382,6 +591,13 @@ public sealed class PosDatabase
         command.Parameters.AddWithValue("$key", key);
         command.Parameters.AddWithValue("$value", value);
         command.ExecuteNonQuery();
+    }
+
+    private static string? ScalarString(SqliteConnection connection, string sql)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar() as string;
     }
 
     private static long ScalarLong(SqliteConnection connection, string sql)

@@ -130,11 +130,42 @@
     </Grid>
 
     <Border Grid.Row="2" Background="#E7E1D4" Padding="16,10">
-      <Grid RowDefinitions="Auto,Auto" RowSpacing="6">
+      <StackPanel Spacing="8">
+        <Grid ColumnDefinitions="*,12,Auto" IsVisible="{Binding IsTendering}">
+          <StackPanel Spacing="4">
+            <TextBlock Text="المبلغ المستلم" Foreground="#6E675C" FontSize="13" />
+            <Grid ColumnDefinitions="*,8,Auto">
+              <TextBox x:Name="TenderBox"
+                       Grid.Column="0"
+                       Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
+                       PlaceholderText="0.00"
+                       FontSize="22"
+                       MinHeight="48"
+                       FlowDirection="LeftToRight"
+                       KeyDown="OnTenderKeyDown" />
+              <Button Grid.Column="2"
+                      Content="المبلغ بالضبط"
+                      Command="{Binding SetExactTenderCommand}" />
+            </Grid>
+            <TextBlock Text="{Binding TenderHint}" Foreground="#12382F" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Center">
+            <Button Content="تأكيد النقد"
+                    Command="{Binding ConfirmCashCommand}"
+                    IsEnabled="{Binding CanConfirmCash}"
+                    MinWidth="140"
+                    Background="#12382F"
+                    Foreground="#F6F1E4" />
+            <Button Content="إلغاء"
+                    Command="{Binding CancelTenderCommand}"
+                    MinWidth="140" />
+          </StackPanel>
+        </Grid>
+
         <Grid ColumnDefinitions="Auto,*,Auto,Auto">
           <StackPanel Spacing="2" VerticalAlignment="Center">
-            <TextBlock Text="الإجمالي" Foreground="#6E675C" FontSize="13" />
-            <TextBlock Text="{Binding TotalText}" FontSize="32" FontWeight="Bold" Foreground="#12382F" />
+            <TextBlock Text="{Binding AmountLabel}" Foreground="#6E675C" FontSize="13" />
+            <TextBlock Text="{Binding AmountText}" FontSize="32" FontWeight="Bold" Foreground="#12382F" />
           </StackPanel>
           <Button Grid.Column="2"
                   Content="شاشة العميل"
@@ -142,17 +173,25 @@
                   Margin="0,0,8,0" />
           <Button Grid.Column="3"
                   Content="إتمام الدفع"
-                  IsEnabled="False"
+                  Command="{Binding BeginCashPaymentCommand}"
+                  IsEnabled="{Binding CanBeginPayment}"
                   MinWidth="160"
                   Background="#12382F"
                   Foreground="#F6F1E4" />
         </Grid>
-        <StackPanel Grid.Row="1" Spacing="2">
+
+        <TextBlock Text="{Binding SettlementText}"
+                   IsVisible="{Binding ShowSettlement}"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   Foreground="#12382F" />
+
+        <StackPanel Spacing="2">
           <TextBlock Text="{Binding ShellNotice}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
           <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#6E675C" />
           <TextBlock Text="{Binding DatabasePath}" FontSize="11" Foreground="#8A8172" FlowDirection="LeftToRight" TextWrapping="Wrap" />
         </StackPanel>
-      </Grid>
+      </StackPanel>
     </Border>
   </Grid>
 </Window>

@@ -166,7 +166,9 @@ The in-progress cart is **not** a table. A crash loses the basket and cannot los
 
 Demo seed: if `product` is empty and `catalog.source` is not `erp`, three `DEMO-*` rows are inserted and `catalog.source` is set to `demo`. A future pull sets `catalog.source=erp` and deletes `DEMO-*`. The seed must not come back over a real empty catalog.
 
-### Target sale transaction (phase 1, not in the shell)
+### Sale transaction
+
+Cash EGP uses this order in `PosDatabase.CompleteCashSale`. Print is still not wired; the cart is cleared only after commit.
 
 One SQLite transaction, in this order:
 
@@ -174,10 +176,10 @@ One SQLite transaction, in this order:
 2. Insert `sale`, `sale_line`, `payment`.
 3. Insert the `outbox` row with key `{terminalId}:sale:{saleId}` and status `pending`.
 4. Commit.
-5. Print.
-6. Clear the in-memory cart.
+5. Clear the in-memory cart. Both windows then show the change and the receipt number.
+6. Print. Not built yet. When it is added it stays after commit, never before.
 
-If the process dies before commit, there is no sale and no print. If it dies after commit and before print, the sale is recoverable and the receipt can be reprinted. Never print first.
+If the process dies before commit, there is no sale. If it dies after commit, the sale and the outbox row are already stored. Never print first.
 
 Push retries use the same idempotency key. The server returns the original `serverId`. The client stores it on `sale.server_id` and marks the outbox row `done`. A completed sale is never moved to `dead` because the network failed. `dead` is only for a payload this build cannot send (poison). The cashier status bar shows an outbox that is not draining.
 
@@ -233,7 +235,7 @@ Phase 1 printer:
 4. If the site uses the virtual COM port instead, write the same bytes to that port with `System.IO.Ports`.
 5. Config keys: `printer.transport` = `raw-spooler` or `serial`, `printer.queue` or `printer.port`.
 
-`IReceiptPrinter` / `ReceiptDocument` in `EgyChina.Pos.Core` are the seam. There is no implementation in the shell, and the pay button does nothing, so the lane cannot look “done”.
+`IReceiptPrinter` / `ReceiptDocument` in `EgyChina.Pos.Core` are the seam. Cash sales commit without printing. A receipt on paper is still to be built, so a committed sale can be looked up in SQLite and is not yet reprinted.
 
 **ASSUMPTION:** a cash drawer, if present, is kicked from the printer RJ11 port with `ESC p` after a cash tender. Not required for the first sale.
 
@@ -303,7 +305,7 @@ Expected self-contained size is on the order of 150–250 MB because of the runt
 
 Windows itself on 8 GB leaves limited headroom once an antivirus and the spooler are up. The till user should not have Chrome, the ERP admin UI, or the old browser POS open beside this app.
 
-First catalog pull can take a while. The cashier UI stays usable on the previous replica. The first install has the demo seed only, and phase 1 should refuse **إتمام الدفع** until `catalog.source=erp` and at least one cashier hash is present. The shell does not take payment, so this guard is a phase 1 rule.
+First catalog pull can take a while. The cashier UI stays usable on the previous replica. The first install has the demo seed, and cash EGP works on that seed so a lane can be tried with the network unplugged. Refusing **إتمام الدفع** until `catalog.source=erp` comes back with enrollment. Until then sales are stamped `local-cashier`, which is not a synced PIN.
 
 ## 14. Failure behavior
 
@@ -324,16 +326,15 @@ First catalog pull can take a while. The cashier UI stays usable on the previous
 Implemented:
 
 - Cashier window, Arabic RTL, and a customer window on the second screen when one exists.
-- SQLite file, WAL, the migration, demo catalog, terminal row.
+- SQLite file, WAL, the migration, demo catalog, terminal row, placeholder local cashier.
 - Scan box, search, shared cart, totals on both windows.
-- Sync worker tick and an outbox table with a unique idempotency key.
+- Cash EGP checkout: tender, change, committed sale, and a pending outbox row. The cart clears after commit.
+- Sync worker tick. It counts the outbox and does not POST.
 - Log file, single instance, startup error window.
 
 Not implemented, on purpose:
 
-- PIN, shifts, tender, change, void, refund, discount.
-- Any POST of a sale. The worker does not write the outbox from the UI.
+- PIN, shifts, void, refund, discount, print, reprint.
+- Any POST of a sale. The outbox waits for the device API in the contract, which is still an **ASSUMPTION**.
 - ESC/POS bytes, QR images, CNY tender, catalog pull.
 - Auto-logon, the launcher, code signing.
-
-Pay is disabled. The footer says this is the shell.

@@ -24,7 +24,7 @@
     </StackPanel>
 
     <Panel Grid.Row="1" Margin="32,8">
-      <TextBlock Text="في انتظار المسح"
+      <TextBlock Text="{Binding IdleCustomerText}"
                  FontSize="32"
                  Foreground="#8FA399"
                  HorizontalAlignment="Center"
@@ -54,14 +54,24 @@
     </Panel>
 
     <Border Grid.Row="2" Background="#0B1210" Padding="32,18">
-      <Grid ColumnDefinitions="*,Auto">
-        <TextBlock Text="الإجمالي" FontSize="24" Foreground="#F6F1E4" VerticalAlignment="Center" />
-        <TextBlock Grid.Column="1"
-                   Text="{Binding TotalText}"
-                   FontSize="48"
-                   FontWeight="Bold"
+      <StackPanel Spacing="6">
+        <TextBlock Text="{Binding SettlementText}"
+                   IsVisible="{Binding ShowSettlement}"
+                   FontSize="20"
+                   Foreground="#8FA399" />
+        <TextBlock Text="{Binding CustomerChangeText}"
+                   IsVisible="{Binding ShowCustomerChange}"
+                   FontSize="28"
                    Foreground="#E3C57A" />
-      </Grid>
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Text="{Binding AmountLabel}" FontSize="24" Foreground="#F6F1E4" VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding AmountText}"
+                     FontSize="48"
+                     FontWeight="Bold"
+                     Foreground="#E3C57A" />
+        </Grid>
+      </StackPanel>
     </Border>
   </Grid>
 </Window>

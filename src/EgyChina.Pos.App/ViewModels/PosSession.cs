@@ -25,7 +25,7 @@ public partial class PosSession : ObservableObject
             : $"{products.Count} أصناف في القاعدة المحلية";
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
 
-        Lines.CollectionChanged += (_, _) => NotifyTotals();
+        Lines.CollectionChanged += (_, _) => RefreshCheckout();
         _sync.Changed += HandleSyncChanged;
         var snap = _sync.Read();
         IsOnline = snap.IsOnline;
@@ -39,9 +39,11 @@ public partial class PosSession : ObservableObject
 
     public string CatalogCaption { get; }
 
-    public string ShellNotice { get; } = "هيكل التشغيل فقط — الدفع والطباعة وربط المنظومة يأتون في مرحلة البيع.";
+    public string ShellNotice { get; } = "نقد بالجنيه يُحفظ على هذا الجهاز. الطباعة ورفع البيع إلى المنظومة لم يُفعَّلا.";
 
     public Action? RequestCustomerDisplay { get; set; }
+
+    public event Action? TenderOpened;
 
     [ObservableProperty]
     private string _barcode = string.Empty;
@@ -70,6 +72,24 @@ public partial class PosSession : ObservableObject
     [ObservableProperty]
     private string _displayBanner = string.Empty;
 
+    [ObservableProperty]
+    private bool _isTendering;
+
+    [ObservableProperty]
+    private string _tenderText = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasSettlement;
+
+    [ObservableProperty]
+    private int _lastReceiptNo;
+
+    [ObservableProperty]
+    private long _lastChangeMinor;
+
+    [ObservableProperty]
+    private string _saleError = string.Empty;
+
     public string OnlineText => IsOnline ? "متصل" : "غير متصل";
 
     public string OutboxCaption => $"صندوق الصادر: {PendingOutbox.ToString(CultureInfo.InvariantCulture)}";
@@ -80,11 +100,62 @@ public partial class PosSession : ObservableObject
 
     public bool HasLines => Lines.Count > 0;
 
+    public bool CanBeginPayment => HasLines && !IsTendering;
+
     public string LineCountText => Lines.Count == 0 ? "السلة فارغة" : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} سطور";
 
-    public long TotalMinor => Lines.Sum(line => line.UnitPriceMinor * line.Qty);
+    public long TotalMinor => Lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
 
     public string TotalText => Money.FormatEgp(TotalMinor);
+
+    public bool ShowSettlement => HasSettlement && IsCartEmpty;
+
+    public string AmountLabel
+    {
+        get
+        {
+            if (IsTendering)
+                return "المستحق";
+            if (ShowSettlement)
+                return "الباقي";
+            return "الإجمالي";
+        }
+    }
+
+    public string AmountText => ShowSettlement ? Money.FormatEgp(LastChangeMinor) : TotalText;
+
+    public string SettlementText =>
+        $"تم البيع — إيصال {LastReceiptNo.ToString(CultureInfo.InvariantCulture)}";
+
+    public string IdleCustomerText => ShowSettlement ? "شكراً لكم" : "في انتظار المسح";
+
+    public bool ShowCustomerChange => IsTendering && CanConfirmCash;
+
+    public string CustomerChangeText => ShowCustomerChange
+        ? "الباقي " + Money.FormatEgp(ParsedTender - TotalMinor)
+        : string.Empty;
+
+    public bool CanConfirmCash =>
+        IsTendering
+        && HasLines
+        && Money.TryParseEgp(TenderText, out var tender)
+        && tender >= TotalMinor;
+
+    public string TenderHint
+    {
+        get
+        {
+            if (!string.IsNullOrEmpty(SaleError))
+                return SaleError;
+            if (!IsTendering)
+                return string.Empty;
+            if (!Money.TryParseEgp(TenderText, out var tender))
+                return "اكتب المبلغ المستلم، مثل 200 أو 200.50";
+            if (tender < TotalMinor)
+                return "المبلغ أقل من المستحق";
+            return "الباقي " + Money.FormatEgp(tender - TotalMinor);
+        }
+    }
 
     public IReadOnlyList<CatalogProduct> VisibleProducts
     {
@@ -102,9 +173,10 @@ public partial class PosSession : ObservableObject
 
     public void AddProduct(CatalogProduct product)
     {
+        HasSettlement = false;
         var existing = Lines.FirstOrDefault(line => line.ProductId == product.Id);
         if (existing is null)
-            Lines.Add(new CartLine(product, NotifyTotals, line => Lines.Remove(line)));
+            Lines.Add(new CartLine(product, RefreshCheckout, line => Lines.Remove(line)));
         else
             existing.Qty++;
 
@@ -145,19 +217,110 @@ public partial class PosSession : ObservableObject
 
     partial void OnDisplayBannerChanged(string value) => OnPropertyChanged(nameof(HasDisplayBanner));
 
+    partial void OnIsTenderingChanged(bool value) => RefreshCheckout();
+
+    partial void OnTenderTextChanged(string value)
+    {
+        SaleError = string.Empty;
+        RefreshCheckout();
+    }
+
+    partial void OnHasSettlementChanged(bool value) => RefreshCheckout();
+
+    partial void OnSaleErrorChanged(string value) => OnPropertyChanged(nameof(TenderHint));
+
     [RelayCommand]
-    private void ClearCart() => Lines.Clear();
+    private void ClearCart()
+    {
+        Lines.Clear();
+        IsTendering = false;
+        HasSettlement = false;
+        TenderText = string.Empty;
+        SaleError = string.Empty;
+    }
 
     [RelayCommand]
     private void ShowCustomerDisplay() => RequestCustomerDisplay?.Invoke();
 
-    private void NotifyTotals()
+    [RelayCommand]
+    private void BeginCashPayment()
+    {
+        if (!HasLines || IsTendering)
+            return;
+
+        HasSettlement = false;
+        SaleError = string.Empty;
+        TenderText = Money.FormatAmount(TotalMinor);
+        IsTendering = true;
+        TenderOpened?.Invoke();
+    }
+
+    [RelayCommand]
+    private void SetExactTender()
+    {
+        if (!HasLines)
+            return;
+        TenderText = Money.FormatAmount(TotalMinor);
+    }
+
+    [RelayCommand]
+    private void CancelTender()
+    {
+        IsTendering = false;
+        TenderText = string.Empty;
+        SaleError = string.Empty;
+    }
+
+    [RelayCommand]
+    private void ConfirmCash()
+    {
+        if (!CanConfirmCash || !Money.TryParseEgp(TenderText, out var tender))
+            return;
+
+        var lines = Lines
+            .Select(line => new CashSaleLine(line.ProductId, line.Barcode, line.NameAr, line.Qty, line.UnitPriceMinor))
+            .ToArray();
+
+        try
+        {
+            var sale = _database.CompleteCashSale(lines, tender);
+            LastReceiptNo = sale.ReceiptNo;
+            LastChangeMinor = sale.ChangeMinor;
+            TenderText = string.Empty;
+            IsTendering = false;
+            HasSettlement = true;
+            Lines.Clear();
+            PendingOutbox = _database.CountPendingOutbox();
+            ScanHint = $"تم حفظ الإيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)}";
+            PosLog.Info($"cashier confirmed receipt {sale.ReceiptNo}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("cash sale failed", ex);
+            SaleError = "تعذر حفظ البيع. السلة ما زالت هنا.";
+        }
+    }
+
+    private long ParsedTender =>
+        Money.TryParseEgp(TenderText, out var tender) ? tender : 0;
+
+    private void RefreshCheckout()
     {
         OnPropertyChanged(nameof(TotalMinor));
         OnPropertyChanged(nameof(TotalText));
         OnPropertyChanged(nameof(IsCartEmpty));
         OnPropertyChanged(nameof(HasLines));
+        OnPropertyChanged(nameof(CanBeginPayment));
+        OnPropertyChanged(nameof(CanConfirmCash));
         OnPropertyChanged(nameof(LineCountText));
+        OnPropertyChanged(nameof(AmountLabel));
+        OnPropertyChanged(nameof(AmountText));
+        OnPropertyChanged(nameof(TenderHint));
+        OnPropertyChanged(nameof(ShowCustomerChange));
+        OnPropertyChanged(nameof(CustomerChangeText));
+        OnPropertyChanged(nameof(ShowSettlement));
+        OnPropertyChanged(nameof(SettlementText));
+        OnPropertyChanged(nameof(IdleCustomerText));
     }
 
     private void HandleSyncChanged()

@@ -12,6 +12,7 @@ public partial class CartLine : ObservableObject
     public CartLine(CatalogProduct product, Action changed, Action<CartLine> remove)
     {
         ProductId = product.Id;
+        Barcode = product.Barcode;
         NameAr = product.NameAr;
         NameZh = product.NameZh;
         UnitPriceMinor = product.PriceEgpMinor;
@@ -21,6 +22,8 @@ public partial class CartLine : ObservableObject
     }
 
     public string ProductId { get; }
+
+    public string? Barcode { get; }
 
     public string NameAr { get; }
 
@@ -47,7 +50,12 @@ public partial class CartLine : ObservableObject
     }
 
     [RelayCommand]
-    private void Increment() => Qty++;
+    private void Increment()
+    {
+        if (Qty >= 999)
+            return;
+        Qty++;
+    }
 
     [RelayCommand]
     private void Decrement()

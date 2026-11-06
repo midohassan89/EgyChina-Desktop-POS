@@ -4,7 +4,7 @@ Local-first Windows cashier for **ايجي شاينا ماركت** at **سوق �
 
 Cashiers should not need the browser page at `/pos`. The Expo app `egychina-pos-app` stays the mobile terminal. Nothing here talks to WordPress or WooCommerce.
 
-This shell is not a checkout. It opens two windows, creates a SQLite database, and runs a sync worker that does not post sales. Pay, print, PIN, and the ERP push are specified and not built.
+Cash EGP checkout works offline. The app opens two windows, stores the sale in SQLite, and enqueues it. It does not post sales. Print, PIN, and the ERP push are not built.
 
 ## Docs
 
@@ -42,9 +42,9 @@ Demo barcodes, shelf prices in Egyptian pounds:
 | `2000000000025` | زيت ذرة ١ لتر | 62.50 |
 | `2000000000032` | شاي أخضر ٤٠٠ جم | 45.00 |
 
-Type a code into the barcode box and press Enter, or click the tile. The total on the customer window follows the cart. **إتمام الدفع** stays disabled.
+Type a code into the barcode box and press Enter, or click the tile. The total on the customer window follows the cart. **إتمام الدفع** turns on when the cart has lines. Enter the cash received (or keep the exact amount) and confirm. The cart clears, both windows show the change and the receipt number, and the sale stays in the local outbox.
 
-The sync line says the server address is not set. That is expected. The worker does not POST.
+The sync line says the server address is not set. That is expected. The worker does not POST, including after a sale.
 
 Optional probe only (still no sale upload):
 

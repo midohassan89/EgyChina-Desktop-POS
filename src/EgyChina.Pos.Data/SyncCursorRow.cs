@@ -42,6 +42,14 @@ public sealed record CatalogApplyResult(
     int DemoRemoved,
     string? ServerTime);
 
+/// <summary>ERP staff row for offline PIN login on the till.</summary>
+public sealed record ErpStaffDraft(
+    string Id,
+    string DisplayName,
+    string Role,
+    string Pin,
+    bool IsActive);
+
 /// <summary>Normalized ERP catalog row ready for local upsert.</summary>
 public sealed record CatalogProductDraft(
     string LocalId,

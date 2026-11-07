@@ -74,7 +74,7 @@ public sealed class SyncWorkerTests : IDisposable
 
         Assert.Equal("auth-missing", database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
         Assert.Equal(1, database.CountPendingOutbox());
-        Assert.Contains("اعتماد جهاز", status.Read().Message, StringComparison.Ordinal);
+        Assert.Contains("ربط الجهاز", status.Read().Message, StringComparison.Ordinal);
         await worker.DisposeAsync();
     }
 

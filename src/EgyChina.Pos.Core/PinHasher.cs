@@ -12,7 +12,8 @@ public static class PinHasher
     public const int Iterations = 210_000;
     public const int SaltSizeBytes = 16;
     public const int KeySizeBytes = 32;
-    public const int MinPinDigits = 6;
+    /// <summary>Matches ERP <c>User.pinCode</c> (4 digits) while still accepting longer local PINs.</summary>
+    public const int MinPinDigits = 4;
 
     /// <summary>Demo cashier PIN until ERP staff sync exists. Not a production secret.</summary>
     public const string BootstrapCashierPin = "246810";
@@ -22,7 +23,7 @@ public static class PinHasher
 
     public static bool IsValidFormat(string? pin)
     {
-        if (string.IsNullOrEmpty(pin) || pin.Length < MinPinDigits)
+        if (string.IsNullOrEmpty(pin) || pin.Length < MinPinDigits || pin.Length > 12)
             return false;
         for (var i = 0; i < pin.Length; i++)
         {
@@ -36,7 +37,7 @@ public static class PinHasher
     public static (string HashBase64, string SaltBase64) Hash(string pin)
     {
         if (!IsValidFormat(pin))
-            throw new ArgumentException("PIN must be at least 6 ASCII digits.", nameof(pin));
+            throw new ArgumentException("PIN must be 4–12 ASCII digits.", nameof(pin));
 
         var salt = RandomNumberGenerator.GetBytes(SaltSizeBytes);
         var hash = Pbkdf2(pin, salt);

@@ -76,14 +76,29 @@ public sealed class SyncWorker : IAsyncDisposable
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(_options.DeviceToken))
+        // Token may be saved after startup (manager PIN enroll) — reload each tick.
+        var deviceToken = !string.IsNullOrWhiteSpace(_options.DeviceToken)
+            ? _options.DeviceToken
+            : DeviceCredentialStore.Load();
+        if (string.IsNullOrWhiteSpace(deviceToken))
         {
             _database.WriteCursor(CursorStream, "auth-missing", null);
-            PublishLocalStatus("المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع.", online: false);
+            PublishLocalStatus("المزامنة تنتظر ربط الجهاز (PIN المدير). لا يُرسل بيع.", online: false);
             return;
         }
 
-        var saleBlock = _options.TransmissionBlock();
+        var effectiveOptions = new SyncOptions
+        {
+            BaseAddress = _options.BaseAddress,
+            DeviceToken = deviceToken,
+            PaymentMethod = _options.PaymentMethod,
+            MoneyScale = _options.MoneyScale,
+            CatalogPull = _options.CatalogPull,
+            Interval = _options.Interval,
+            HttpTimeout = _options.HttpTimeout,
+        };
+
+        var saleBlock = effectiveOptions.TransmissionBlock();
         var canTransmitSales = saleBlock is null;
         if (!canTransmitSales && !_options.CatalogPull)
         {
@@ -91,7 +106,7 @@ public sealed class SyncWorker : IAsyncDisposable
             {
                 "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
                 "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
-                "auth-missing" => ("auth-missing", "المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع."),
+                "auth-missing" => ("auth-missing", "المزامنة تنتظر ربط الجهاز (PIN المدير). لا يُرسل بيع."),
                 _ => (NotConfiguredCursor, "البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP لرفع المبيعات."),
             };
             _database.WriteCursor(CursorStream, cursor, null);
@@ -101,8 +116,8 @@ public sealed class SyncWorker : IAsyncDisposable
 
         var sync = new SaleOutboxSync(
             _database,
-            new ErpPosClient(_options.BaseAddress, _options.DeviceToken, _http),
-            _options,
+            new ErpPosClient(_options.BaseAddress, deviceToken, _http),
+            effectiveOptions,
             postSales: canTransmitSales);
         SyncTickResult result;
         try

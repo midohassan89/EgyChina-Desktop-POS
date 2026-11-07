@@ -113,7 +113,7 @@ public partial class App : Application
 
         var syncOptions = SyncOptions.FromEnvironment();
         var erpGateway = PosErpGateway.FromOptions(syncOptions);
-        _session = new PosSession(_database, products, status, demo, printer, erpGateway);
+        _session = new PosSession(_database, products, status, demo, printer, erpGateway, syncOptions);
         _session.RequestCustomerDisplay = ShowCustomer;
         var disk = DiskSpaceGuard.Check(_database.DatabasePath);
         if (disk.HasWarning)

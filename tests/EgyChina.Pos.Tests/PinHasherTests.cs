@@ -18,9 +18,10 @@ public sealed class PinHasherTests
     [Fact]
     public void Rejects_short_or_non_digit_pins()
     {
-        Assert.False(PinHasher.IsValidFormat("12345"));
-        Assert.False(PinHasher.IsValidFormat("12ab56"));
+        Assert.False(PinHasher.IsValidFormat("123"));
+        Assert.False(PinHasher.IsValidFormat("12ab"));
+        Assert.True(PinHasher.IsValidFormat("1234"));
         Assert.True(PinHasher.IsValidFormat("123456"));
-        Assert.Throws<ArgumentException>(() => PinHasher.Hash("12345"));
+        Assert.Throws<ArgumentException>(() => PinHasher.Hash("123"));
     }
 }

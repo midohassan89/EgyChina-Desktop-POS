@@ -25,14 +25,23 @@ public static class ErpCheckoutMapper
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(paymentMethod))
+        using var document = JsonDocument.Parse(payloadJson);
+        var root = document.RootElement;
+
+        var resolvedPayment = paymentMethod;
+        if (root.TryGetProperty("paymentMethod", out var paymentNode)
+            && paymentNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(paymentNode.GetString()))
+        {
+            resolvedPayment = paymentNode.GetString();
+        }
+
+        if (string.IsNullOrWhiteSpace(resolvedPayment))
         {
             blockReason = "payment-method-unverified";
             return false;
         }
 
-        using var document = JsonDocument.Parse(payloadJson);
-        var root = document.RootElement;
         if (!root.TryGetProperty("saleId", out var saleIdNode) || saleIdNode.ValueKind != JsonValueKind.String)
         {
             blockReason = "payload-missing-sale-id";
@@ -87,7 +96,7 @@ public static class ErpCheckoutMapper
 
         json = Write(
             saleIdNode.GetString()!,
-            paymentMethod.Trim(),
+            resolvedPayment.Trim(),
             total,
             createdAt ?? "",
             lines,

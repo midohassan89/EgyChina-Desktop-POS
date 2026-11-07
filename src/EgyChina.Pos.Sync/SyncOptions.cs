@@ -45,17 +45,19 @@ public sealed class SyncOptions
             return "auth-missing";
         if (MoneyScale == ErpMoneyScale.Unverified)
             return "money-scale-unverified";
-        if (string.IsNullOrWhiteSpace(PaymentMethod))
-            return "payment-method-unverified";
+        // Payment method comes from each sale payload (cash/visa/…). Env override is optional.
         return null;
     }
 
     public bool CanTransmit => TransmissionBlock() is null;
 
+    /// <summary>Production ERP origin used when <c>EGYCHINA_POS_API</c> is unset.</summary>
+    public static readonly Uri DefaultErpOrigin = new("https://erp.echinamart.com/");
+
     public static SyncOptions FromEnvironment()
     {
         var raw = Environment.GetEnvironmentVariable(EnvironmentVariable);
-        Uri? uri = null;
+        Uri? uri = DefaultErpOrigin;
         if (!string.IsNullOrWhiteSpace(raw))
         {
             var text = raw.Trim();
@@ -63,6 +65,7 @@ public sealed class SyncOptions
                 || (parsed.Scheme != Uri.UriSchemeHttps && parsed.Scheme != Uri.UriSchemeHttp))
             {
                 PosLog.Error($"{EnvironmentVariable} is not an absolute http(s) URL.");
+                uri = DefaultErpOrigin;
             }
             else
             {
@@ -72,9 +75,10 @@ public sealed class SyncOptions
 
         var scale = Environment.GetEnvironmentVariable(MoneyScaleVariable)?.Trim().ToLowerInvariant() switch
         {
-            "major" => ErpMoneyScale.MajorUnits,
             "minor" => ErpMoneyScale.MinorUnits,
-            _ => ErpMoneyScale.Unverified,
+            "unverified" => ErpMoneyScale.Unverified,
+            // ERP checkout expects major EGP units (22.00). Default major when unset.
+            _ => ErpMoneyScale.MajorUnits,
         };
 
         var deviceToken = DeviceCredentialStore.ImportFromEnvironmentIfPresent();

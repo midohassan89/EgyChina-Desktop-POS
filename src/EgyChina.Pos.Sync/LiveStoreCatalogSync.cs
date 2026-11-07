@@ -83,9 +83,11 @@ public static class LiveStoreCatalogSync
                 products.Add(new Dictionary<string, object?>
                 {
                     ["id"] = numericId,
+                    ["wcId"] = numericId,
                     ["prismaId"] = product.Id.Trim(),
                     ["posKey"] = product.Id.Trim(),
                     ["sku"] = sku,
+                    ["barcode"] = barcode,
                     ["name"] = product.Name.Trim(),
                     ["nameEn"] = product.NameEn,
                     ["nameZh"] = product.NameZh,

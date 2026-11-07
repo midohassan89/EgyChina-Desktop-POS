@@ -7,6 +7,7 @@ using EgyChina.Pos.App.Services;
 using EgyChina.Pos.Core;
 using EgyChina.Pos.Data;
 using EgyChina.Pos.Printing;
+using EgyChina.Pos.Sync;
 
 namespace EgyChina.Pos.App.ViewModels;
 
@@ -17,6 +18,7 @@ public partial class PosSession : ObservableObject
     private readonly SyncStatus _sync;
     private readonly IReceiptPrinter _printer;
     private readonly IPosErpGateway _erp;
+    private readonly SyncOptions _syncOptions;
     private string? _lastSaleId;
     private DateTimeOffset? _settlementAt;
     private string? _highlightedLineId;
@@ -32,22 +34,26 @@ public partial class PosSession : ObservableObject
         SyncStatus sync,
         bool demoCatalog,
         IReceiptPrinter? printer = null,
-        IPosErpGateway? erpGateway = null)
+        IPosErpGateway? erpGateway = null,
+        SyncOptions? syncOptions = null)
     {
         _database = database;
         _products = products;
         _sync = sync;
         _printer = printer ?? new NullReceiptPrinter();
         _erp = erpGateway ?? NullPosErpGateway.Instance;
+        _syncOptions = syncOptions ?? SyncOptions.FromEnvironment();
         DatabasePath = database.DatabasePath;
         CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog);
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         NeedsLogin = true;
-        SessionCaption = "سجّل الدخول برقم سري من ٦ أرقام";
+        SessionCaption = "سجّل الدخول برقم PIN الموظف (٤ أرقام من منظومة ERP)";
         PrinterCaption = _printer.IsConfigured
             ? "الطابعة جاهزة"
             : "الطابعة غير مضبوطة — البيع يُحفظ ويمكن إعادة الطباعة لاحقاً";
         IsPrinterReady = _printer.IsConfigured;
+        NeedsDeviceLink = string.IsNullOrWhiteSpace(_syncOptions.DeviceToken)
+            && string.IsNullOrWhiteSpace(DeviceCredentialStore.Load());
 
         Lines.CollectionChanged += (_, _) => RefreshCheckout();
         _sync.Changed += HandleSyncChanged;
@@ -61,6 +67,7 @@ public partial class PosSession : ObservableObject
         RefreshShiftState();
         ReloadHeldCarts();
         ReloadCategories();
+        TryRestorePersistedSession();
     }
 
     public ObservableCollection<CartLine> Lines { get; } = new();
@@ -157,6 +164,18 @@ public partial class PosSession : ObservableObject
 
     [ObservableProperty]
     private bool _needsLogin = true;
+
+    [ObservableProperty]
+    private bool _needsDeviceLink;
+
+    [ObservableProperty]
+    private string _deviceLinkPin = string.Empty;
+
+    [ObservableProperty]
+    private string _deviceLinkError = string.Empty;
+
+    [ObservableProperty]
+    private bool _isDeviceLinkBusy;
 
     [ObservableProperty]
     private bool _needsOpenShift;
@@ -720,7 +739,8 @@ public partial class PosSession : ObservableObject
     {
         if (!CanOperate || IsTendering || ShowSupervisorPin)
             return;
-        BeginSupervisorChallenge(SupervisorActionKind.DeleteItem, line);
+        // Cashiers may remove cart lines freely; supervisor PIN is for returns only.
+        RemoveLineNow(line);
     }
 
     private void RemoveLineNow(CartLine line)
@@ -1642,21 +1662,13 @@ public partial class PosSession : ObservableObject
             return;
         }
 
-        _currentCashier = result.Cashier;
-        CashierName = result.Cashier.DisplayName;
-        NeedsLogin = false;
-        PinText = string.Empty;
-        AuthError = string.Empty;
-        RefreshShiftState();
-        OnPropertyChanged(nameof(SessionChipText));
-        RefreshCheckout();
-        RequestFocus(_currentShift is null ? UiFocusTarget.OpeningFloat : UiFocusTarget.Barcode);
+        ApplyCashierLogin(result.Cashier, persist: true);
     }
 
     [RelayCommand]
     private void LockSession()
     {
-        if (_currentCashier is null)
+        if (_currentCashier is null && !NeedsLogin)
             return;
 
         Lines.Clear();
@@ -1675,12 +1687,104 @@ public partial class PosSession : ObservableObject
         _currentCashier = null;
         CashierName = string.Empty;
         NeedsLogin = true;
+        _database.ClearCashierSession();
         SessionCaption = _currentShift is null
-            ? "الجهاز مقفل. أدخل الرقم السري."
-            : "الجهاز مقفل. الوردية ما زالت مفتوحة — أدخل الرقم السري للمتابعة.";
+            ? "تم تسجيل الخروج. أدخل PIN الموظف للدخول."
+            : "تم تسجيل الخروج. الوردية ما زالت مفتوحة — أدخل PIN الموظف للمتابعة.";
         OnPropertyChanged(nameof(SessionChipText));
         RefreshCheckout();
         RequestFocus(UiFocusTarget.Pin);
+    }
+
+    private void TryRestorePersistedSession()
+    {
+        var restored = _database.TryRestoreCashierSession();
+        if (restored is null)
+            return;
+        ApplyCashierLogin(restored, persist: true);
+    }
+
+    private void ApplyCashierLogin(CashierRecord cashier, bool persist)
+    {
+        _currentCashier = cashier;
+        CashierName = cashier.DisplayName;
+        NeedsLogin = false;
+        PinText = string.Empty;
+        AuthError = string.Empty;
+        if (persist)
+            _database.PersistCashierSession(cashier.Id);
+        RefreshShiftState();
+        OnPropertyChanged(nameof(SessionChipText));
+        RefreshCheckout();
+        RequestFocus(_currentShift is null ? UiFocusTarget.OpeningFloat : UiFocusTarget.Barcode);
+        _ = SyncStaffInBackgroundAsync();
+    }
+
+    [RelayCommand]
+    private async Task SubmitDeviceLinkAsync()
+    {
+        if (IsDeviceLinkBusy)
+            return;
+        DeviceLinkError = string.Empty;
+        IsDeviceLinkBusy = true;
+        try
+        {
+            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
+            var result = await DeviceEnrollmentClient.EnrollWithPinAsync(
+                origin,
+                _database.GetTerminalKey(),
+                DeviceLinkPin,
+                "EgyChina Desktop POS",
+                CancellationToken.None).ConfigureAwait(true);
+            DeviceLinkPin = string.Empty;
+            if (!result.Ok || string.IsNullOrWhiteSpace(result.Token))
+            {
+                DeviceLinkError = result.Error ?? "تعذر ربط الجهاز.";
+                return;
+            }
+
+            var staff = await DeviceEnrollmentClient.SyncStaffAsync(
+                _database,
+                origin,
+                result.Token,
+                CancellationToken.None).ConfigureAwait(true);
+            NeedsDeviceLink = false;
+            SessionCaption = staff.Upserted > 0
+                ? $"تم ربط الجهاز ومزامنة {staff.Upserted} موظف. سجّل الدخول بـ PIN الموظف."
+                : "تم ربط الجهاز. أضف PIN للموظفين من لوحة ERP ثم أعد فتح البرنامج أو اطلب مزامنة الموظفين.";
+            if (!string.IsNullOrWhiteSpace(staff.Error) && staff.Upserted == 0)
+                DeviceLinkError = staff.Error;
+            SyncMessage = "الجهاز مربوط بسيرفر ERP — جاهز لرفع المبيعات.";
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("device link failed", ex);
+            DeviceLinkError = ArabicUi.FromException(ex, "تعذر ربط الجهاز.");
+        }
+        finally
+        {
+            IsDeviceLinkBusy = false;
+        }
+    }
+
+    private async Task SyncStaffInBackgroundAsync()
+    {
+        try
+        {
+            var token = DeviceCredentialStore.Load() ?? _syncOptions.DeviceToken;
+            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
+            if (string.IsNullOrWhiteSpace(token) || origin is null)
+                return;
+            await DeviceEnrollmentClient.SyncStaffAsync(
+                _database,
+                origin,
+                token,
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("staff sync failed", ex);
+        }
     }
 
     [RelayCommand]

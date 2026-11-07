@@ -85,11 +85,11 @@
                   Classes="pos-chip-online"
                   Command="{Binding OpenOnlineOrdersCommand}"
                   IsEnabled="{Binding CanOpenOnlineOrders}" />
-          <Button Content="قفل"
+          <Button Content="تسجيل خروج"
                   Classes="pos-ghost"
                   Command="{Binding LockSessionCommand}"
                   IsEnabled="{Binding CanLock}"
-                  ToolTip.Tip="قفل الجلسة (F2)" />
+                  ToolTip.Tip="تسجيل خروج الكاشير (F2) — الجلسة تُحفظ حتى تضغط هنا" />
           <Button Content="المزيد ▾"
                   Classes="pos-chip-info"
                   Command="{Binding ToggleMoreActionsCommand}" />
@@ -224,17 +224,51 @@
               <Border Background="#0B1220" CornerRadius="16" Padding="14,12"
                       IsVisible="{Binding IsTendering}">
                 <StackPanel Spacing="10">
-                  <TextBlock Text="اختر طريقة الدفع" Foreground="#94A3B8" FontSize="13" />
+                  <TextBlock Text="اختر طريقة الدفع" Foreground="#94A3B8" FontSize="13" FontWeight="SemiBold" />
                   <UniformGrid Columns="3" Rows="2">
-                    <Button Content="كاش" Margin="0,0,6,6" Tag="Cash" Click="OnPaymentMethodClick" Classes="pos-tender" Background="#10B981" />
-                    <Button Content="فيزا" Margin="0,0,6,6" Tag="Visa" Click="OnPaymentMethodClick" Classes="pos-tender" Background="#3B82F6" />
-                    <Button Content="محفظة" Margin="0,0,0,6" Tag="Wallet" Click="OnPaymentMethodClick" Classes="pos-tender" Background="#14B8A6" />
-                    <Button Content="انستا باي" Margin="0,0,6,0" Tag="InstaPay" Click="OnPaymentMethodClick" Classes="pos-tender" Background="#A855F7" />
-                    <Button Content="وي شات" Margin="0,0,6,0" Tag="WeChat" Click="OnPaymentMethodClick" Classes="pos-tender" Background="#22C55E" />
+                    <Button Margin="4" Tag="Cash" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-cash"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="كاش" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="Cash" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="4" Tag="Visa" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-visa"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="فيزا" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="Visa" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="4" Tag="Wallet" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-wallet"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="محفظة" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="Wallet" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="4" Tag="InstaPay" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-instapay"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="انستا باي" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="InstaPay" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="4" Tag="WeChat" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-wechat"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="وي شات" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="WeChat" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
                   </UniformGrid>
-                  <TextBlock Text="{Binding PaymentMethodLabel}" FontSize="18" FontWeight="Bold" Foreground="#34D399" />
-                  <TextBlock Text="{Binding PaymentMethodLabelEn}" FontSize="13" Foreground="#CBD5E1" FlowDirection="LeftToRight" />
-                  <TextBlock Text="{Binding PaymentMethodLabelZh}" FontSize="13" Foreground="#94A3B8" />
+                  <Border Background="#111827" CornerRadius="12" Padding="12,10" BorderBrush="#334155" BorderThickness="1">
+                    <StackPanel Spacing="2">
+                      <TextBlock Text="{Binding PaymentMethodLabel}" FontSize="18" FontWeight="Bold" Foreground="#6EE7B7" />
+                      <TextBlock Text="{Binding PaymentMethodLabelEn}" FontSize="13" Foreground="#CBD5E1" FlowDirection="LeftToRight" />
+                      <TextBlock Text="{Binding PaymentMethodLabelZh}" FontSize="13" Foreground="#94A3B8" />
+                    </StackPanel>
+                  </Border>
 
                   <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
                     <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
@@ -815,6 +849,31 @@
     </Border>
   </Border>
 
+  <Border Background="#CC0F172A" IsVisible="{Binding NeedsDeviceLink}" ZIndex="25">
+    <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
+            Padding="28" Width="460" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="12">
+        <TextBlock Text="ربط الجهاز بسيرفر ERP" FontSize="22" FontWeight="Bold" Foreground="#0F172A" />
+        <TextBlock Text="أدخل PIN المدير أو الأدمن مرة واحدة لربط هذا الجهاز ورفع المبيعات ومزامنة موظفي الكاشير."
+                   TextWrapping="Wrap" Foreground="#64748B" />
+        <TextBox Text="{Binding DeviceLinkPin}"
+                 PlaceholderText="PIN المدير"
+                 PasswordChar="•"
+                 FontSize="28"
+                 MinHeight="52"
+                 FlowDirection="LeftToRight" />
+        <TextBlock Text="{Binding DeviceLinkError}" Foreground="#B91C1C" TextWrapping="Wrap" />
+        <Button Content="ربط الجهاز"
+                Classes="pos-primary"
+                Command="{Binding SubmitDeviceLinkCommand}"
+                IsEnabled="{Binding !IsDeviceLinkBusy}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                MinHeight="48" />
+      </StackPanel>
+    </Border>
+  </Border>
+
   <Border Background="#CC0F172A" IsVisible="{Binding NeedsLogin}" ZIndex="20">
     <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
             Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -823,7 +882,7 @@
         <TextBlock Text="{Binding SessionCaption}" TextWrapping="Wrap" Foreground="#64748B" />
         <TextBox x:Name="PinBox"
                  Text="{Binding PinText}"
-                 PlaceholderText="الرقم السري"
+                 PlaceholderText="PIN الموظف"
                  PasswordChar="•"
                  FontSize="28"
                  MinHeight="52"
@@ -860,7 +919,7 @@
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center"
                 MinHeight="48" />
-        <Button Content="قفل الجهاز"
+        <Button Content="تسجيل خروج"
                 Command="{Binding LockSessionCommand}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center" />

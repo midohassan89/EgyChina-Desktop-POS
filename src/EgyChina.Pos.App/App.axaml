@@ -65,12 +65,49 @@
       <Setter Property="Foreground" Value="White" />
       <Setter Property="FontWeight" Value="Bold" />
       <Setter Property="CornerRadius" Value="14" />
-      <Setter Property="MinHeight" Value="52" />
-      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="MinHeight" Value="64" />
+      <Setter Property="Padding" Value="10,12" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="BorderBrush" Value="#33FFFFFF" />
     </Style>
     <Style Selector="Button.pos-tender:pointerover /template/ ContentPresenter">
       <Setter Property="Foreground" Value="White" />
-      <Setter Property="Opacity" Value="0.92" />
+      <Setter Property="Opacity" Value="0.95" />
+    </Style>
+    <Style Selector="Button.pos-pay-cash">
+      <Setter Property="Background" Value="#059669" />
+    </Style>
+    <Style Selector="Button.pos-pay-visa">
+      <Setter Property="Background" Value="#2563EB" />
+    </Style>
+    <Style Selector="Button.pos-pay-wallet">
+      <Setter Property="Background" Value="#0D9488" />
+    </Style>
+    <Style Selector="Button.pos-pay-instapay">
+      <Setter Property="Background" Value="#7C3AED" />
+    </Style>
+    <Style Selector="Button.pos-pay-wechat">
+      <Setter Property="Background" Value="#16A34A" />
+    </Style>
+    <Style Selector="Button.pos-pay-cash:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#047857" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.pos-pay-visa:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#1D4ED8" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.pos-pay-wallet:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#0F766E" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.pos-pay-instapay:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#6D28D9" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.pos-pay-wechat:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#15803D" />
+      <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="Button.pos-qty">
       <Setter Property="Background" Value="#ECFDF5" />

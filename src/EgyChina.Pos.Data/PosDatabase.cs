@@ -239,6 +239,136 @@ public sealed class PosDatabase
         }
     }
 
+    public const string SessionCashierSettingKey = "session.cashier_id";
+    public const string StaffSourceSettingKey = "staff.source";
+
+    public void PersistCashierSession(string cashierId)
+    {
+        if (string.IsNullOrWhiteSpace(cashierId))
+            throw new ArgumentException("Cashier id is required.", nameof(cashierId));
+        WriteSetting(SessionCashierSettingKey, cashierId.Trim());
+    }
+
+    public void ClearCashierSession() => WriteSetting(SessionCashierSettingKey, string.Empty);
+
+    public CashierRecord? TryRestoreCashierSession()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            var cashierId = ReadSetting(connection, SessionCashierSettingKey);
+            if (string.IsNullOrWhiteSpace(cashierId))
+                return null;
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, display_name, role, is_active
+                FROM cashier
+                WHERE id = $id
+                LIMIT 1
+                """;
+            command.Parameters.AddWithValue("$id", cashierId.Trim());
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+                return null;
+            var active = reader.GetInt32(3) == 1;
+            if (!active)
+                return null;
+            return new CashierRecord(
+                reader.GetString(0),
+                reader.GetString(1),
+                ParseRole(reader.GetString(2)),
+                true);
+        }
+    }
+
+    /// <summary>
+    /// Replaces local demo staff with ERP users (PIN already hashed for offline login).
+    /// </summary>
+    public int UpsertErpStaff(IReadOnlyList<ErpStaffDraft> staff)
+    {
+        if (staff.Count == 0)
+            return 0;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var now = Now();
+            var upserted = 0;
+            foreach (var row in staff)
+            {
+                if (string.IsNullOrWhiteSpace(row.Id) || string.IsNullOrWhiteSpace(row.DisplayName))
+                    continue;
+                if (string.IsNullOrWhiteSpace(row.Pin))
+                    continue;
+                if (!PinHasher.IsValidFormat(row.Pin))
+                    continue;
+
+                var role = row.Role switch
+                {
+                    "ADMIN" or "MANAGER" => "manager",
+                    "ACCOUNTANT" => "supervisor",
+                    _ => "cashier",
+                };
+                var (hash, salt) = PinHasher.Hash(row.Pin);
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    INSERT INTO cashier (id, display_name, role, pin_hash, pin_salt, is_active, updated_at, failed_attempts, locked_until)
+                    VALUES ($id, $name, $role, $hash, $salt, $active, $now, 0, NULL)
+                    ON CONFLICT (id) DO UPDATE SET
+                      display_name = excluded.display_name,
+                      role = excluded.role,
+                      pin_hash = excluded.pin_hash,
+                      pin_salt = excluded.pin_salt,
+                      is_active = excluded.is_active,
+                      updated_at = excluded.updated_at,
+                      failed_attempts = 0,
+                      locked_until = NULL;
+                    """;
+                command.Parameters.AddWithValue("$id", row.Id.Trim());
+                command.Parameters.AddWithValue("$name", row.DisplayName.Trim());
+                command.Parameters.AddWithValue("$role", role);
+                command.Parameters.AddWithValue("$hash", hash);
+                command.Parameters.AddWithValue("$salt", salt);
+                command.Parameters.AddWithValue("$active", row.IsActive ? 1 : 0);
+                command.Parameters.AddWithValue("$now", now);
+                command.ExecuteNonQuery();
+                upserted++;
+            }
+
+            if (upserted > 0)
+            {
+                using (var deactivateBootstrap = connection.CreateCommand())
+                {
+                    deactivateBootstrap.CommandText = """
+                        UPDATE cashier
+                        SET is_active = 0, updated_at = $now
+                        WHERE id IN ($local, $supervisor)
+                        """;
+                    deactivateBootstrap.Parameters.AddWithValue("$now", now);
+                    deactivateBootstrap.Parameters.AddWithValue("$local", LocalCashierId);
+                    deactivateBootstrap.Parameters.AddWithValue("$supervisor", LocalSupervisorId);
+                    deactivateBootstrap.ExecuteNonQuery();
+                }
+
+                WriteSetting(connection, StaffSourceSettingKey, "erp");
+            }
+
+            tx.Commit();
+            return upserted;
+        }
+    }
+
+    public string GetTerminalKey()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return TerminalId(connection);
+        }
+    }
+
     public int GetSchemaVersion()
     {
         lock (_gate)
@@ -830,6 +960,10 @@ public sealed class PosDatabase
                         continue;
 
                     var existingId = FindCatalogMatchId(connection, draft);
+                    var targetId = existingId ?? draft.LocalId;
+                    // Free barcode/SKU held by other rows so this upsert can own them.
+                    ReleaseCatalogIdentityConflicts(connection, targetId, draft, now);
+
                     if (existingId is null)
                     {
                         InsertCatalogProduct(connection, draft, now);
@@ -1118,6 +1252,14 @@ public sealed class PosDatabase
         return null;
     }
 
+    private static string? FindProductIdExact(SqliteConnection connection, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM product WHERE id = $id LIMIT 1";
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar() as string;
+    }
+
     private static string? FindCatalogMatchId(SqliteConnection connection, CatalogProductDraft draft)
     {
         using (var byId = connection.CreateCommand())
@@ -1168,6 +1310,51 @@ public sealed class PosDatabase
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Clears barcode/SKU uniqueness held by other rows so a live ERP upsert can own them.
+    /// Stale owners are soft-deactivated (sale history stays on the old id).
+    /// </summary>
+    private static void ReleaseCatalogIdentityConflicts(
+        SqliteConnection connection,
+        string keepId,
+        CatalogProductDraft draft,
+        string now)
+    {
+        if (!string.IsNullOrWhiteSpace(draft.Barcode))
+        {
+            using var clearBarcode = connection.CreateCommand();
+            clearBarcode.CommandText = """
+                UPDATE product
+                SET barcode = NULL,
+                    is_active = CASE WHEN id = $keep THEN is_active ELSE 0 END,
+                    updated_at = $now
+                WHERE barcode = $barcode
+                  AND id <> $keep
+                """;
+            clearBarcode.Parameters.AddWithValue("$barcode", draft.Barcode);
+            clearBarcode.Parameters.AddWithValue("$keep", keepId);
+            clearBarcode.Parameters.AddWithValue("$now", now);
+            clearBarcode.ExecuteNonQuery();
+        }
+
+        if (!string.IsNullOrWhiteSpace(draft.Sku))
+        {
+            using var clearSku = connection.CreateCommand();
+            clearSku.CommandText = """
+                UPDATE product
+                SET sku = 'OLD:' || id,
+                    is_active = CASE WHEN id = $keep THEN is_active ELSE 0 END,
+                    updated_at = $now
+                WHERE sku = $sku
+                  AND id <> $keep
+                """;
+            clearSku.Parameters.AddWithValue("$sku", draft.Sku);
+            clearSku.Parameters.AddWithValue("$keep", keepId);
+            clearSku.Parameters.AddWithValue("$now", now);
+            clearSku.ExecuteNonQuery();
+        }
     }
 
     private static void InsertCatalogProduct(SqliteConnection connection, CatalogProductDraft draft, string now)
@@ -1572,12 +1759,13 @@ public sealed class PosDatabase
     public PinAuthResult TryAuthenticatePin(string pin)
     {
         if (!PinHasher.IsValidFormat(pin))
-            return new PinAuthResult(PinAuthStatus.InvalidFormat, null, "الرقم السري يجب أن يكون ٦ أرقام على الأقل.");
+            return new PinAuthResult(PinAuthStatus.InvalidFormat, null, "الرقم السري يجب أن يكون ٤ أرقام على الأقل.");
 
         lock (_gate)
         {
             using var connection = Open();
-            EnsureBootstrapCashiers(connection);
+            if (!string.Equals(ReadSetting(connection, "staff.source"), "erp", StringComparison.Ordinal))
+                EnsureBootstrapCashiers(connection);
             var now = DateTimeOffset.UtcNow;
             if (ReadGlobalLockout(connection, now) is { } lockedUntil)
             {

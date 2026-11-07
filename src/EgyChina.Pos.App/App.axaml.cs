@@ -5,6 +5,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Threading;
+using EgyChina.Pos.App.Services;
 using EgyChina.Pos.App.ViewModels;
 using EgyChina.Pos.App.Views;
 using EgyChina.Pos.Core;
@@ -73,13 +74,16 @@ public partial class App : Application
         PosLog.SetDirectory(PosPaths.LogDirectory());
         try
         {
-            PosPaths.EnsurePaymentQrAssets();
+            PosPaths.EnsureUiAssets();
+            var logo = BrandLogo.Bitmap;
+            if (logo is not null)
+                Resources["BrandLogo"] = logo;
             PosLog.Info(
-                $"payment QR wechat={(File.Exists(PosPaths.WeChatQrFile()) ? "ok" : "missing")} instapay={(File.Exists(PosPaths.InstaPayQrFile()) ? "ok" : "missing")}");
+                $"ui assets logo={(logo is null ? "missing" : "ok")} wechat={(File.Exists(PosPaths.WeChatQrFile()) ? "ok" : "missing")} instapay={(File.Exists(PosPaths.InstaPayQrFile()) ? "ok" : "missing")}");
         }
         catch (Exception ex)
         {
-            PosLog.Error("payment QR seed failed", ex);
+            PosLog.Error("ui asset seed failed", ex);
         }
 
         _database = new PosDatabase(PosPaths.DatabaseFile());

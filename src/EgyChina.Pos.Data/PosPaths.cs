@@ -29,6 +29,9 @@ public static class PosPaths
 
     public static string InstaPayQrFile() => ResolveAssetFile("instapay-qr.jpeg");
 
+    /// <summary>Arabic wordmark + mark. Prefer PNG for Avalonia Bitmap (webp/svg also kept in repo).</summary>
+    public static string LogoArFile() => ResolveAssetFile("logo-ar.png");
+
     /// <summary>
     /// Prefers the writable till data folder, then copies from app/content/dev folders if needed.
     /// </summary>
@@ -58,12 +61,19 @@ public static class PosPaths
     }
 
     /// <summary>
-    /// Seeds both payment QR files into the till assets directory from known locations.
+    /// Seeds payment QR files into the till assets directory from known locations.
     /// </summary>
     public static void EnsurePaymentQrAssets()
     {
         _ = ResolveAssetFile("wechat-qr.jpg");
         _ = ResolveAssetFile("instapay-qr.jpeg");
+    }
+
+    /// <summary>Seeds brand logo (+ payment QR) for cashier/CFD chrome.</summary>
+    public static void EnsureUiAssets()
+    {
+        _ = ResolveAssetFile("logo-ar.png");
+        EnsurePaymentQrAssets();
     }
 
     private static IEnumerable<string> EnumerateAssetCandidates(string fileName)
@@ -85,6 +95,7 @@ public static class PosPaths
         if (!string.IsNullOrWhiteSpace(desktop))
         {
             yield return Path.Combine(desktop, "EgyChina-Desktop-POS", "assets", fileName);
+            yield return Path.Combine(desktop, "ERP", "public", "logos", fileName);
             yield return Path.Combine(desktop, "ERP", "public", "uploads", "images", fileName);
             yield return Path.Combine(desktop, "ERP", "assets", fileName);
         }

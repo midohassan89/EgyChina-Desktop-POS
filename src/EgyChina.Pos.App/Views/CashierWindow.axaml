@@ -19,9 +19,13 @@
       <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
         <StackPanel Spacing="4" VerticalAlignment="Center">
           <StackPanel Orientation="Horizontal" Spacing="10">
-            <Border Width="36" Height="36" CornerRadius="10" Background="#059669" VerticalAlignment="Center">
-              <TextBlock Text="EC" FontSize="14" FontWeight="Bold" Foreground="White"
-                         HorizontalAlignment="Center" VerticalAlignment="Center" FlowDirection="LeftToRight" />
+            <Border Height="40" MinWidth="40" MaxWidth="168" CornerRadius="10" Background="#000000"
+                    Padding="6,4" VerticalAlignment="Center" ClipToBounds="True">
+              <Image Source="{DynamicResource BrandLogo}"
+                     Stretch="Uniform"
+                     Height="32"
+                     HorizontalAlignment="Center"
+                     VerticalAlignment="Center" />
             </Border>
             <TextBlock Text="ايجي شاينا ماركت" FontSize="22" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center" />
             <Border Background="#064E3B" CornerRadius="999" Padding="10,3" VerticalAlignment="Center" BorderBrush="#10B981" BorderThickness="1">
@@ -454,11 +458,14 @@
                               Background="#F1F5F9"
                               ClipToBounds="True">
                         <Grid>
-                          <Border Background="#ECFDF5"
+                          <Border Background="#0B1220"
                                   IsVisible="{Binding Converter={StaticResource MissingProductImage}}">
-                            <TextBlock Text="EC" FontSize="22" FontWeight="Bold" Foreground="#059669"
-                                       HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       FlowDirection="LeftToRight" />
+                            <Image Source="{DynamicResource BrandLogo}"
+                                   Stretch="Uniform"
+                                   Margin="18"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Opacity="0.95" />
                           </Border>
                           <Image Source="{Binding Converter={StaticResource ProductImage}}"
                                  Stretch="UniformToFill"

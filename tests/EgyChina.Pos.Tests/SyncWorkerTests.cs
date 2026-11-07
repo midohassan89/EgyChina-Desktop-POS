@@ -63,6 +63,7 @@ public sealed class SyncWorkerTests : IDisposable
             database,
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
             8500);
+        database.LinkErpNumericId("demo-rice", 55, "p-rice");
         var status = new SyncStatus();
         // Unreachable local port — store checkout is attempted without device Bearer.
         var worker = new SyncWorker(database, status, new SyncOptions

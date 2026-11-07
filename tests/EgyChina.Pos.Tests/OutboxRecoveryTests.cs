@@ -78,6 +78,13 @@ public sealed class OutboxRecoveryTests : IDisposable
     public async Task Unlinked_product_stays_pending_not_dead()
     {
         var database = SeedSale(link: false);
+        var row0 = Assert.Single(database.ListPendingSales(5));
+        // Non-demo local id: wait for catalog link. (demo-* is poison and goes dead.)
+        RewritePayload(database, row0.Id, $$"""
+            {"saleId":"{{row0.AggregateId}}","paymentMethod":"cash","totalMinor":8500,"lines":[
+              {"productId":"local-orphan","nameAr":"أرز","qtyMilli":1000,"unitPriceMinor":8500,"lineTotalMinor":8500}
+            ]}
+            """);
         await using var server = await StubServer.Start(context =>
         {
             Assert.Fail("must not POST an unlinked product");

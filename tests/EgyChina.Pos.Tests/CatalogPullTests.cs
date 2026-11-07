@@ -52,7 +52,8 @@ public sealed class CatalogPullTests : IDisposable
                   "price":"99.50",
                   "regular_price":"99.50",
                   "sale_price":"",
-                  "meta_data":[{"key":"_op_barcode","value":"6223000000001"}]
+                  "meta_data":[{"key":"_op_barcode","value":"6223000000001"}],
+                  "images":[{"id":0,"src":"/uploads/products/rice.jpg"}]
                 }
               ],
               "removedPrismaIds":[]
@@ -70,6 +71,7 @@ public sealed class CatalogPullTests : IDisposable
         Assert.Equal("RICE-5KG", product.Sku);
         Assert.Equal("6223000000001", product.Barcode);
         Assert.Equal(9_950, product.PriceEgpMinor);
+        Assert.Equal("/uploads/products/rice.jpg", product.ImageUrl);
         Assert.Equal(9042, database.TryGetErpNumericId("clrice001"));
     }
 

@@ -70,7 +70,7 @@ public sealed class BackupAndLogTests : IDisposable
     {
         var database = new PosDatabase(Path.Combine(_directory, "pos.db"));
         database.Initialize();
-        Assert.Equal(6, database.GetSchemaVersion());
+        Assert.Equal(7, database.GetSchemaVersion());
 
         var backups = Path.Combine(_directory, "backups");
         var first = DatabaseBackup.Create(

@@ -68,14 +68,30 @@ public sealed class SyncWorker : IAsyncDisposable
 
     public async Task TickAsync(CancellationToken cancellationToken)
     {
-        var block = _options.TransmissionBlock();
-        if (block is not null || _http is null || _options.BaseAddress is null || string.IsNullOrWhiteSpace(_options.DeviceToken))
+        // Catalog pull needs API + device token only. Sale transmission still needs money/payment gates.
+        if (_http is null || _options.BaseAddress is null)
         {
-            var (cursor, message) = block switch
+            _database.WriteCursor(CursorStream, NotConfiguredCursor, null);
+            PublishLocalStatus("المزامنة المحلية تعمل. عنوان الخادم غير مضبوط.", online: false);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_options.DeviceToken))
+        {
+            _database.WriteCursor(CursorStream, "auth-missing", null);
+            PublishLocalStatus("المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع.", online: false);
+            return;
+        }
+
+        var saleBlock = _options.TransmissionBlock();
+        var canTransmitSales = saleBlock is null;
+        if (!canTransmitSales && !_options.CatalogPull)
+        {
+            var (cursor, message) = saleBlock switch
             {
-                "auth-missing" => ("auth-missing", "المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع."),
                 "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
                 "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
+                "auth-missing" => ("auth-missing", "المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع."),
                 _ => (NotConfiguredCursor, "المزامنة المحلية تعمل. عنوان الخادم غير مضبوط."),
             };
             _database.WriteCursor(CursorStream, cursor, null);
@@ -83,7 +99,11 @@ public sealed class SyncWorker : IAsyncDisposable
             return;
         }
 
-        var sync = new SaleOutboxSync(_database, new ErpPosClient(_options.BaseAddress, _options.DeviceToken, _http), _options);
+        var sync = new SaleOutboxSync(
+            _database,
+            new ErpPosClient(_options.BaseAddress, _options.DeviceToken, _http),
+            _options,
+            postSales: canTransmitSales);
         SyncTickResult result;
         try
         {
@@ -104,6 +124,8 @@ public sealed class SyncWorker : IAsyncDisposable
             "catalog-rejected" => "تعذر قراءة الأصناف من /api/products. لم يُقبل بيع.",
             "idle" when result.Accepted > 0 => "قُبلت مبيعات على الخادم دون تكرار محلي.",
             "idle" when result.MarkedDead > 0 => "بعض المبيعات معلّمة كتالفة محلياً؛ الإيصال محفوظ.",
+            "idle" when !canTransmitSales && _options.CatalogPull =>
+                "الكتالوج محدَّث. إرسال المبيعات ينتظر وحدة المبلغ وطريقة الدفع.",
             "idle" when left == 0 && snap.Dead == 0 =>
                 _options.CatalogPull
                     ? "الكتالوج والمبيعات المحلية محدَّثان."

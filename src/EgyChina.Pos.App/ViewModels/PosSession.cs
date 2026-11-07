@@ -947,6 +947,14 @@ public partial class PosSession : ObservableObject
             : $"أُزيل من المفضلة: {product.NameAr}";
     }
 
+    /// <summary>Rebinds catalog cards after local product images are downloaded.</summary>
+    public void NotifyCatalogVisualRefresh()
+    {
+        OnPropertyChanged(nameof(VisibleProducts));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
+    }
+
     [RelayCommand]
     private void OpenPriceCheck()
     {

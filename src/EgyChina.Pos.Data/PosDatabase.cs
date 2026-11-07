@@ -20,7 +20,8 @@ public sealed class PosDatabase
 
     private const string ProductSelect = """
         SELECT p.id, p.sku, p.barcode, p.name_ar, p.name_en, p.name_zh, pr.amount_minor,
-               CASE WHEN f.product_id IS NULL THEN 0 ELSE 1 END AS is_favorite
+               CASE WHEN f.product_id IS NULL THEN 0 ELSE 1 END AS is_favorite,
+               p.image_url
         FROM product p
         INNER JOIN product_price pr ON pr.product_id = p.id AND pr.currency = 'EGP'
         LEFT JOIN product_favorite f ON f.product_id = p.id
@@ -103,6 +104,13 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "006_payment_wallet.sql");
                 MarkMigration(connection, 6, "payment-wallet");
+                version = 6;
+            }
+
+            if (version < 7)
+            {
+                ApplyMigrationScript(connection, "007_product_image.sql");
+                MarkMigration(connection, 7, "product-image");
             }
 
             EnsureTerminal(connection);
@@ -983,8 +991,37 @@ public sealed class PosDatabase
             numericId,
             isPackage ? prismaId : (prismaId ?? localId),
             priceMinor,
-            isPackage);
+            isPackage,
+            ReadImageUrl(product));
         return true;
+    }
+
+    private static string? ReadImageUrl(JsonElement product)
+    {
+        if (product.TryGetProperty("imageUrl", out var imageUrlNode)
+            && imageUrlNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(imageUrlNode.GetString()))
+        {
+            return imageUrlNode.GetString()!.Trim();
+        }
+
+        if (product.TryGetProperty("images", out var images)
+            && images.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var image in images.EnumerateArray())
+            {
+                if (image.ValueKind != JsonValueKind.Object)
+                    continue;
+                if (image.TryGetProperty("src", out var src)
+                    && src.ValueKind == JsonValueKind.String
+                    && !string.IsNullOrWhiteSpace(src.GetString()))
+                {
+                    return src.GetString()!.Trim();
+                }
+            }
+        }
+
+        return null;
     }
 
     private static string? FindCatalogMatchId(SqliteConnection connection, CatalogProductDraft draft)
@@ -1046,10 +1083,10 @@ public sealed class PosDatabase
             product.CommandText = """
                 INSERT INTO product (
                   id, sku, barcode, name_ar, name_en, name_zh, unit_ar,
-                  tax_rate_bps, is_active, updated_at, erp_numeric_id, prisma_id
+                  tax_rate_bps, is_active, updated_at, erp_numeric_id, prisma_id, image_url
                 ) VALUES (
                   $id, $sku, $barcode, $nameAr, $nameEn, $nameZh, $unit,
-                  0, 1, $now, $erp, $prisma
+                  0, 1, $now, $erp, $prisma, $image
                 );
                 """;
             BindCatalogProduct(product, draft.LocalId, draft, now);
@@ -1085,7 +1122,8 @@ public sealed class PosDatabase
                     is_active = 1,
                     updated_at = $now,
                     erp_numeric_id = $erp,
-                    prisma_id = COALESCE($prisma, prisma_id)
+                    prisma_id = COALESCE($prisma, prisma_id),
+                    image_url = COALESCE($image, image_url)
                 WHERE id = $id
                 """;
             BindCatalogProduct(product, existingId, draft, now);
@@ -1119,6 +1157,32 @@ public sealed class PosDatabase
         command.Parameters.AddWithValue("$now", now);
         command.Parameters.AddWithValue("$erp", draft.ErpNumericId);
         command.Parameters.AddWithValue("$prisma", (object?)draft.PrismaId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$image", (object?)draft.ImageUrl ?? DBNull.Value);
+    }
+
+    /// <summary>Active products that still need a remote image download.</summary>
+    public IReadOnlyList<(string ProductId, string? ImageUrl)> ListProductsWithImageUrls(int limit = 5000)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, image_url
+                FROM product
+                WHERE is_active = 1
+                  AND image_url IS NOT NULL
+                  AND TRIM(image_url) <> ''
+                ORDER BY name_ar
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$limit", Math.Max(1, limit));
+            using var reader = command.ExecuteReader();
+            var rows = new List<(string, string?)>();
+            while (reader.Read())
+                rows.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1)));
+            return rows;
+        }
     }
 
     /// <summary>
@@ -2472,7 +2536,8 @@ public sealed class PosDatabase
             reader.IsDBNull(4) ? null : reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.GetInt64(6),
-            reader.FieldCount > 7 && !reader.IsDBNull(7) && reader.GetInt64(7) != 0);
+            reader.FieldCount > 7 && !reader.IsDBNull(7) && reader.GetInt64(7) != 0,
+            reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetString(8) : null);
     }
 
     private static string? ReadSetting(SqliteConnection connection, string key)

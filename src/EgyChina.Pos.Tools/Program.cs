@@ -12,6 +12,7 @@ return args[0].ToLowerInvariant() switch
     "restore" => RunRestore(args.Skip(1).ToArray()),
     "heartbeat-check" => RunHeartbeatCheck(args.Skip(1).ToArray()),
     "has-open-shift" => RunHasOpenShift(args.Skip(1).ToArray()),
+    "import-catalog" => RunImportCatalog(args.Skip(1).ToArray()),
     _ => Fail($"Unknown command '{args[0]}'."),
 };
 
@@ -75,6 +76,28 @@ static int RunHasOpenShift(string[] args)
     return open ? 10 : 0;
 }
 
+static int RunImportCatalog(string[] args)
+{
+    if (args.Length < 2)
+        return Fail("Usage: import-catalog <erp-products.json> <pos.db>");
+
+    var jsonPath = Path.GetFullPath(args[0]);
+    var dbPath = Path.GetFullPath(args[1]);
+    if (!File.Exists(jsonPath))
+        return Fail("JSON not found: " + jsonPath);
+
+    Directory.CreateDirectory(Path.GetDirectoryName(dbPath) ?? ".");
+    var json = File.ReadAllText(jsonPath);
+    var database = new PosDatabase(dbPath);
+    database.Initialize();
+    var before = database.CountProducts();
+    var result = database.ApplyCatalogFromErpJson(json);
+    var after = database.CountProducts();
+    Console.WriteLine(
+        $"OK catalog upserted={result.Upserted} deactivated={result.Deactivated} demoRemoved={result.DemoRemoved} before={before} after={after} source={database.GetSetting("catalog.source")}");
+    return 0;
+}
+
 static int Fail(string message)
 {
     Console.Error.WriteLine(message);
@@ -88,5 +111,6 @@ static void PrintHelp()
           restore <backup.db> <live-pos.db> [--force]
           heartbeat-check <data-root> <expected-version> [max-age-seconds]
           has-open-shift <pos.db>
+          import-catalog <erp-products.json> <pos.db>
         """);
 }

@@ -37,4 +37,5 @@ public sealed record CatalogProductDraft(
     long ErpNumericId,
     string? PrismaId,
     long PriceEgpMinor,
-    bool IsPackage);
+    bool IsPackage,
+    string? ImageUrl = null);

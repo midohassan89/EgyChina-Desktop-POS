@@ -120,6 +120,7 @@ public partial class App : Application
 
         _worker = new SyncWorker(_database, status, syncOptions);
         _worker.Start();
+        StartProductImageWarmup(_database, _session, syncOptions.BaseAddress);
 
         var cashier = new CashierWindow { DataContext = _session };
         cashier.Opened += (_, _) => PlaceWindows(moveCashier: !_cashierPlaced);
@@ -137,6 +138,38 @@ public partial class App : Application
         {
             PosLog.Error("heartbeat write failed", ex);
         }
+    }
+
+    private static void StartProductImageWarmup(PosDatabase database, PosSession session, Uri? mediaBase)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var items = database.ListProductsWithImageUrls();
+                var pending = items
+                    .Where(item => ProductImageCache.TryLocalPath(item.ProductId) is null)
+                    .ToList();
+                if (pending.Count == 0)
+                {
+                    PosLog.Info("product images already cached");
+                    return;
+                }
+
+                PosLog.Info($"product image warmup start pending={pending.Count}");
+                var warmed = await ProductImageCache.WarmAsync(
+                    pending,
+                    mediaBase ?? ProductImageCache.DefaultMediaBase(),
+                    maxDownloads: pending.Count,
+                    CancellationToken.None).ConfigureAwait(false);
+                PosLog.Info($"product image warmup done warmed={warmed}");
+                await Dispatcher.UIThread.InvokeAsync(() => session.NotifyCatalogVisualRefresh());
+            }
+            catch (Exception ex)
+            {
+                PosLog.Error("product image warmup failed", ex);
+            }
+        });
     }
 
     private static string ReadAppVersion()

@@ -27,12 +27,14 @@ public sealed class SaleOutboxSync
     private readonly PosDatabase _database;
     private readonly ErpPosClient _client;
     private readonly SyncOptions _options;
+    private readonly bool _postSales;
 
-    public SaleOutboxSync(PosDatabase database, ErpPosClient client, SyncOptions options)
+    public SaleOutboxSync(PosDatabase database, ErpPosClient client, SyncOptions options, bool postSales = true)
     {
         _database = database;
         _client = client;
         _options = options;
+        _postSales = postSales;
     }
 
     public static bool IsPoisonBlock(string? block) =>
@@ -57,6 +59,20 @@ public sealed class SaleOutboxSync
                 _database.WriteCursor(PosDatabase.CatalogCursorStream, applied.ServerTime, null);
             else
                 _database.WriteCursor(PosDatabase.CatalogCursorStream, DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), null);
+        }
+
+        if (!_postSales)
+        {
+            var catalogOnlySnap = _database.ReadOutboxSnapshot();
+            return new SyncTickResult(
+                Code: "idle",
+                Detail: "catalog-only",
+                Posted: 0,
+                Accepted: 0,
+                Pending: catalogOnlySnap.Pending + catalogOnlySnap.Inflight,
+                Recovered: recovered,
+                MarkedDead: 0,
+                Snapshot: catalogOnlySnap);
         }
 
         var rows = _database.ListPendingSales(20);

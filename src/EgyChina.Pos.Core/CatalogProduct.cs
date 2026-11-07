@@ -8,13 +8,16 @@ public sealed record CatalogProduct(
     string? NameEn,
     string? NameZh,
     long PriceEgpMinor,
-    bool IsFavorite = false)
+    bool IsFavorite = false,
+    string? ImageUrl = null)
 {
     public string PriceEgpText => Money.FormatEgp(PriceEgpMinor);
 
     public bool HasNameZh => !string.IsNullOrWhiteSpace(NameZh);
 
     public string FavoriteGlyph => IsFavorite ? "★" : "☆";
+
+    public bool HasImageUrl => !string.IsNullOrWhiteSpace(ImageUrl);
 }
 
 public enum CatalogTab

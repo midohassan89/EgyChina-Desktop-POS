@@ -3,6 +3,7 @@ using Xunit;
 
 namespace EgyChina.Pos.Tests;
 
+[Collection("PosPathsSerial")]
 public sealed class PaymentQrAssetTests : IDisposable
 {
     private readonly string _directory;

@@ -4,6 +4,7 @@ using Xunit;
 
 namespace EgyChina.Pos.Tests;
 
+[Collection("PosPathsSerial")]
 public sealed class DeviceCredentialStoreTests : IDisposable
 {
     private readonly string _tempRoot;

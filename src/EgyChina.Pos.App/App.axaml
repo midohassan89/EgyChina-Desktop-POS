@@ -1,46 +1,119 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="using:EgyChina.Pos.App.Converters"
              x:Class="EgyChina.Pos.App.App"
              RequestedThemeVariant="Light">
   <Application.Resources>
+    <conv:ProductImageConverter x:Key="ProductImage" />
+    <conv:HasProductImageConverter x:Key="HasProductImage" />
+    <conv:MissingProductImageConverter x:Key="MissingProductImage" />
     <SolidColorBrush x:Key="PosBrandBrush" Color="#059669" />
     <SolidColorBrush x:Key="PosBrandDarkBrush" Color="#047857" />
+    <SolidColorBrush x:Key="PosBrandSoftBrush" Color="#ECFDF5" />
     <SolidColorBrush x:Key="PosSlate900Brush" Color="#0F172A" />
     <SolidColorBrush x:Key="PosSlate800Brush" Color="#1E293B" />
+    <SolidColorBrush x:Key="PosSlate700Brush" Color="#334155" />
     <SolidColorBrush x:Key="PosSlate200Brush" Color="#E2E8F0" />
+    <SolidColorBrush x:Key="PosSlate100Brush" Color="#F1F5F9" />
     <SolidColorBrush x:Key="PosSurfaceBrush" Color="#F8FAFC" />
-    <SolidColorBrush x:Key="PosDangerBrush" Color="#B91C1C" />
+    <SolidColorBrush x:Key="PosDangerBrush" Color="#DC2626" />
+    <SolidColorBrush x:Key="PosWarningBrush" Color="#F59E0B" />
+    <SolidColorBrush x:Key="PosInfoBrush" Color="#0284C7" />
     <SolidColorBrush x:Key="PosGoldBrush" Color="#E3C57A" />
     <SolidColorBrush x:Key="PosCfdBgBrush" Color="#052E1F" />
     <SolidColorBrush x:Key="PosCfdPanelBrush" Color="#0B1210" />
     <SolidColorBrush x:Key="PosCfdMutedBrush" Color="#8FA399" />
     <SolidColorBrush x:Key="PosCfdTextBrush" Color="#F6F1E4" />
+    <CornerRadius x:Key="PosRadiusMd">12</CornerRadius>
+    <CornerRadius x:Key="PosRadiusLg">16</CornerRadius>
   </Application.Resources>
   <Application.Styles>
     <FluentTheme />
     <Style Selector="Window">
-      <Setter Property="FontFamily" Value="Segoe UI, Noto Naskh Arabic, Noto Sans Arabic, Noto Sans, DejaVu Sans" />
-      <Setter Property="FontSize" Value="16" />
+      <Setter Property="FontFamily" Value="Segoe UI, Cairo, Noto Naskh Arabic, Noto Sans Arabic, Noto Sans, DejaVu Sans" />
+      <Setter Property="FontSize" Value="15" />
     </Style>
     <Style Selector="Button">
-      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="MinHeight" Value="42" />
       <Setter Property="Padding" Value="14,8" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="Button.pos-primary">
       <Setter Property="Background" Value="{StaticResource PosBrandBrush}" />
       <Setter Property="Foreground" Value="White" />
-      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="CornerRadius" Value="12" />
     </Style>
     <Style Selector="Button.pos-primary:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="{StaticResource PosBrandDarkBrush}" />
     </Style>
     <Style Selector="Button.pos-ghost">
-      <Setter Property="Background" Value="#334155" />
+      <Setter Property="Background" Value="#1E293B" />
       <Setter Property="Foreground" Value="#F8FAFC" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-ghost:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#334155" />
+    </Style>
+    <Style Selector="Button.pos-chip-warn">
+      <Setter Property="Background" Value="#F59E0B" />
+      <Setter Property="Foreground" Value="#1C1917" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-chip-return">
+      <Setter Property="Background" Value="#EA580C" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-chip-online">
+      <Setter Property="Background" Value="#F97316" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-chip-info">
+      <Setter Property="Background" Value="#0EA5E9" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-chip-danger">
+      <Setter Property="Background" Value="#DC2626" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-chip-drawer">
+      <Setter Property="Background" Value="#EAB308" />
+      <Setter Property="Foreground" Value="#1C1917" />
+      <Setter Property="CornerRadius" Value="999" />
+      <Setter Property="Padding" Value="14,8" />
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="FontSize" Value="13" />
     </Style>
     <Style Selector="TextBox">
-      <Setter Property="MinHeight" Value="44" />
-      <Setter Property="Padding" Value="10,8" />
+      <Setter Property="MinHeight" Value="46" />
+      <Setter Property="Padding" Value="14,10" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#CBD5E1" />
+      <Setter Property="BorderThickness" Value="1" />
     </Style>
   </Application.Styles>
 </Application>

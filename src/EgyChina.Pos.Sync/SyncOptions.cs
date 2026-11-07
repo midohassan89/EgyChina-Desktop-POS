@@ -41,8 +41,7 @@ public sealed class SyncOptions
     {
         if (BaseAddress is null)
             return "not-configured";
-        if (string.IsNullOrWhiteSpace(DeviceToken))
-            return "auth-missing";
+        // Device Bearer is optional: sales upload via /api/store/pos-checkout when missing.
         if (MoneyScale == ErpMoneyScale.Unverified)
             return "money-scale-unverified";
         // Payment method comes from each sale payload (cash/visa/…). Env override is optional.

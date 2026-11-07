@@ -56,7 +56,7 @@ public sealed class SyncWorkerTests : IDisposable
     }
 
     [Fact]
-    public async Task Tick_with_only_a_base_address_does_not_open_a_socket()
+    public async Task Tick_without_device_token_still_attempts_store_checkout()
     {
         var database = NewDatabase();
         TestShift.Sell(
@@ -64,18 +64,17 @@ public sealed class SyncWorkerTests : IDisposable
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
             8500);
         var status = new SyncStatus();
-        // Unreachable local port — proves we do not require a manager PIN UI; auto-enroll fails closed.
+        // Unreachable local port — store checkout is attempted without device Bearer.
         var worker = new SyncWorker(database, status, new SyncOptions
         {
             BaseAddress = new Uri("http://127.0.0.1:9/"),
+            MoneyScale = ErpMoneyScale.MajorUnits,
             Interval = TimeSpan.FromHours(1),
         });
 
         await worker.TickAsync(CancellationToken.None);
 
-        Assert.Equal("auth-missing", database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
         Assert.Equal(1, database.CountPendingOutbox());
-        Assert.Contains("الجهاز", status.Read().Message, StringComparison.Ordinal);
         await worker.DisposeAsync();
     }
 

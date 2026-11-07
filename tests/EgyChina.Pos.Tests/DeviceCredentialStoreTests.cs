@@ -44,7 +44,7 @@ public sealed class DeviceCredentialStoreTests : IDisposable
     }
 
     [Fact]
-    public void Cookie_env_alone_does_not_enable_transmit()
+    public void Store_checkout_path_does_not_require_device_token()
     {
         var options = new SyncOptions
         {
@@ -53,7 +53,7 @@ public sealed class DeviceCredentialStoreTests : IDisposable
             PaymentMethod = "cash",
             MoneyScale = ErpMoneyScale.MajorUnits,
         };
-        Assert.Equal("auth-missing", options.TransmissionBlock());
-        Assert.False(options.CanTransmit);
+        Assert.Null(options.TransmissionBlock());
+        Assert.True(options.CanTransmit);
     }
 }

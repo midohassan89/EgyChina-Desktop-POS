@@ -67,9 +67,16 @@ public sealed class ErpTransmissionTests : IDisposable
         var bodies = new List<string>();
         await using var server = await StubServer.Start(async context =>
         {
+            var path = context.Request.Url?.AbsolutePath ?? "";
+            if (!string.Equals(path, "/api/checkout", StringComparison.Ordinal))
+            {
+                context.Response.StatusCode = 404;
+                context.Response.Close();
+                return;
+            }
+
             bodies.Add(await Read(context));
             Assert.Equal("POST", context.Request.HttpMethod);
-            Assert.Equal("/api/checkout", context.Request.Url?.AbsolutePath);
             Assert.StartsWith("Bearer ", context.Request.Headers["Authorization"] ?? "", StringComparison.Ordinal);
             context.Response.StatusCode = 200;
             context.Response.Close();
@@ -158,8 +165,14 @@ public sealed class ErpTransmissionTests : IDisposable
         var called = 0;
         await using var server = await StubServer.Start(context =>
         {
-            called++;
-            context.Response.StatusCode = 200;
+            var path = context.Request.Url?.AbsolutePath ?? "";
+            if (string.Equals(path, "/api/checkout", StringComparison.Ordinal)
+                || string.Equals(path, "/api/store/pos-checkout", StringComparison.Ordinal))
+            {
+                called++;
+            }
+
+            context.Response.StatusCode = 404;
             context.Response.Close();
             return Task.CompletedTask;
         });
@@ -186,9 +199,15 @@ public sealed class ErpTransmissionTests : IDisposable
         string? productsQuery = null;
         await using var server = await StubServer.Start(async context =>
         {
-            if (context.Request.HttpMethod == "GET")
+            var path = context.Request.Url?.AbsolutePath ?? "";
+            if (context.Request.HttpMethod == "GET" && path.StartsWith("/api/store/pos-staff", StringComparison.Ordinal))
             {
-                Assert.Equal("/api/products", context.Request.Url?.AbsolutePath);
+                await Write(context, 200, """{"staff":[]}""");
+                return;
+            }
+
+            if (context.Request.HttpMethod == "GET" && path == "/api/products")
+            {
                 productsQuery = context.Request.Url?.Query;
                 // Live POS shape from prismaProductToCached: id === wcId (number).
                 await Write(context, 200, """

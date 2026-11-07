@@ -16,20 +16,21 @@ public sealed record ErpCallResult(bool ResponseCompleted, int? StatusCode, stri
 }
 
 /// <summary>
-/// Speaks <c>GET /api/products</c> and <c>POST /api/checkout</c>.
-/// Production tills authenticate with an enrolled device Bearer token (not a staff cookie).
+/// Speaks <c>GET /api/products</c> and checkout POST.
+/// Prefers public <c>/api/store/pos-checkout</c> (no device Bearer). Optional Bearer still works for
+/// protected <c>/api/checkout</c> when a token is present.
 /// </summary>
 public sealed class ErpPosClient : IDisposable
 {
     private readonly HttpClient _http;
     private readonly Uri _baseAddress;
     private readonly bool _ownsClient;
+    private readonly bool _useStoreCheckout;
 
-    public ErpPosClient(Uri baseAddress, string deviceBearerToken, HttpClient? httpClient = null)
+    public ErpPosClient(Uri baseAddress, string? deviceBearerToken = null, HttpClient? httpClient = null)
     {
-        if (string.IsNullOrWhiteSpace(deviceBearerToken))
-            throw new ArgumentException("Device bearer token is required.", nameof(deviceBearerToken));
         _baseAddress = baseAddress;
+        _useStoreCheckout = string.IsNullOrWhiteSpace(deviceBearerToken);
         if (httpClient is null)
         {
             _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -45,10 +46,12 @@ public sealed class ErpPosClient : IDisposable
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("EgyChina-POS/0.1");
         _http.DefaultRequestHeaders.Remove("Authorization");
         _http.DefaultRequestHeaders.Remove("Cookie");
-        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deviceBearerToken.Trim());
+        if (!_useStoreCheckout)
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deviceBearerToken!.Trim());
     }
 
-    public Uri CheckoutUri => Combine("api/checkout");
+    public Uri CheckoutUri =>
+        _useStoreCheckout ? Combine("api/store/pos-checkout") : Combine("api/checkout");
 
     public Uri ProductsUri(string? updatedSince)
     {

@@ -55,6 +55,10 @@
 
     <Border Grid.Row="2" Background="#0B1210" Padding="32,18">
       <StackPanel Spacing="6">
+        <TextBlock Text="جارٍ الدفع نقداً"
+                   IsVisible="{Binding IsTendering}"
+                   FontSize="22"
+                   Foreground="#8FA399" />
         <TextBlock Text="{Binding SettlementText}"
                    IsVisible="{Binding ShowSettlement}"
                    FontSize="20"

@@ -136,6 +136,66 @@ public sealed class PosDatabase
         }
     }
 
+    public void WriteSetting(string key, string value)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            throw new ArgumentException("Setting key is required.", nameof(key));
+        ArgumentNullException.ThrowIfNull(value);
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            WriteSetting(connection, key, value);
+        }
+    }
+
+    public int GetSchemaVersion()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return (int)ScalarLong(connection, "SELECT COALESCE(MAX(version), 0) FROM schema_migration");
+        }
+    }
+
+    /// <summary>
+    /// Consistent online backup of the open database. Destination must not be the live path.
+    /// Does not copy <c>device.cred</c>.
+    /// </summary>
+    public void BackupTo(string destinationPath)
+    {
+        if (string.IsNullOrWhiteSpace(destinationPath))
+            throw new ArgumentException("Backup path is required.", nameof(destinationPath));
+
+        var fullDest = Path.GetFullPath(destinationPath);
+        var fullSource = Path.GetFullPath(_path);
+        if (string.Equals(fullDest, fullSource, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Backup destination cannot be the live database path.");
+
+        var destDirectory = Path.GetDirectoryName(fullDest);
+        if (!string.IsNullOrEmpty(destDirectory))
+            Directory.CreateDirectory(destDirectory);
+
+        if (File.Exists(fullDest))
+            File.Delete(fullDest);
+
+        lock (_gate)
+        {
+            using var source = Open();
+            Exec(source, "PRAGMA wal_checkpoint(TRUNCATE);");
+
+            // Pooling must stay off so prune can delete old snapshots without a locked handle.
+            using var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = fullDest,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false,
+            }.ConnectionString);
+            destination.Open();
+            source.BackupDatabase(destination);
+        }
+    }
+
     public bool TryEnqueueOutbox(
         string aggregateType,
         string aggregateId,
@@ -406,6 +466,114 @@ public sealed class PosDatabase
             command.CommandText = "SELECT completed_at FROM sale WHERE id = $id";
             command.Parameters.AddWithValue("$id", saleId);
             return command.ExecuteScalar() as string;
+        }
+    }
+
+    public string? GetLastCompletedSaleId()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id FROM sale
+                WHERE status = 'completed'
+                ORDER BY completed_at DESC, receipt_no DESC
+                LIMIT 1
+                """;
+            return command.ExecuteScalar() as string;
+        }
+    }
+
+    /// <summary>
+    /// Builds a printable receipt from committed sale rows. Never mutates the sale.
+    /// </summary>
+    public ReceiptDocument? TryBuildReceiptDocument(string saleId, bool isReprint, bool kickDrawer = false)
+    {
+        if (string.IsNullOrWhiteSpace(saleId))
+            return null;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            int receiptNo;
+            string completedAtRaw;
+            long totalMinor;
+            string cashierId;
+            using (var sale = connection.CreateCommand())
+            {
+                sale.CommandText = """
+                    SELECT receipt_no, completed_at, total_minor, cashier_id
+                    FROM sale
+                    WHERE id = $id AND status = 'completed'
+                    """;
+                sale.Parameters.AddWithValue("$id", saleId);
+                using var reader = sale.ExecuteReader();
+                if (!reader.Read() || reader.IsDBNull(0) || reader.IsDBNull(1))
+                    return null;
+                receiptNo = reader.GetInt32(0);
+                completedAtRaw = reader.GetString(1);
+                totalMinor = reader.GetInt64(2);
+                cashierId = reader.GetString(3);
+            }
+
+            if (!DateTimeOffset.TryParse(completedAtRaw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var completedAt))
+                completedAt = DateTimeOffset.UtcNow;
+
+            var cashierName = ReadCashier(connection, cashierId)?.DisplayName ?? cashierId;
+            var lines = new List<ReceiptLine>();
+            using (var lineCmd = connection.CreateCommand())
+            {
+                lineCmd.CommandText = """
+                    SELECT name_ar, qty_milli, unit_price_minor, line_total_minor
+                    FROM sale_line
+                    WHERE sale_id = $sale
+                    ORDER BY line_no
+                    """;
+                lineCmd.Parameters.AddWithValue("$sale", saleId);
+                using var reader = lineCmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    lines.Add(new ReceiptLine(
+                        reader.GetString(0),
+                        null,
+                        reader.GetInt64(1),
+                        reader.GetInt64(2),
+                        reader.GetInt64(3)));
+                }
+            }
+
+            if (lines.Count == 0)
+                return null;
+
+            long tenderMinor = totalMinor;
+            using (var pay = connection.CreateCommand())
+            {
+                pay.CommandText = """
+                    SELECT amount_minor FROM payment
+                    WHERE sale_id = $sale AND method = 'cash_egp'
+                    ORDER BY created_at
+                    LIMIT 1
+                    """;
+                pay.Parameters.AddWithValue("$sale", saleId);
+                var value = pay.ExecuteScalar();
+                if (value is not null and not DBNull)
+                    tenderMinor = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            return new ReceiptDocument(
+                StoreNameAr: "ايجي شاينا ماركت",
+                StoreNameZh: "埃及中国商场",
+                ReceiptNo: receiptNo,
+                CompletedAt: completedAt,
+                CashierName: cashierName,
+                Lines: lines,
+                TotalMinor: totalMinor,
+                TenderMinor: tenderMinor,
+                ChangeMinor: tenderMinor - totalMinor,
+                FooterAr: "سوق العبور",
+                IsReprint: isReprint,
+                KickDrawer: kickDrawer && !isReprint);
         }
     }
 

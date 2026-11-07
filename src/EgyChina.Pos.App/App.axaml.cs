@@ -8,6 +8,7 @@ using EgyChina.Pos.App.ViewModels;
 using EgyChina.Pos.App.Views;
 using EgyChina.Pos.Core;
 using EgyChina.Pos.Data;
+using EgyChina.Pos.Printing;
 using EgyChina.Pos.Sync;
 
 namespace EgyChina.Pos.App;
@@ -74,11 +75,35 @@ public partial class App : Application
         _database.Initialize();
         var products = _database.ListActiveProducts();
         var demo = _database.GetSetting("catalog.source") == "demo";
-        PosLog.Info($"database ready path={_database.DatabasePath} products={products.Count} source={(demo ? "demo" : "other")}");
+        PosLog.Info(
+            $"database ready path={_database.DatabasePath} schema={_database.GetSchemaVersion()} products={products.Count} source={(demo ? "demo" : "other")}");
+
+        var backup = DatabaseBackup.Create(_database);
+        if (!backup.Created)
+            PosLog.Error($"startup backup skipped: {LogRedactor.Redact(backup.Error)}");
 
         var status = new SyncStatus();
-        _session = new PosSession(_database, products, status, demo);
+        var printerOptions = PrinterOptions.FromEnvironment();
+        IReceiptPrinter printer;
+        try
+        {
+            printer = EscPosReceiptPrinter.Create(printerOptions);
+            PosLog.Info($"printer transport={printerOptions.Transport} configured={printer.IsConfigured}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("printer setup failed — sales still work offline", ex);
+            printer = new NullReceiptPrinter();
+        }
+
+        _session = new PosSession(_database, products, status, demo, printer);
         _session.RequestCustomerDisplay = ShowCustomer;
+        var disk = DiskSpaceGuard.Check(_database.DatabasePath);
+        if (disk.HasWarning)
+        {
+            _session.ApplyDiskStatus(disk.BlockSales, disk.Message);
+            PosLog.Info($"disk free={disk.FreeBytes} blockSales={disk.BlockSales}");
+        }
 
         _worker = new SyncWorker(_database, status, SyncOptions.FromEnvironment());
         _worker.Start();

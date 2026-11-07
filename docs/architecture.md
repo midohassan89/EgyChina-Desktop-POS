@@ -94,7 +94,7 @@ Customer window rules:
 - It must not show cost, margin, PIN, sync errors, or the outbox.
 - Closing the cashier window closes the process and the customer window with it.
 
-**ASSUMPTION:** the barcode scanner is a USB HID keyboard wedge that types the code and sends Enter. The shell keeps focus in the barcode box and selects the text after each Enter, so the next scan replaces the previous code. A global “steal digits while search is focused” hook is phase 1, not this shell.
+The barcode scanner is a USB HID keyboard wedge that types the code and sends Enter. The shell keeps focus in the barcode box and selects the text after each Enter. While Arabic product search is focused, Latin/digit wedge glyphs are stolen into the barcode box (phase 8). Shortcuts: F2 lock, F3 customer display, F4 reprint, Esc cancel tender/close-shift.
 
 Copy is Arabic. Digits and money stay Western (`85.00 ج.م`) under the invariant culture, which matches a keyboard and a scanner. Do not switch the process culture to `ar-EG`.
 
@@ -107,7 +107,7 @@ Copy is Arabic. Digits and money stay Western (`85.00 ج.م`) under the invarian
 | `EgyChina.Pos.Data` | SQLite open, migration, demo seed, log, paths | Repositories used by the sale transaction |
 | `EgyChina.Pos.Sync` | Outbox post to the live `/api/checkout` route, gated until cookie, money scale, and payment method are set | Server-side idempotency once the ERP repo is available |
 | `EgyChina.Pos.Tests` | WAL, seed, outbox idempotency, rounding, worker | Sale transaction tests |
-| `EgyChina.Pos.Printing` | Not created | Raw Winspool ESC/POS in phase 1 |
+| `EgyChina.Pos.Printing` | Raster ESC/POS (Skia + GS v 0), RAW spooler / serial / file | Phase 7 landed |
 
 Composition is manual in `App.axaml.cs`. A generic host is extra startup on a 2-core CPU for no current gain. Add it only if the worker count grows past one loop.
 
@@ -235,7 +235,7 @@ Phase 1 printer:
 4. If the site uses the virtual COM port instead, write the same bytes to that port with `System.IO.Ports`.
 5. Config keys: `printer.transport` = `raw-spooler` or `serial`, `printer.queue` or `printer.port`.
 
-`IReceiptPrinter` / `ReceiptDocument` in `EgyChina.Pos.Core` are the seam. Cash sales commit without printing. A receipt on paper is still to be built, so a committed sale can be looked up in SQLite and is not yet reprinted.
+`IReceiptPrinter` / `ReceiptDocument` in `EgyChina.Pos.Core` are the seam. `EgyChina.Pos.Printing` renders a 576-dot bitmap and sends ESC/POS. Cash sales always commit first; print runs after. Reprint loads the last completed sale from SQLite. With no printer env configured, `NullReceiptPrinter` no-ops.
 
 **ASSUMPTION:** a cash drawer, if present, is kicked from the printer RJ11 port with `ESC p` after a cash tender. Not required for the first sale.
 
@@ -258,7 +258,8 @@ Threat model: a till in a busy hypermarket. People can touch the keyboard. A dis
 | Card data | Not stored. Not even temporarily |
 | Customer screen | Sell price, quantity, total, and (phase 2) the payment QR. Nothing else |
 | Transport | HTTPS to the ERP host. OS trust store. Pinning can wait |
-| Logs | Local rolling file, 14 days target (the shell rotates one backup at 2 MB). No third-party telemetry |
+| Logs | Local rolling file under `logs/`; rotate near 2 MB; purge files older than 14 days; `LogRedactor` strips Bearer/PIN/password before disk write. No third-party telemetry |
+| Database backups | `backups/pos-yyyyMMdd-HHmmss.db` via SQLite `BackupDatabase` on startup and after shift close; keep last 14; never copy `device.cred` |
 | Updates | Authenticode-signed binaries. No unsigned zip from a share |
 
 The NextAuth credentials provider on the ERP is for people in a browser. Terminals need their own credential so a cashier leaving does not un-enroll the PC, and so a stolen PIN cannot mint a new till.
@@ -315,7 +316,7 @@ First catalog pull can take a while. The cashier UI stays usable on the previous
 | Outbox stuck | Keep selling. Status stays visible. Never drop a committed sale |
 | Customer screen unplugged | Single-screen layout. Cashier keeps scanning |
 | Printer offline | Sale stays committed. Reprint when the queue is back. Do not void automatically |
-| Disk full | Stop new sales. Still allow reprint of the last receipt. Needs a free-space check in phase 1 |
+| Disk full | Soft check on startup: warn under 500 MB, block new sales under 200 MB; reprint still allowed (phase 8) |
 | Bad barcode | Hint on the cashier, nothing on the customer screen |
 | Second launch | Exit immediately. One mutex |
 | DB corrupt | Stop at startup with the Arabic error window and the log path. Do not recreate over a corrupt file silently |
@@ -334,7 +335,7 @@ Implemented:
 
 Not implemented, on purpose:
 
-- Void, refund, discount, print, reprint. PIN + local shifts landed in phase 6 (ERP staff/shift sync still open).
-- Any POST of a sale. The outbox waits for the device API in the contract, which is still an **ASSUMPTION**.
-- ESC/POS bytes, QR images, CNY tender, catalog pull.
+- Void, refund, discount. PIN + local shifts landed in phase 6. Print/reprint landed in phase 7.
+- Live production till sync still needs a deliberate ops window (device auth + catalog pull are local-proven).
+- QR images on the customer display, CNY tender.
 - Auto-logon, the launcher, code signing.

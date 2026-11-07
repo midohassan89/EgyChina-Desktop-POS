@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -25,28 +26,153 @@ public partial class CashierWindow : Window
         Opened += (_, _) =>
         {
             _clock.Start();
-            FocusBarcode();
+            FocusForSession();
         };
         Closed += (_, _) => _clock.Stop();
         DataContextChanged += (_, _) => AttachSession();
+        KeyDown += OnWindowKeyDown;
+        AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
     }
 
     private void AttachSession()
     {
         if (_session is not null)
+        {
             _session.TenderOpened -= FocusTender;
+            _session.FocusRequested -= OnFocusRequested;
+            _session.PropertyChanged -= OnSessionPropertyChanged;
+        }
+
         _session = DataContext as PosSession;
-        if (_session is not null)
-            _session.TenderOpened += FocusTender;
+        if (_session is null)
+            return;
+
+        _session.TenderOpened += FocusTender;
+        _session.FocusRequested += OnFocusRequested;
+        _session.PropertyChanged += OnSessionPropertyChanged;
+        FocusForSession();
     }
 
-    private void FocusTender()
+    private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        Dispatcher.UIThread.Post(() =>
+        if (e.PropertyName is nameof(PosSession.NeedsLogin)
+            or nameof(PosSession.NeedsOpenShift)
+            or nameof(PosSession.ShowCloseShift)
+            or nameof(PosSession.IsTendering))
         {
-            TenderBox.Focus();
-            TenderBox.SelectAll();
-        });
+            Dispatcher.UIThread.Post(FocusForSession);
+        }
+    }
+
+    private void OnFocusRequested(UiFocusTarget target) =>
+        Dispatcher.UIThread.Post(() => ApplyFocus(target));
+
+    private void FocusTender() => ApplyFocus(UiFocusTarget.Tender);
+
+    private void FocusForSession()
+    {
+        if (_session is null)
+        {
+            FocusBarcode();
+            return;
+        }
+
+        if (_session.NeedsLogin)
+            ApplyFocus(UiFocusTarget.Pin);
+        else if (_session.NeedsOpenShift)
+            ApplyFocus(UiFocusTarget.OpeningFloat);
+        else if (_session.ShowCloseShift)
+            ApplyFocus(UiFocusTarget.ClosingCash);
+        else if (_session.IsTendering)
+            ApplyFocus(UiFocusTarget.Tender);
+        else
+            ApplyFocus(UiFocusTarget.Barcode);
+    }
+
+    private void ApplyFocus(UiFocusTarget target)
+    {
+        switch (target)
+        {
+            case UiFocusTarget.Pin:
+                PinBox.Focus();
+                PinBox.SelectAll();
+                break;
+            case UiFocusTarget.OpeningFloat:
+                OpeningFloatBox.Focus();
+                OpeningFloatBox.SelectAll();
+                break;
+            case UiFocusTarget.ClosingCash:
+                ClosingCashBox.Focus();
+                ClosingCashBox.SelectAll();
+                break;
+            case UiFocusTarget.Tender:
+                TenderBox.Focus();
+                TenderBox.SelectAll();
+                break;
+            default:
+                FocusBarcode();
+                break;
+        }
+    }
+
+    private void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (DataContext is not PosSession session)
+            return;
+
+        if (e.Key == Key.Escape)
+        {
+            if (session.ShowCloseShift)
+            {
+                session.CancelCloseShiftCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (session.IsTendering)
+            {
+                session.CancelTenderCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+        }
+
+        if (e.Key == Key.F2 && session.CanLock)
+        {
+            session.LockSessionCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F3)
+        {
+            session.ShowCustomerDisplayCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F4 && session.CanReprint)
+        {
+            session.ReprintLastCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
+    private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
+    {
+        if (DataContext is not PosSession session || e.Handled)
+            return;
+
+        var overlayOpen = session.NeedsLogin || session.NeedsOpenShift || session.ShowCloseShift || session.IsTendering;
+        var searchFocused = SearchBox.IsFocused;
+        var barcodeFocused = BarcodeBox.IsFocused;
+        if (!ScannerInput.ShouldStealFromSearch(searchFocused, barcodeFocused, overlayOpen, e.Text))
+            return;
+
+        // Steal wedge input away from Arabic product search.
+        session.Barcode += e.Text;
+        FocusBarcode();
+        e.Handled = true;
     }
 
     private void OnTenderKeyDown(object? sender, KeyEventArgs e)
@@ -56,6 +182,30 @@ public partial class CashierWindow : Window
         e.Handled = true;
         if (session.CanConfirmCash)
             session.ConfirmCashCommand.Execute(null);
+    }
+
+    private void OnPinKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not PosSession session)
+            return;
+        e.Handled = true;
+        session.SubmitPinCommand.Execute(null);
+    }
+
+    private void OnOpeningFloatKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not PosSession session)
+            return;
+        e.Handled = true;
+        session.OpenShiftCommand.Execute(null);
+    }
+
+    private void OnClosingCashKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not PosSession session)
+            return;
+        e.Handled = true;
+        session.ConfirmCloseShiftCommand.Execute(null);
     }
 
     private void OnBarcodeKeyDown(object? sender, KeyEventArgs e)

@@ -28,5 +28,7 @@
     <ProjectReference Include="..\EgyChina.Pos.Core\EgyChina.Pos.Core.csproj" />
     <ProjectReference Include="..\EgyChina.Pos.Data\EgyChina.Pos.Data.csproj" />
     <ProjectReference Include="..\EgyChina.Pos.Sync\EgyChina.Pos.Sync.csproj" />
+    <ProjectReference Include="..\EgyChina.Pos.Printing\EgyChina.Pos.Printing.csproj" />
   </ItemGroup>
+
 </Project>

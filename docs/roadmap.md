@@ -37,7 +37,7 @@ Cashier:
 - Shift open/close with opening float. Landed locally; ERP shift push still open.
 - Scanner wedge, search, cart, line quantity. In the app.
 - Cash EGP tender and change, receipt number, and outbox commit. In the app. Print is still open.
-- Reprint last receipt. Still open.
+- Reprint last receipt. Landed (phase 7).
 - Customer window follows the cart, the amount due, and the change. In the app.
 - Refusing pay until `catalog.source=erp`. Deferred until enrollment. Demo sales work now.
 
@@ -50,7 +50,7 @@ Sync:
 
 Print:
 
-- Raster ESC/POS to the XP-P323B via the RAW spooler.
+- Raster ESC/POS to the XP-P323B via the RAW spooler. Landed locally (phase 7); confirm queue name on a real till.
 - Arabic receipt. No GDI.
 
 Install:

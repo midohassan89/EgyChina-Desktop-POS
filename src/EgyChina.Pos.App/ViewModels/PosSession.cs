@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using EgyChina.Pos.Core;
 using EgyChina.Pos.Data;
+using EgyChina.Pos.Printing;
 
 namespace EgyChina.Pos.App.ViewModels;
 
@@ -13,17 +14,28 @@ public partial class PosSession : ObservableObject
     private readonly PosDatabase _database;
     private IReadOnlyList<CatalogProduct> _products;
     private readonly SyncStatus _sync;
+    private readonly IReceiptPrinter _printer;
+    private string? _lastSaleId;
 
-    public PosSession(PosDatabase database, IReadOnlyList<CatalogProduct> products, SyncStatus sync, bool demoCatalog)
+    public PosSession(
+        PosDatabase database,
+        IReadOnlyList<CatalogProduct> products,
+        SyncStatus sync,
+        bool demoCatalog,
+        IReceiptPrinter? printer = null)
     {
         _database = database;
         _products = products;
         _sync = sync;
+        _printer = printer ?? new NullReceiptPrinter();
         DatabasePath = database.DatabasePath;
         CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog);
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         NeedsLogin = true;
         SessionCaption = "سجّل الدخول برقم سري من ٦ أرقام";
+        PrinterCaption = _printer.IsConfigured
+            ? "الطابعة جاهزة"
+            : "الطابعة غير مضبوطة — البيع يُحفظ ويمكن إعادة الطباعة لاحقاً";
 
         Lines.CollectionChanged += (_, _) => RefreshCheckout();
         _sync.Changed += HandleSyncChanged;
@@ -33,6 +45,7 @@ public partial class PosSession : ObservableObject
         PendingOutbox = snap.PendingOutbox;
         DeadOutbox = snap.DeadOutbox;
         LastSyncError = snap.LastError ?? string.Empty;
+        _lastSaleId = _database.GetLastCompletedSaleId();
         RefreshShiftState();
     }
 
@@ -43,11 +56,25 @@ public partial class PosSession : ObservableObject
     [ObservableProperty]
     private string _catalogCaption = string.Empty;
 
-    public string ShellNotice { get; } = "نقد بالجنيه يُحفظ على هذا الجهاز. الطباعة ورفع البيع إلى المنظومة لم يُفعَّلا.";
+    public string ShellNotice { get; } = "نقد بالجنيه يُحفظ على هذا الجهاز. رفع البيع إلى المنظومة اختياري حسب إعداد المزامنة.";
+
+    [ObservableProperty]
+    private string _printerCaption = string.Empty;
+
+    [ObservableProperty]
+    private string _cashierAlert = string.Empty;
+
+    [ObservableProperty]
+    private bool _blockNewSales;
 
     public Action? RequestCustomerDisplay { get; set; }
 
     public event Action? TenderOpened;
+
+    public event Action<UiFocusTarget>? FocusRequested;
+
+    public string ShortcutHint { get; } =
+        "F2 قفل  ·  F4 إعادة طباعة  ·  F3 شاشة العميل  ·  Esc إلغاء  ·  الماسح يعمل حتى أثناء البحث";
 
     [ObservableProperty]
     private bool _needsLogin = true;
@@ -158,11 +185,15 @@ public partial class PosSession : ObservableObject
 
     public bool CanOperate => !NeedsLogin && !NeedsOpenShift && _currentCashier is not null && _currentShift is not null;
 
-    public bool CanBeginPayment => CanOperate && HasLines && !IsTendering;
+    public bool HasCashierAlert => !string.IsNullOrWhiteSpace(CashierAlert);
+
+    public bool CanBeginPayment => CanOperate && HasLines && !IsTendering && !BlockNewSales;
 
     public bool CanLock => !NeedsLogin && _currentCashier is not null;
 
     public bool CanOpenCloseShiftPanel => CanOperate && !IsTendering;
+
+    public bool CanReprint => !string.IsNullOrWhiteSpace(_lastSaleId) && !IsTendering && !NeedsLogin;
 
     public string LineCountText => Lines.Count == 0 ? "السلة فارغة" : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} سطور";
 
@@ -236,6 +267,12 @@ public partial class PosSession : ObservableObject
 
     public void AddProduct(CatalogProduct product)
     {
+        if (BlockNewSales)
+        {
+            ScanHint = CashierAlert.Length > 0 ? CashierAlert : "القرص ممتلئ. لا يمكن إضافة أصناف الآن.";
+            return;
+        }
+
         if (!CanOperate)
         {
             ScanHint = NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع";
@@ -300,6 +337,8 @@ public partial class PosSession : ObservableObject
 
     partial void OnDisplayBannerChanged(string value) => OnPropertyChanged(nameof(HasDisplayBanner));
 
+    partial void OnCashierAlertChanged(string value) => OnPropertyChanged(nameof(HasCashierAlert));
+
     partial void OnIsTenderingChanged(bool value) => RefreshCheckout();
 
     partial void OnTenderTextChanged(string value)
@@ -344,6 +383,7 @@ public partial class PosSession : ObservableObject
         AuthError = string.Empty;
         RefreshShiftState();
         RefreshCheckout();
+        RequestFocus(_currentShift is null ? UiFocusTarget.OpeningFloat : UiFocusTarget.Barcode);
     }
 
     [RelayCommand]
@@ -365,6 +405,7 @@ public partial class PosSession : ObservableObject
             ? "الجهاز مقفل. أدخل الرقم السري."
             : "الجهاز مقفل. الوردية ما زالت مفتوحة — أدخل الرقم السري للمتابعة.";
         RefreshCheckout();
+        RequestFocus(UiFocusTarget.Pin);
     }
 
     [RelayCommand]
@@ -389,11 +430,12 @@ public partial class PosSession : ObservableObject
             NeedsOpenShift = false;
             SessionCaption = $"{_currentCashier.DisplayName} · وردية مفتوحة";
             RefreshCheckout();
+            RequestFocus(UiFocusTarget.Barcode);
         }
         catch (Exception ex)
         {
             PosLog.Error("open shift failed", ex);
-            ShiftError = ex.Message;
+            ShiftError = ArabicUi.FromException(ex, "تعذر فتح الوردية.");
         }
     }
 
@@ -411,6 +453,7 @@ public partial class PosSession : ObservableObject
         ClosingCashText = Money.FormatAmount(_currentShift.OpeningFloatMinor);
         ShiftError = string.Empty;
         ShowCloseShift = true;
+        RequestFocus(UiFocusTarget.ClosingCash);
     }
 
     [RelayCommand]
@@ -440,11 +483,13 @@ public partial class PosSession : ObservableObject
             NeedsOpenShift = true;
             SessionCaption = $"{_currentCashier.DisplayName} · لا توجد وردية مفتوحة";
             RefreshCheckout();
+            RequestFocus(UiFocusTarget.OpeningFloat);
+            DatabaseBackup.Create(_database);
         }
         catch (Exception ex)
         {
             PosLog.Error("close shift failed", ex);
-            ShiftError = ex.Message;
+            ShiftError = ArabicUi.FromException(ex, "تعذر إغلاق الوردية.");
         }
     }
 
@@ -459,6 +504,7 @@ public partial class PosSession : ObservableObject
         TenderText = Money.FormatAmount(TotalMinor);
         IsTendering = true;
         TenderOpened?.Invoke();
+        RequestFocus(UiFocusTarget.Tender);
     }
 
     [RelayCommand]
@@ -475,6 +521,7 @@ public partial class PosSession : ObservableObject
         IsTendering = false;
         TenderText = string.Empty;
         SaleError = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
     }
 
     [RelayCommand]
@@ -486,6 +533,12 @@ public partial class PosSession : ObservableObject
         var lines = Lines
             .Select(line => new CashSaleLine(line.ProductId, line.Barcode, line.NameAr, line.Qty, line.UnitPriceMinor))
             .ToArray();
+
+        if (BlockNewSales)
+        {
+            SaleError = CashierAlert.Length > 0 ? CashierAlert : "القرص ممتلئ. لا يمكن إتمام بيع جديد.";
+            return;
+        }
 
         if (_currentCashier is null || _currentShift is null)
         {
@@ -503,14 +556,82 @@ public partial class PosSession : ObservableObject
             HasSettlement = true;
             Lines.Clear();
             PendingOutbox = _database.CountPendingOutbox();
+            _lastSaleId = sale.SaleId;
             ScanHint = $"تم حفظ الإيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)}";
             PosLog.Info($"cashier confirmed receipt {sale.ReceiptNo}");
+            OnPropertyChanged(nameof(CanReprint));
+            RequestFocus(UiFocusTarget.Barcode);
+            _ = PrintSaleAsync(sale.SaleId, isReprint: false, kickDrawer: true);
         }
         catch (Exception ex)
         {
             PosLog.Error("cash sale failed", ex);
-            SaleError = string.IsNullOrWhiteSpace(ex.Message) ? "تعذر حفظ البيع. السلة ما زالت هنا." : ex.Message;
+            SaleError = ArabicUi.FromException(ex, "تعذر حفظ البيع. السلة ما زالت هنا.");
         }
+    }
+
+    public void ApplyDiskStatus(bool blockSales, string? message)
+    {
+        BlockNewSales = blockSales;
+        CashierAlert = message ?? string.Empty;
+        RefreshCheckout();
+    }
+
+    public void NotifyLoginSurfaceReady() => RequestFocus(UiFocusTarget.Pin);
+
+    private void RequestFocus(UiFocusTarget target) => FocusRequested?.Invoke(target);
+
+    [RelayCommand]
+    private void ReprintLast()
+    {
+        if (!CanReprint || string.IsNullOrWhiteSpace(_lastSaleId))
+            return;
+        _ = PrintSaleAsync(_lastSaleId, isReprint: true, kickDrawer: false);
+    }
+
+    private async Task PrintSaleAsync(string saleId, bool isReprint, bool kickDrawer)
+    {
+        try
+        {
+            var document = _database.TryBuildReceiptDocument(saleId, isReprint, kickDrawer);
+            if (document is null)
+            {
+                await SetPrintHintAsync("تعذر تجهيز الإيصال للطباعة.").ConfigureAwait(false);
+                return;
+            }
+
+            if (!_printer.IsConfigured)
+            {
+                await SetPrintHintAsync(
+                    isReprint
+                        ? "لا توجد طابعة مضبوطة. الإيصال محفوظ في القاعدة المحلية."
+                        : $"تم الحفظ — إيصال {document.ReceiptNo.ToString(CultureInfo.InvariantCulture)}. الطابعة غير مضبوطة.").ConfigureAwait(false);
+                return;
+            }
+
+            await _printer.PrintAsync(document, CancellationToken.None).ConfigureAwait(false);
+            await SetPrintHintAsync(
+                isReprint
+                    ? $"أُعيدت طباعة الإيصال {document.ReceiptNo.ToString(CultureInfo.InvariantCulture)}"
+                    : $"طُبع الإيصال {document.ReceiptNo.ToString(CultureInfo.InvariantCulture)}").ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error(isReprint ? "reprint failed" : "print failed", ex);
+            await SetPrintHintAsync("تعذر الطباعة. البيع محفوظ — جرّب إعادة الطباعة.").ConfigureAwait(false);
+        }
+    }
+
+    private Task SetPrintHintAsync(string message)
+    {
+        void Apply() => ScanHint = message;
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            Apply();
+            return Task.CompletedTask;
+        }
+
+        return Dispatcher.UIThread.InvokeAsync(Apply).GetTask();
     }
 
     private void RefreshShiftState()
@@ -551,6 +672,7 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanOperate));
         OnPropertyChanged(nameof(CanLock));
         OnPropertyChanged(nameof(CanOpenCloseShiftPanel));
+        OnPropertyChanged(nameof(CanReprint));
     }
 
     partial void OnNeedsLoginChanged(bool value) => RefreshCheckout();

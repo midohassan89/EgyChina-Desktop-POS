@@ -20,4 +20,6 @@ public static class PosPaths
     public static string DatabaseFile() => Path.Combine(Root(), "pos.db");
 
     public static string LogDirectory() => Path.Combine(Root(), "logs");
+
+    public static string BackupDirectory() => Path.Combine(Root(), "backups");
 }

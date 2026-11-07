@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>EgyChina.Pos.Printing</RootNamespace>
+    <Description>ESC/POS raster receipts for Xprinter XP-P323B via RAW spooler or serial.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SkiaSharp" Version="3.119.1" />
+    <PackageReference Include="System.IO.Ports" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EgyChina.Pos.Core\EgyChina.Pos.Core.csproj" />
+  </ItemGroup>
+</Project>

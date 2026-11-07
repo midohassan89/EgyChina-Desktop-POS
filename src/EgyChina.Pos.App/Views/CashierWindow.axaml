@@ -13,7 +13,7 @@
         MinHeight="640">
 
   <Grid>
-  <Grid RowDefinitions="Auto,*,Auto" IsEnabled="{Binding CanOperate}">
+  <Grid RowDefinitions="Auto,*,Auto">
     <Border Grid.Row="0" Background="#12382F" Padding="18,12">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Spacing="2">
@@ -35,6 +35,10 @@
                     Command="{Binding LockSessionCommand}"
                     IsEnabled="{Binding CanLock}"
                     MinWidth="88" />
+            <Button Content="إعادة طباعة"
+                    Command="{Binding ReprintLastCommand}"
+                    IsEnabled="{Binding CanReprint}"
+                    MinWidth="110" />
             <Button Content="إغلاق وردية"
                     Command="{Binding BeginCloseShiftCommand}"
                     IsEnabled="{Binding CanOpenCloseShiftPanel}"
@@ -60,7 +64,18 @@
                   Click="OnBarcodeSubmit" />
         </Grid>
         <TextBlock DockPanel.Dock="Top" Text="{Binding ScanHint}" Margin="0,0,0,8" Foreground="#3E4A3A" TextWrapping="Wrap" />
-        <TextBox DockPanel.Dock="Top"
+        <Border DockPanel.Dock="Top"
+                Background="#FDECEC"
+                BorderBrush="#E8A0A0"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="10,8"
+                Margin="0,0,0,8"
+                IsVisible="{Binding HasCashierAlert}">
+          <TextBlock Text="{Binding CashierAlert}" Foreground="#8A1C1C" TextWrapping="Wrap" FontWeight="SemiBold" />
+        </Border>
+        <TextBox x:Name="SearchBox"
+                 DockPanel.Dock="Top"
                  Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
                  PlaceholderText="بحث بالاسم أو الباركود"
                  MinHeight="44"
@@ -201,7 +216,9 @@
                    Foreground="#12382F" />
 
         <StackPanel Spacing="2">
+          <TextBlock Text="{Binding ShortcutHint}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
           <TextBlock Text="{Binding ShellNotice}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding PrinterCaption}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
           <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#6E675C" />
           <TextBlock Text="{Binding DatabasePath}" FontSize="11" Foreground="#8A8172" FlowDirection="LeftToRight" TextWrapping="Wrap" />
         </StackPanel>
@@ -215,12 +232,14 @@
       <StackPanel Spacing="12">
         <TextBlock Text="دخول الكاشير" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
         <TextBlock Text="{Binding SessionCaption}" TextWrapping="Wrap" Foreground="#6E675C" />
-        <TextBox Text="{Binding PinText}"
+        <TextBox x:Name="PinBox"
+                 Text="{Binding PinText}"
                  PlaceholderText="الرقم السري"
                  PasswordChar="•"
                  FontSize="28"
                  MinHeight="52"
-                 FlowDirection="LeftToRight" />
+                 FlowDirection="LeftToRight"
+                 KeyDown="OnPinKeyDown" />
         <TextBlock Text="{Binding AuthError}" Foreground="#B42318" TextWrapping="Wrap" />
         <Button Content="دخول"
                 Command="{Binding SubmitPinCommand}"
@@ -240,10 +259,12 @@
         <TextBlock Text="فتح وردية" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
         <TextBlock Text="{Binding CashierName}" Foreground="#6E675C" />
         <TextBlock Text="نقدية الافتتاح (ج.م)" Foreground="#6E675C" />
-        <TextBox Text="{Binding OpeningFloatText}"
+        <TextBox x:Name="OpeningFloatBox"
+                 Text="{Binding OpeningFloatText}"
                  FontSize="24"
                  MinHeight="52"
-                 FlowDirection="LeftToRight" />
+                 FlowDirection="LeftToRight"
+                 KeyDown="OnOpeningFloatKeyDown" />
         <TextBlock Text="{Binding ShiftError}" Foreground="#B42318" TextWrapping="Wrap" />
         <Button Content="فتح الوردية"
                 Command="{Binding OpenShiftCommand}"
@@ -266,10 +287,12 @@
       <StackPanel Spacing="12">
         <TextBlock Text="إغلاق الوردية" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
         <TextBlock Text="نقدية الإغلاق (ج.م)" Foreground="#6E675C" />
-        <TextBox Text="{Binding ClosingCashText}"
+        <TextBox x:Name="ClosingCashBox"
+                 Text="{Binding ClosingCashText}"
                  FontSize="24"
                  MinHeight="52"
-                 FlowDirection="LeftToRight" />
+                 FlowDirection="LeftToRight"
+                 KeyDown="OnClosingCashKeyDown" />
         <TextBlock Text="{Binding ShiftError}" Foreground="#B42318" TextWrapping="Wrap" />
         <Button Content="تأكيد الإغلاق"
                 Command="{Binding ConfirmCloseShiftCommand}"

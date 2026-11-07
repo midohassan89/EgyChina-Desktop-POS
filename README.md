@@ -56,17 +56,38 @@ dotnet run --project src\EgyChina.Pos.App
 
 The base URL must be absolute. A trailing slash is safer. The worker GETs `{base}/health` and shows the status code. Today the live ERP has no confirmed device API; an unauthenticated `/api/*` call returns 401 from the auth gate. Do not point this at production during a shift.
 
-## Publish for a till
+## Publish / install for a till
 
 Run on Windows, from the repo root:
 
 ```powershell
 .\scripts\publish-win-x64.ps1
+.\scripts\install-version.ps1 -Source .\artifacts\win-x64\0.1.0
+.\scripts\launch-pos.ps1
 ```
 
-That is a self-contained `win-x64` folder with ReadyToRun, not a single file. Copy it to the cashier PC. Phase 1 adds auto-logon and a Startup shortcut; the steps are in the architecture doc. The published exe is not the kiosk policy.
+Layout on the PC:
 
-Confirm `winver` is 64-bit Windows 10 1809 or later before you install. .NET 8 does not run on Windows 7.
+```text
+C:\EgyChina\Pos\app\<version>\   self-contained build
+C:\EgyChina\Pos\current\         junction → active version
+C:\EgyChina\Pos\previous.version
+%LOCALAPPDATA%\EgyChina\Pos\     pos.db, logs, backups, heartbeat.json
+```
+
+Update with heartbeat check + automatic rollback:
+
+```powershell
+.\scripts\apply-update.ps1 -Source .\artifacts\win-x64\0.1.0
+```
+
+Restore SQLite from a backup (POS must be closed; never restores `device.cred`):
+
+```powershell
+.\scripts\restore-database.ps1 -BackupPath "$env:LOCALAPPDATA\EgyChina\Pos\backups\pos-….db"
+```
+
+Auto-logon / Startup shortcut / Authenticode are still ops steps (see architecture). Confirm `winver` is 64-bit Windows 10 1809 or later. .NET 8 does not run on Windows 7.
 
 ## How this sits next to the ERP
 
@@ -82,9 +103,11 @@ The ERP changes (device token, catalog cursor, idempotent sale push) are a separ
 
 ```text
 src/EgyChina.Pos.App     Avalonia cashier and customer windows
-src/EgyChina.Pos.Core    Money, catalog row, receipt seam
-src/EgyChina.Pos.Data    SQLite migration and connection
-src/EgyChina.Pos.Sync    Outbox worker (health probe only)
+src/EgyChina.Pos.Core    Money, catalog row, install paths, heartbeat
+src/EgyChina.Pos.Data    SQLite migration, backup/restore
+src/EgyChina.Pos.Sync    Outbox worker
+src/EgyChina.Pos.Tools   restore / heartbeat-check CLI
+scripts/                 publish, install, launch, update, rollback, restore
 tests/EgyChina.Pos.Tests
 docs/
 ```

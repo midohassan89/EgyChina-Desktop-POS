@@ -1,3 +1,4 @@
+using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -113,6 +114,32 @@ public partial class App : Application
 
         desktop.MainWindow = cashier;
         ShowCustomer();
+
+        var version = ReadAppVersion();
+        try
+        {
+            AppHeartbeat.Write(root, version);
+            PosLog.Info($"heartbeat written version={version}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("heartbeat write failed", ex);
+        }
+    }
+
+    private static string ReadAppVersion()
+    {
+        var assembly = typeof(App).Assembly;
+        var informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plus = informational.IndexOf('+', StringComparison.Ordinal);
+            return plus > 0 ? informational[..plus] : informational.Trim();
+        }
+
+        return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     }
 
     private void ShowCustomer()

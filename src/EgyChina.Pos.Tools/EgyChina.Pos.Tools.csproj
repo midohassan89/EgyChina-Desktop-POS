@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <RootNamespace>EgyChina.Pos.Tools</RootNamespace>
+    <Description>Offline till maintenance commands (restore, heartbeat check).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EgyChina.Pos.Core\EgyChina.Pos.Core.csproj" />
+    <ProjectReference Include="..\EgyChina.Pos.Data\EgyChina.Pos.Data.csproj" />
+  </ItemGroup>
+</Project>

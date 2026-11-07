@@ -285,9 +285,11 @@ Self-contained, not single-file. Avalonia’s native assets and single-file publ
 
 Do not trim. Avalonia and the MVVM source generator are a bad trim target, and a broken trim on a till is a closed lane.
 
-The launcher (phase 1, small second exe or a careful script) starts `current`. It applies an update only when no shift is open, keeps the previous directory, and rolls back if the new exe does not reach a heartbeat. Sign the exe. **ASSUMPTION:** the feed is `GET /api/pos/v1/releases/latest`, described in the contract. Until that exists, copy the folder by hand.
+The PowerShell launcher set under `scripts/` starts `current`. `apply-update.ps1` installs only when the POS process is stopped and no local shift is open, keeps `previous.version`, starts the new build, and rolls back if `heartbeat.json` (under LocalAppData) does not match the new version in time. Sign the exe before store rollout. **ASSUMPTION:** a later feed is `GET /api/pos/v1/releases/latest`. Until that exists, copy a published folder by hand into `install-version.ps1` / `apply-update.ps1`.
 
-Velopack can replace the hand-rolled launcher in phase 2. It is the boring .NET choice. ClickOnce and MSIX are not.
+Database restore from `backups\pos-*.db` is `scripts\restore-database.ps1` (POS must be closed). It never copies `device.cred`.
+
+Velopack can replace the hand-rolled scripts later. ClickOnce and MSIX are not.
 
 Expected self-contained size is on the order of 150–250 MB because of the runtime, ICU, and Skia. Disk is an SSD. RAM is the limit that matters.
 
@@ -338,4 +340,4 @@ Not implemented, on purpose:
 - Void, refund, discount. PIN + local shifts landed in phase 6. Print/reprint landed in phase 7.
 - Live production till sync still needs a deliberate ops window (device auth + catalog pull are local-proven).
 - QR images on the customer display, CNY tender.
-- Auto-logon, the launcher, code signing.
+- Auto-logon and Authenticode code signing (versioned install + launcher scripts landed in phase 10).

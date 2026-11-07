@@ -95,7 +95,10 @@
 - **خارج النطاق:** استرجاع تلقائي من واجهة الكاشير (المرحلة 10).
 
 ### المرحلة 10 — حزمة Windows / تحديث / استرجاع
-- **الحالة:** سكربت publish موجود؛ launcher غير مكتمل.
+- **الحالة:** مكتملة محلياً (7 Nov 2026) — بدون Authenticode / auto-logon / feed ERP.
+- **نطاق المنفَّذ:** نشر إصداري إلى `artifacts/win-x64/<version>`؛ تثبيت تحت `C:\EgyChina\Pos\app\<version>` مع junction `current`؛ `launch` / `rollback` / `apply-update` (تحقق heartbeat ثم تراجع)؛ `DatabaseRestore` + أداة `EgyChina.Pos.Tools`؛ نبضة `heartbeat.json` بعد إقلاع ناجح؛ منع التحديث مع وردية مفتوحة/عملية شغّالة.
+- **نجاح مثبت:** `dotnet test` — 87 ناجحة (بما فيها `PackagingAndRestoreTests`).
+- **خارج النطاق الآن:** توقيع Authenticode، Velopack، `GET /api/pos/v1/releases/latest`، auto-logon الكiosk.
 
 **قاعدة:** لا تُفعَّل مزامنة إنتاج قبل اكتمال المرحلتين 2 و 3 على الأقل.
 

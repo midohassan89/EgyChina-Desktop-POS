@@ -4,6 +4,7 @@ using Xunit;
 
 namespace EgyChina.Pos.Tests;
 
+[Collection("PosLog")]
 public sealed class BackupAndLogTests : IDisposable
 {
     private readonly string _directory;

@@ -71,6 +71,16 @@ public partial class App : Application
         var root = PosPaths.Root();
         Directory.CreateDirectory(root);
         PosLog.SetDirectory(PosPaths.LogDirectory());
+        try
+        {
+            PosPaths.EnsurePaymentQrAssets();
+            PosLog.Info(
+                $"payment QR wechat={(File.Exists(PosPaths.WeChatQrFile()) ? "ok" : "missing")} instapay={(File.Exists(PosPaths.InstaPayQrFile()) ? "ok" : "missing")}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("payment QR seed failed", ex);
+        }
 
         _database = new PosDatabase(PosPaths.DatabaseFile());
         _database.Initialize();

@@ -1945,10 +1945,13 @@ public partial class PosSession : ObservableObject
             Dispatcher.UIThread.Post(Apply);
     }
 
-    private static string FormatCatalogCaption(int count, bool demoCatalog) =>
-        demoCatalog
-            ? $"{count.ToString(CultureInfo.InvariantCulture)} أصناف تجريبية في القاعدة المحلية"
-            : $"{count.ToString(CultureInfo.InvariantCulture)} أصناف في القاعدة المحلية";
+    private static string FormatCatalogCaption(int count, bool demoCatalog)
+    {
+        var n = count.ToString(CultureInfo.InvariantCulture);
+        if (demoCatalog)
+            return $"كتالوج تجريبي ({n} أصناف) — للمزامنة الحية اضبط EGYCHINA_POS_API + DEVICE_TOKEN + CATALOG_PULL=1";
+        return $"كتالوج ERP · {n} أصناف";
+    }
 
     private static bool Matches(CatalogProduct product, string term)
     {

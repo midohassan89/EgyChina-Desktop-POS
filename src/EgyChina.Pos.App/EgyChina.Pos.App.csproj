@@ -31,4 +31,10 @@
     <ProjectReference Include="..\EgyChina.Pos.Printing\EgyChina.Pos.Printing.csproj" />
   </ItemGroup>
 
+  <!-- Ship payment QR next to the exe; PosPaths copies them into LocalAppData on first use. -->
+  <ItemGroup>
+    <None Include="..\..\assets\wechat-qr.jpg" Link="assets\wechat-qr.jpg" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\assets\wechat-qr.jpg')" />
+    <None Include="..\..\assets\instapay-qr.jpeg" Link="assets\instapay-qr.jpeg" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\..\assets\instapay-qr.jpeg')" />
+  </ItemGroup>
+
 </Project>

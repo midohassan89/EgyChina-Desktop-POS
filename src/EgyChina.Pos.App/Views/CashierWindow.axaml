@@ -8,7 +8,7 @@
         Title="ايجي شاينا — نقطة البيع"
         FlowDirection="RightToLeft"
         WindowStartupLocation="Manual"
-        Background="#E2E8F0"
+        Background="#F1F5F9"
         MinWidth="960"
         MinHeight="680">
 
@@ -400,7 +400,7 @@
                    Margin="0,4,0,8"
                    Foreground="#64748B" />
 
-        <Border Background="#F8FAFC" CornerRadius="12" Padding="8" BorderBrush="#CBD5E1" BorderThickness="1">
+        <Border Background="White" CornerRadius="16" Padding="12" BorderBrush="#E2E8F0" BorderThickness="1">
           <ScrollViewer HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding VisibleProducts}">
               <ItemsControl.ItemsPanel>
@@ -410,33 +410,33 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="core:CatalogProduct">
-                  <Border Width="220"
-                          Margin="0,0,8,8"
-                          Padding="12,10"
-                          Background="White"
+                  <Border Width="200"
+                          MinHeight="148"
+                          Margin="0,0,10,10"
+                          Padding="14,12"
+                          Background="#FFFFFF"
                           BorderBrush="#E2E8F0"
                           BorderThickness="1"
-                          CornerRadius="12"
+                          CornerRadius="16"
                           Cursor="Hand"
                           Tapped="OnProductTapped">
                     <DockPanel>
                       <Button DockPanel.Dock="Top"
                               Content="{Binding FavoriteGlyph}"
                               HorizontalAlignment="Left"
-                              MinHeight="36"
-                              MinWidth="44"
-                              Padding="8,4"
-                              Background="#FEF3C7"
-                              Foreground="#92400E"
-                              FontSize="18"
+                              MinHeight="34"
+                              MinWidth="40"
+                              Padding="6,2"
+                              Background="#FEF9C3"
+                              Foreground="#A16207"
+                              FontSize="16"
                               Click="OnFavoriteClick"
                               Tag="{Binding}" />
-                      <StackPanel Spacing="4" Margin="0,6,0,0">
-                        <TextBlock Text="{Binding NameAr}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#0F172A" />
-                        <TextBlock Text="{Binding NameZh}" FontSize="13" Foreground="#64748B" FlowDirection="LeftToRight"
+                      <StackPanel Spacing="6" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding NameAr}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#0F172A" MaxHeight="48" />
+                        <TextBlock Text="{Binding NameZh}" FontSize="12" Foreground="#64748B" FlowDirection="LeftToRight"
                                    IsVisible="{Binding HasNameZh}" />
-                        <TextBlock Text="{Binding PriceEgpText}" FontSize="18" FontWeight="Bold" Foreground="#059669" />
-                        <TextBlock Text="{Binding Barcode}" FontSize="12" Foreground="#94A3B8" FlowDirection="LeftToRight" />
+                        <TextBlock Text="{Binding PriceEgpText}" FontSize="20" FontWeight="Bold" Foreground="#059669" Margin="0,4,0,0" />
                       </StackPanel>
                     </DockPanel>
                   </Border>

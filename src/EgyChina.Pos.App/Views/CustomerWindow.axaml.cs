@@ -44,7 +44,7 @@ public partial class CustomerWindow : Window
 
     private void ReloadQrImages()
     {
-        Directory.CreateDirectory(PosPaths.AssetsDirectory());
+        PosPaths.EnsurePaymentQrAssets();
         ApplyQr(WeChatQrImage, WeChatQrFallback, PosPaths.WeChatQrFile());
         ApplyQr(InstaPayQrImage, InstaPayQrFallback, PosPaths.InstaPayQrFile());
     }
@@ -53,9 +53,10 @@ public partial class CustomerWindow : Window
     {
         try
         {
-            if (File.Exists(path))
+            if (File.Exists(path) && new FileInfo(path).Length > 0)
             {
-                image.Source = new Bitmap(path);
+                using var stream = File.OpenRead(path);
+                image.Source = new Bitmap(stream);
                 image.IsVisible = true;
                 fallback.IsVisible = false;
                 return;

@@ -24,12 +24,36 @@ public sealed record ReceiptDocument(
     bool IsReprint = false,
     bool KickDrawer = false);
 
+/// <summary>Z-report payload for thermal print at shift close.</summary>
+public sealed record ZReportDocument(
+    string StoreNameAr,
+    string StoreNameZh,
+    string CashierName,
+    string ShiftOpenedAt,
+    DateTimeOffset ClosedAt,
+    long OpeningFloatMinor,
+    long CashSalesMinor,
+    long VisaSalesMinor,
+    long WalletSalesMinor,
+    long InstaPaySalesMinor,
+    long WeChatSalesMinor,
+    long CashRefundsMinor,
+    long TotalSalesMinor,
+    long ExpectedCashMinor,
+    long ActualClosingCashMinor,
+    long VarianceMinor,
+    int TicketCount,
+    int ReturnTicketCount);
+
 public interface IReceiptPrinter
 {
     /// <summary>True when a real transport is configured (not a silent null sink).</summary>
     bool IsConfigured { get; }
 
     Task PrintAsync(ReceiptDocument document, CancellationToken cancellationToken);
+
+    /// <summary>Prints the end-of-shift Z report (sales totals + drawer variance).</summary>
+    Task PrintZReportAsync(ZReportDocument document, CancellationToken cancellationToken);
 
     /// <summary>Pulse the cash drawer without printing a receipt.</summary>
     Task KickDrawerAsync(CancellationToken cancellationToken);

@@ -138,6 +138,7 @@ public sealed class SyncWorker : IAsyncDisposable
             {
                 "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
                 "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
+                "demo-product-not-on-erp" => ("demo-product-not-on-erp", "بيع بأصناف تجريبية محلية لا تُرفع لسيرفر ERP."),
                 _ => (NotConfiguredCursor, "البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP لرفع المبيعات."),
             };
             _database.WriteCursor(CursorStream, cursor, null);

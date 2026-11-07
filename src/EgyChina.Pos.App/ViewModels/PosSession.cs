@@ -1899,6 +1899,12 @@ public partial class PosSession : ObservableObject
 
         try
         {
+            var zReport = CurrentZReport ?? _database.BuildShiftZReport(_currentShift.Id);
+            var printDoc = zReport?.ToPrintDocument(
+                "ايجي شاينا ماركت",
+                "埃及中国商场",
+                closing);
+
             _database.CloseShift(_currentShift.Id, _currentCashier.Id, closing);
             _currentShift = null;
             ShowCloseShift = false;
@@ -1910,6 +1916,9 @@ public partial class PosSession : ObservableObject
             RefreshCheckout();
             RequestFocus(UiFocusTarget.OpeningFloat);
             DatabaseBackup.Create(_database);
+
+            if (printDoc is not null)
+                _ = PrintZReportAsync(printDoc);
         }
         catch (Exception ex)
         {
@@ -2138,6 +2147,26 @@ public partial class PosSession : ObservableObject
         {
             PosLog.Error(isReprint ? "reprint failed" : "print failed", ex);
             await SetPrintHintAsync("تعذر الطباعة. البيع محفوظ — جرّب إعادة الطباعة.").ConfigureAwait(false);
+        }
+    }
+
+    private async Task PrintZReportAsync(ZReportDocument document)
+    {
+        try
+        {
+            if (!_printer.IsConfigured)
+            {
+                await SetPrintHintAsync("أُغلقت الوردية. الطابعة غير مضبوطة — تقرير Z لم يُطبع.").ConfigureAwait(false);
+                return;
+            }
+
+            await _printer.PrintZReportAsync(document, CancellationToken.None).ConfigureAwait(false);
+            await SetPrintHintAsync("طُبع تقرير Z لإغلاق الوردية.").ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("z-report print failed", ex);
+            await SetPrintHintAsync("أُغلقت الوردية. تعذر طباعة تقرير Z.").ConfigureAwait(false);
         }
     }
 

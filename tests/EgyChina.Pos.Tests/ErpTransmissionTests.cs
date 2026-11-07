@@ -180,9 +180,12 @@ public sealed class ErpTransmissionTests : IDisposable
         await Tick(database, server.BaseAddress);
 
         Assert.Equal(0, called);
-        Assert.Equal(1, database.CountPendingOutbox());
-        var row = Assert.Single(database.ListPendingSales(5));
-        Assert.Equal("product-id-not-numeric", ReadError(database, row.Id));
+        // Unlinked demo-* seed SKUs are poison — never post, never retry forever.
+        Assert.Equal(0, database.CountPendingOutbox());
+        Assert.Equal(1, database.CountDeadOutbox());
+        var health = Assert.Single(database.ListOutboxHealth());
+        Assert.Equal("dead", health.Status);
+        Assert.Equal("demo-product-not-on-erp", health.LastError);
     }
 
     [Fact]
@@ -275,6 +278,52 @@ public sealed class ErpTransmissionTests : IDisposable
         Assert.Equal(85.00m, doc.RootElement.GetProperty("amount").GetDecimal());
         Assert.Equal(9042, doc.RootElement.GetProperty("lines")[0].GetProperty("productId").GetInt64());
         Assert.Equal("sale-1", doc.RootElement.GetProperty("localId").GetString());
+    }
+
+    [Fact]
+    public void Checkout_mapper_infers_cash_from_legacy_payments_array()
+    {
+        // Pre-paymentMethod outbox rows only stored payments[].method = cash_egp.
+        var ok = ErpCheckoutMapper.TryMap(
+            """
+            {"saleId":"sale-legacy","totalMinor":13000,"payments":[{"method":"cash_egp","amountMinor":13000}],"lines":[
+              {"productId":"p1","nameAr":"شاي","qtyMilli":1000,"unitPriceMinor":4500,"lineTotalMinor":4500},
+              {"productId":"p2","nameAr":"أرز","qtyMilli":1000,"unitPriceMinor":8500,"lineTotalMinor":8500}
+            ]}
+            """,
+            ErpMoneyScale.MajorUnits,
+            paymentMethod: null,
+            id => id switch
+            {
+                "p1" => 11L,
+                "p2" => 22L,
+                _ => null,
+            },
+            out var json,
+            out var block);
+        Assert.True(ok, block);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("cash", doc.RootElement.GetProperty("paymentMethod").GetString());
+        Assert.Equal(130.00m, doc.RootElement.GetProperty("total").GetDecimal());
+    }
+
+    [Fact]
+    public void Checkout_mapper_marks_unlinked_demo_products_as_poison()
+    {
+        var ok = ErpCheckoutMapper.TryMap(
+            """
+            {"saleId":"sale-demo","paymentMethod":"cash","totalMinor":8500,"lines":[
+              {"productId":"demo-rice","nameAr":"أرز","qtyMilli":1000,"unitPriceMinor":8500,"lineTotalMinor":8500}
+            ]}
+            """,
+            ErpMoneyScale.MajorUnits,
+            paymentMethod: null,
+            _ => null,
+            out _,
+            out var block);
+        Assert.False(ok);
+        Assert.Equal("demo-product-not-on-erp", block);
+        Assert.True(SaleOutboxSync.IsPoisonBlock(block));
     }
 
     private PosDatabase SeedSale(bool link = true)

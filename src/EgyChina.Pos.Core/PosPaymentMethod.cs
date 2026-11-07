@@ -77,6 +77,27 @@ public static class PosPaymentMethods
         _ => "cash_egp",
     };
 
+    /// <summary>
+    /// Maps a stored local or ERP payment id to the lowercase ERP checkout id.
+    /// Accepts legacy local values such as <c>cash_egp</c> / <c>card</c>.
+    /// </summary>
+    public static string? TryNormalizeErpId(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        return raw.Trim().ToLowerInvariant() switch
+        {
+            "cash" or "cash_egp" => "cash",
+            "visa" or "card" => "visa",
+            "wallet" => "wallet",
+            "instapay" or "insta_pay" or "insta-pay" => "instapay",
+            "wechat" or "we_chat" or "we-chat" => "wechat",
+            "staff_meal" or "staff-meal" => "STAFF_MEAL",
+            _ => null,
+        };
+    }
+
     public static bool IsCash(PosPaymentMethod method) => method == PosPaymentMethod.Cash;
 
     public static bool IsWeChat(PosPaymentMethod method) => method == PosPaymentMethod.WeChat;

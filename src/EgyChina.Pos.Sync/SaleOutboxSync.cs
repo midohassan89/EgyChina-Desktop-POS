@@ -22,6 +22,7 @@ public sealed class SaleOutboxSync
         "line-missing-price",
         "line-missing-line-total",
         "line-total-mismatch",
+        "demo-product-not-on-erp",
     };
 
     private readonly PosDatabase _database;

@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using EgyChina.Pos.Core;
 
 namespace EgyChina.Pos.Sync;
 
@@ -28,14 +29,7 @@ public static class ErpCheckoutMapper
         using var document = JsonDocument.Parse(payloadJson);
         var root = document.RootElement;
 
-        var resolvedPayment = paymentMethod;
-        if (root.TryGetProperty("paymentMethod", out var paymentNode)
-            && paymentNode.ValueKind == JsonValueKind.String
-            && !string.IsNullOrWhiteSpace(paymentNode.GetString()))
-        {
-            resolvedPayment = paymentNode.GetString();
-        }
-
+        var resolvedPayment = ResolvePaymentMethod(root, paymentMethod);
         if (string.IsNullOrWhiteSpace(resolvedPayment))
         {
             blockReason = "payment-method-unverified";
@@ -166,6 +160,37 @@ public static class ErpCheckoutMapper
         _ => throw new InvalidOperationException("Money scale is not verified."),
     };
 
+    /// <summary>
+    /// Prefer payload <c>paymentMethod</c>, then first <c>payments[].method</c> (legacy local ids),
+    /// then the optional env override. Never invent a method when nothing is present.
+    /// </summary>
+    internal static string? ResolvePaymentMethod(JsonElement root, string? envFallback)
+    {
+        if (root.TryGetProperty("paymentMethod", out var paymentNode)
+            && paymentNode.ValueKind == JsonValueKind.String)
+        {
+            var normalized = PosPaymentMethods.TryNormalizeErpId(paymentNode.GetString());
+            if (!string.IsNullOrWhiteSpace(normalized))
+                return normalized;
+        }
+
+        if (root.TryGetProperty("payments", out var paymentsNode)
+            && paymentsNode.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var pay in paymentsNode.EnumerateArray())
+            {
+                if (!pay.TryGetProperty("method", out var methodNode)
+                    || methodNode.ValueKind != JsonValueKind.String)
+                    continue;
+                var normalized = PosPaymentMethods.TryNormalizeErpId(methodNode.GetString());
+                if (!string.IsNullOrWhiteSpace(normalized))
+                    return normalized;
+            }
+        }
+
+        return PosPaymentMethods.TryNormalizeErpId(envFallback);
+    }
+
     private static bool TryMapLine(
         JsonElement line,
         ErpMoneyScale scale,
@@ -187,6 +212,12 @@ public static class ErpCheckoutMapper
             numericId = parsed;
         else if (resolveNumericId(rawId) is long linked && linked > 0)
             numericId = linked;
+        else if (rawId.StartsWith("demo-", StringComparison.OrdinalIgnoreCase))
+        {
+            // Seed catalog never exists on production ERP — do not retry forever.
+            blockReason = "demo-product-not-on-erp";
+            return false;
+        }
         else
         {
             blockReason = "product-id-not-numeric";

@@ -89,6 +89,62 @@ public sealed class PrintingTests : IDisposable
         Assert.IsType<NullReceiptPrinter>(printer);
     }
 
+    [Fact]
+    public void Z_report_bitmap_renders_576_dot_layout()
+    {
+        using var bitmap = ReceiptBitmapRenderer.RenderZReport(SampleZReport());
+        Assert.Equal(EscPosRasterEncoder.PageWidthDots, bitmap.Width);
+        Assert.True(bitmap.Height > 200);
+
+        var bytes = EscPosRasterEncoder.Encode(bitmap, kickDrawer: false);
+        Assert.True(bytes.Length > 100);
+        Assert.Equal(0x1B, bytes[0]);
+        Assert.Equal(0x40, bytes[1]);
+    }
+
+    [Fact]
+    public async Task File_transport_prints_z_report()
+    {
+        var path = Path.Combine(_directory, "z-report.bin");
+        var printer = EscPosReceiptPrinter.Create(new PrinterOptions
+        {
+            Transport = PrinterTransportKind.File,
+            FilePath = path,
+        });
+        Assert.True(printer.IsConfigured);
+
+        await printer.PrintZReportAsync(SampleZReport(), CancellationToken.None);
+        Assert.True(File.Exists(path));
+        var bytes = await File.ReadAllBytesAsync(path);
+        Assert.True(bytes.Length > 100);
+    }
+
+    [Fact]
+    public void Shift_z_report_maps_to_print_document()
+    {
+        var shift = new ShiftZReport(
+            ShiftId: "s1",
+            CashierName: "أحمد",
+            OpenedAt: "2026-11-07T08:00:00+02:00",
+            OpeningFloatMinor: 50_000,
+            CashSalesMinor: 12_500,
+            VisaSalesMinor: 3_000,
+            WalletSalesMinor: 0,
+            InstaPaySalesMinor: 1_500,
+            WeChatSalesMinor: 0,
+            CashRefundsMinor: 500,
+            TicketCount: 4,
+            ReturnTicketCount: 1,
+            CashTicketCount: 3,
+            CardTicketCount: 1);
+
+        var doc = shift.ToPrintDocument("ايجي شاينا ماركت", "埃及中国商场", actualClosingCashMinor: 62_000);
+        Assert.Equal(62_500, doc.ExpectedCashMinor);
+        Assert.Equal(-500, doc.VarianceMinor);
+        Assert.Equal(17_000, doc.TotalSalesMinor);
+        Assert.Equal("أحمد", doc.CashierName);
+    }
+
     private static ReceiptDocument SampleDocument() =>
         new(
             StoreNameAr: "ايجي شاينا ماركت",
@@ -104,4 +160,25 @@ public sealed class PrintingTests : IDisposable
             TenderMinor: 10_000,
             ChangeMinor: 1_500,
             FooterAr: "سوق العبور");
+
+    private static ZReportDocument SampleZReport() =>
+        new(
+            StoreNameAr: "ايجي شاينا ماركت",
+            StoreNameZh: "埃及中国商场",
+            CashierName: "كاشير محلي",
+            ShiftOpenedAt: "2026-11-07T08:00:00+02:00",
+            ClosedAt: DateTimeOffset.Parse("2026-11-07T16:00:00+02:00"),
+            OpeningFloatMinor: 50_000,
+            CashSalesMinor: 12_500,
+            VisaSalesMinor: 3_000,
+            WalletSalesMinor: 0,
+            InstaPaySalesMinor: 1_500,
+            WeChatSalesMinor: 2_000,
+            CashRefundsMinor: 500,
+            TotalSalesMinor: 19_000,
+            ExpectedCashMinor: 62_500,
+            ActualClosingCashMinor: 62_000,
+            VarianceMinor: -500,
+            TicketCount: 5,
+            ReturnTicketCount: 1);
 }

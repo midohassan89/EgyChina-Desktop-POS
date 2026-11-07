@@ -54,6 +54,31 @@ public sealed record ShiftZReport(
 
     public string VarianceText(long actualClosingCashMinor) =>
         Money.FormatEgp(VarianceMinor(actualClosingCashMinor));
+
+    public ZReportDocument ToPrintDocument(
+        string storeNameAr,
+        string storeNameZh,
+        long actualClosingCashMinor,
+        DateTimeOffset? closedAt = null) =>
+        new(
+            storeNameAr,
+            storeNameZh,
+            CashierName,
+            OpenedAt,
+            closedAt ?? DateTimeOffset.Now,
+            OpeningFloatMinor,
+            CashSalesMinor,
+            VisaSalesMinor,
+            WalletSalesMinor,
+            InstaPaySalesMinor,
+            WeChatSalesMinor,
+            CashRefundsMinor,
+            TotalSalesMinor,
+            ExpectedCashMinor,
+            actualClosingCashMinor,
+            VarianceMinor(actualClosingCashMinor),
+            TicketCount,
+            ReturnTicketCount);
 }
 
 public sealed record OnlineOrderItem(string Id, string Name, decimal Quantity, decimal Price);

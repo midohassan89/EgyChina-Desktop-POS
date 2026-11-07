@@ -26,6 +26,14 @@ public sealed class EscPosReceiptPrinter : IReceiptPrinter
         await _transport.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task PrintZReportAsync(ZReportDocument document, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        using var bitmap = ReceiptBitmapRenderer.RenderZReport(document);
+        var bytes = EscPosRasterEncoder.Encode(bitmap, kickDrawer: false);
+        await _transport.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+    }
+
     public Task KickDrawerAsync(CancellationToken cancellationToken) =>
         _transport.WriteAsync(EscPosRasterEncoder.DrawerKickOnly(), cancellationToken);
 

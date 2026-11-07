@@ -10,5 +10,8 @@ public sealed class NullReceiptPrinter : IReceiptPrinter
     public Task PrintAsync(ReceiptDocument document, CancellationToken cancellationToken) =>
         Task.CompletedTask;
 
+    public Task PrintZReportAsync(ZReportDocument document, CancellationToken cancellationToken) =>
+        Task.CompletedTask;
+
     public Task KickDrawerAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }

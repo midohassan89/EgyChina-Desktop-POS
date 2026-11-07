@@ -76,6 +76,41 @@ public sealed class CustomerDisplayProjectorTests
     }
 
     [Fact]
+    public void Idle_clock_script_and_date_rotate_with_greeting()
+    {
+        var arabicAt = new DateTimeOffset(2026, 11, 7, 16, 30, 0, TimeSpan.FromHours(2));
+        // Force buckets: unix/4 % 3
+        var t0 = DateTimeOffset.FromUnixTimeSeconds(0);
+        var t1 = DateTimeOffset.FromUnixTimeSeconds(4);
+        var t2 = DateTimeOffset.FromUnixTimeSeconds(8);
+
+        Assert.Equal(CustomerClockScript.Arabic, CustomerDisplayProjector.IdleClockScript(t0));
+        Assert.Equal(CustomerClockScript.Latin, CustomerDisplayProjector.IdleClockScript(t1));
+        Assert.Equal(CustomerClockScript.Chinese, CustomerDisplayProjector.IdleClockScript(t2));
+
+        Assert.Equal("٤", CustomerAnalogClock.HourLabel(4, CustomerClockScript.Arabic));
+        Assert.Equal("4", CustomerAnalogClock.HourLabel(4, CustomerClockScript.Latin));
+        Assert.Equal("四", CustomerAnalogClock.HourLabel(4, CustomerClockScript.Chinese));
+        Assert.Equal("١٢", CustomerAnalogClock.HourLabel(12, CustomerClockScript.Arabic));
+        Assert.Equal("十二", CustomerAnalogClock.HourLabel(12, CustomerClockScript.Chinese));
+
+        var arDate = CustomerAnalogClock.FormatDate(arabicAt, CustomerClockScript.Arabic);
+        Assert.Contains("السبت", arDate, StringComparison.Ordinal);
+        Assert.Contains("نوفمبر", arDate, StringComparison.Ordinal);
+        Assert.Contains("٢٠٢٦", arDate, StringComparison.Ordinal);
+
+        var zhDate = CustomerAnalogClock.FormatDate(arabicAt, CustomerClockScript.Chinese);
+        Assert.Contains("二零二六", zhDate, StringComparison.Ordinal);
+        Assert.Contains("十一月", zhDate, StringComparison.Ordinal);
+        Assert.Contains("星期六", zhDate, StringComparison.Ordinal);
+
+        var (hour, minute, second) = CustomerAnalogClock.HandAngles(new DateTime(2026, 11, 7, 16, 30, 0));
+        Assert.Equal(135.0, hour, 3); // 4:30 → halfway to 5
+        Assert.Equal(180.0, minute, 3);
+        Assert.Equal(0.0, second, 3);
+    }
+
+    [Fact]
     public void Completed_hold_matches_web_twenty_seconds()
     {
         Assert.Equal(TimeSpan.FromSeconds(20), CustomerDisplayTiming.CompletedHold);

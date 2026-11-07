@@ -46,6 +46,8 @@ public partial class PosSession : ObservableObject
         DatabasePath = database.DatabasePath;
         CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog);
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        IdleClockScript = CustomerDisplayProjector.IdleClockScript(DateTimeOffset.Now);
+        IdleDateText = CustomerDisplayProjector.IdleDateText(DateTimeOffset.Now);
         NeedsLogin = true;
         SessionCaption = "سجّل الدخول برقم PIN الموظف (٤ أرقام من منظومة ERP)";
         PrinterCaption = _printer.IsConfigured
@@ -113,6 +115,12 @@ public partial class PosSession : ObservableObject
 
     [ObservableProperty]
     private string _idleGreetingText = CustomerDisplayProjector.IdleGreeting(DateTimeOffset.Now);
+
+    [ObservableProperty]
+    private CustomerClockScript _idleClockScript = CustomerDisplayProjector.IdleClockScript(DateTimeOffset.Now);
+
+    [ObservableProperty]
+    private string _idleDateText = CustomerDisplayProjector.IdleDateText(DateTimeOffset.Now);
 
     public bool IsCfdIdle => CustomerDisplayMode == CustomerDisplayMode.Idle;
 
@@ -1345,6 +1353,8 @@ public partial class PosSession : ObservableObject
         ClockText = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         var stamp = new DateTimeOffset(now);
         IdleGreetingText = CustomerDisplayProjector.IdleGreeting(stamp);
+        IdleClockScript = CustomerDisplayProjector.IdleClockScript(stamp);
+        IdleDateText = CustomerDisplayProjector.IdleDateText(stamp);
         if (HasSettlement && CustomerDisplayProjector.IsCompletedExpired(_settlementAt, stamp))
         {
             HasSettlement = false;

@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:EgyChina.Pos.App.ViewModels"
+        xmlns:controls="using:EgyChina.Pos.App.Controls"
         x:Class="EgyChina.Pos.App.Views.CustomerWindow"
         x:DataType="vm:PosSession"
         Title="شاشة العميل — ايجي شاينا"
@@ -52,18 +53,23 @@
                    Foreground="#A7F3D0"
                    HorizontalAlignment="Center"
                    TextAlignment="Center" />
-        <Border Background="#052E1F" CornerRadius="28" Padding="40,24" Margin="0,10,0,0"
-                BorderBrush="#10B981" BorderThickness="1" HorizontalAlignment="Center" MinWidth="300"
-                BoxShadow="0 16 40 0 #40000000">
-          <TextBlock Text="{Binding ClockText}"
-                     FontSize="64"
-                     FontWeight="Bold"
-                     Foreground="#F8FAFC"
-                     HorizontalAlignment="Center"
-                     FlowDirection="LeftToRight" />
-        </Border>
+        <controls:AnalogClockControl Width="280"
+                                     Height="280"
+                                     HorizontalAlignment="Center"
+                                     FlowDirection="LeftToRight"
+                                     Script="{Binding IdleClockScript}"
+                                     Margin="0,10,0,0" />
+        <TextBlock Text="{Binding IdleDateText}"
+                   FontSize="22"
+                   FontWeight="SemiBold"
+                   Foreground="#F8FAFC"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center"
+                   TextWrapping="Wrap"
+                   Margin="0,4,0,0"
+                   MaxWidth="520" />
         <TextBlock Text="{Binding IdleGreetingText}"
-                   FontSize="30"
+                   FontSize="28"
                    FontWeight="SemiBold"
                    Foreground="#ECFDF5"
                    HorizontalAlignment="Center"

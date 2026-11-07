@@ -60,7 +60,8 @@ public partial class CashierWindow : Window
             or nameof(PosSession.ShowCloseShift)
             or nameof(PosSession.IsTendering)
             or nameof(PosSession.ShowNotFound)
-            or nameof(PosSession.ShowPriceCheck))
+            or nameof(PosSession.ShowPriceCheck)
+            or nameof(PosSession.ShowHeldCarts))
         {
             Dispatcher.UIThread.Post(FocusForSession);
         }
@@ -145,6 +146,13 @@ public partial class CashierWindow : Window
             if (session.ShowPriceCheck)
             {
                 session.ClosePriceCheckCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (session.ShowHeldCarts)
+            {
+                session.CloseHeldCartsCommand.Execute(null);
                 e.Handled = true;
                 return;
             }
@@ -285,6 +293,22 @@ public partial class CashierWindow : Window
         if (sender is not Button { Tag: CatalogProduct product } || DataContext is not PosSession session)
             return;
         session.ToggleFavoriteCommand.Execute(product);
+    }
+
+    private void OnResumeHeldClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Button { Tag: HeldCartSummary held } || DataContext is not PosSession session)
+            return;
+        session.ResumeHeldCartCommand.Execute(held);
+    }
+
+    private void OnDiscardHeldClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Button { Tag: HeldCartSummary held } || DataContext is not PosSession session)
+            return;
+        session.DiscardHeldCartCommand.Execute(held);
     }
 
     private void SubmitBarcode()

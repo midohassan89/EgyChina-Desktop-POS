@@ -89,6 +89,13 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "004_product_favorite.sql");
                 MarkMigration(connection, 4, "product-favorite");
+                version = 4;
+            }
+
+            if (version < 5)
+            {
+                ApplyMigrationScript(connection, "005_held_cart.sql");
+                MarkMigration(connection, 5, "held-cart");
             }
 
             EnsureTerminal(connection);
@@ -1995,6 +2002,128 @@ public sealed class PosDatabase
             insert.Parameters.AddWithValue("$at", Now());
             insert.ExecuteNonQuery();
             return true;
+        }
+    }
+
+    public HeldCartSummary HoldCart(IReadOnlyList<HeldCartLinePayload> lines, string? cashierId = null)
+    {
+        if (lines is null || lines.Count == 0)
+            throw new InvalidOperationException("لا يمكن تعليق سلة فارغة.");
+
+        var payload = new HeldCartPayload(lines);
+        var json = JsonSerializer.Serialize(payload);
+        var total = lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
+        var itemCount = lines.Sum(line => line.Qty);
+        var now = DateTimeOffset.Now;
+        var id = Guid.NewGuid().ToString("N");
+        var label = now.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO held_cart (id, label, held_at, item_count, total_minor, payload_json, cashier_id)
+                VALUES ($id, $label, $heldAt, $count, $total, $json, $cashier);
+                """;
+            insert.Parameters.AddWithValue("$id", id);
+            insert.Parameters.AddWithValue("$label", label);
+            insert.Parameters.AddWithValue("$heldAt", now.ToString("O"));
+            insert.Parameters.AddWithValue("$count", itemCount);
+            insert.Parameters.AddWithValue("$total", total);
+            insert.Parameters.AddWithValue("$json", json);
+            insert.Parameters.AddWithValue("$cashier", (object?)cashierId ?? DBNull.Value);
+            insert.ExecuteNonQuery();
+        }
+
+        PosLog.Info($"held cart created id={id} lines={lines.Count} total={total}");
+        return new HeldCartSummary(id, label, now.ToString("O"), itemCount, total);
+    }
+
+    public IReadOnlyList<HeldCartSummary> ListHeldCarts()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, label, held_at, item_count, total_minor
+                FROM held_cart
+                ORDER BY held_at DESC;
+                """;
+            using var reader = command.ExecuteReader();
+            var list = new List<HeldCartSummary>();
+            while (reader.Read())
+            {
+                list.Add(new HeldCartSummary(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    (int)reader.GetInt64(3),
+                    reader.GetInt64(4)));
+            }
+
+            return list;
+        }
+    }
+
+    public IReadOnlyList<HeldCartLinePayload>? TakeHeldCart(string heldCartId)
+    {
+        if (string.IsNullOrWhiteSpace(heldCartId))
+            throw new ArgumentException("Held cart id is required.", nameof(heldCartId));
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            using var select = connection.CreateCommand();
+            select.Transaction = tx;
+            select.CommandText = "SELECT payload_json FROM held_cart WHERE id = $id";
+            select.Parameters.AddWithValue("$id", heldCartId);
+            var json = select.ExecuteScalar() as string;
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                tx.Rollback();
+                return null;
+            }
+
+            var payload = JsonSerializer.Deserialize<HeldCartPayload>(json)
+                ?? throw new InvalidOperationException("تعذر قراءة السلة المعلّقة.");
+            using var delete = connection.CreateCommand();
+            delete.Transaction = tx;
+            delete.CommandText = "DELETE FROM held_cart WHERE id = $id";
+            delete.Parameters.AddWithValue("$id", heldCartId);
+            delete.ExecuteNonQuery();
+            tx.Commit();
+            PosLog.Info($"held cart resumed id={heldCartId}");
+            return payload.Lines;
+        }
+    }
+
+    public bool DiscardHeldCart(string heldCartId)
+    {
+        if (string.IsNullOrWhiteSpace(heldCartId))
+            throw new ArgumentException("Held cart id is required.", nameof(heldCartId));
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var delete = connection.CreateCommand();
+            delete.CommandText = "DELETE FROM held_cart WHERE id = $id";
+            delete.Parameters.AddWithValue("$id", heldCartId);
+            var removed = delete.ExecuteNonQuery() > 0;
+            if (removed)
+                PosLog.Info($"held cart discarded id={heldCartId}");
+            return removed;
+        }
+    }
+
+    public int CountHeldCarts()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return (int)ScalarLong(connection, "SELECT COUNT(*) FROM held_cart");
         }
     }
 

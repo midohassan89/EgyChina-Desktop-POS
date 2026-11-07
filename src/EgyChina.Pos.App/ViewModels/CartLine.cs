@@ -15,17 +15,58 @@ public partial class CartLine : ObservableObject
         Action changed,
         Action<CartLine> remove,
         Action<CartLine>? touched = null)
+        : this(
+            product.Id,
+            product.Barcode,
+            product.NameAr,
+            product.NameZh,
+            product.PriceEgpMinor,
+            qty: 1,
+            changed,
+            remove,
+            touched)
+    {
+    }
+
+    public CartLine(
+        HeldCartLinePayload payload,
+        Action changed,
+        Action<CartLine> remove,
+        Action<CartLine>? touched = null)
+        : this(
+            payload.ProductId,
+            payload.Barcode,
+            payload.NameAr,
+            payload.NameZh,
+            payload.UnitPriceMinor,
+            Math.Max(1, payload.Qty),
+            changed,
+            remove,
+            touched)
+    {
+    }
+
+    private CartLine(
+        string productId,
+        string? barcode,
+        string nameAr,
+        string? nameZh,
+        long unitPriceMinor,
+        int qty,
+        Action changed,
+        Action<CartLine> remove,
+        Action<CartLine>? touched)
     {
         LineId = Guid.NewGuid().ToString("N");
-        ProductId = product.Id;
-        Barcode = product.Barcode;
-        NameAr = product.NameAr;
-        NameZh = product.NameZh;
-        UnitPriceMinor = product.PriceEgpMinor;
+        ProductId = productId;
+        Barcode = barcode;
+        NameAr = nameAr;
+        NameZh = nameZh;
+        UnitPriceMinor = unitPriceMinor;
         _changed = changed;
         _remove = remove;
         _touched = touched;
-        _qty = 1;
+        _qty = qty;
     }
 
     public string LineId { get; }
@@ -46,7 +87,10 @@ public partial class CartLine : ObservableObject
 
     public string LineTotalText => Money.FormatEgp(UnitPriceMinor * Qty);
 
-    public string QtyText => $"× {Qty}";
+    public string QtyText => Qty.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public HeldCartLinePayload ToHeldPayload() =>
+        new(ProductId, Barcode, NameAr, NameZh, Qty, UnitPriceMinor);
 
     [ObservableProperty]
     private int _qty;
@@ -74,8 +118,10 @@ public partial class CartLine : ObservableObject
     private void Decrement()
     {
         if (Qty <= 1)
-            _remove(this);
-        else
-            Qty--;
+            return;
+        Qty--;
     }
+
+    [RelayCommand]
+    private void Remove() => _remove(this);
 }

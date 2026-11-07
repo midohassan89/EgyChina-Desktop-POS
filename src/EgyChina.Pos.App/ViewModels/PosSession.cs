@@ -49,6 +49,7 @@ public partial class PosSession : ObservableObject
         LastSyncError = snap.LastError ?? string.Empty;
         _lastSaleId = _database.GetLastCompletedSaleId();
         RefreshShiftState();
+        ReloadHeldCarts();
     }
 
     public ObservableCollection<CartLine> Lines { get; } = new();
@@ -76,7 +77,9 @@ public partial class PosSession : ObservableObject
     public event Action<UiFocusTarget>? FocusRequested;
 
     public string ShortcutHint { get; } =
-        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  Esc إلغاء  ·  الماسح يعمل حتى أثناء البحث";
+        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  Esc إلغاء  ·  تعليق السلة من الزر";
+
+    public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
 
     [ObservableProperty]
     private CustomerDisplayMode _customerDisplayMode = CustomerDisplayMode.Idle;
@@ -155,6 +158,12 @@ public partial class PosSession : ObservableObject
     private string _priceCheckError = string.Empty;
 
     [ObservableProperty]
+    private bool _showHeldCarts;
+
+    [ObservableProperty]
+    private string _heldCartError = string.Empty;
+
+    [ObservableProperty]
     private string _scanHint = "امسح الباركود أو اختر صنفاً.";
 
     public bool IsCatalogAll => CatalogTab == CatalogTab.All;
@@ -169,7 +178,7 @@ public partial class PosSession : ObservableObject
 
     public bool HasPriceCheckError => !string.IsNullOrWhiteSpace(PriceCheckError);
 
-    public bool BlocksScanning => ShowNotFound || ShowPriceCheck;
+    public bool BlocksScanning => ShowNotFound || ShowPriceCheck || ShowHeldCarts;
 
     [ObservableProperty]
     private string _syncMessage = "بدء المزامنة…";
@@ -240,7 +249,20 @@ public partial class PosSession : ObservableObject
 
     public bool HasCashierAlert => !string.IsNullOrWhiteSpace(CashierAlert);
 
-    public bool CanBeginPayment => CanOperate && HasLines && !IsTendering && !BlockNewSales;
+    public bool CanBeginPayment => CanOperate && HasLines && !IsTendering && !BlockNewSales && !BlocksScanning;
+
+    public bool CanHoldCart => CanOperate && HasLines && !IsTendering && !BlocksScanning;
+
+    public bool CanOpenHeldCarts => CanOperate && !IsTendering && !BlocksScanning;
+
+    public bool HasHeldCarts => HeldCarts.Count > 0;
+
+    public bool HasHeldCartError => !string.IsNullOrWhiteSpace(HeldCartError);
+
+    public string HeldCartsButtonText =>
+        HasHeldCarts
+            ? $"السلال المعلّقة ({HeldCarts.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)})"
+            : "السلال المعلّقة";
 
     public bool CanLock => !NeedsLogin && _currentCashier is not null;
 
@@ -511,6 +533,135 @@ public partial class PosSession : ObservableObject
         RequestFocus(UiFocusTarget.NotFoundAck);
     }
 
+    [RelayCommand]
+    private void HoldCurrentCart()
+    {
+        HeldCartError = string.Empty;
+        if (!CanHoldCart)
+            return;
+
+        try
+        {
+            var payload = Lines.Select(line => line.ToHeldPayload()).ToArray();
+            _database.HoldCart(payload, _currentCashier?.Id);
+            Lines.Clear();
+            ClearHighlight();
+            IsTendering = false;
+            TenderText = string.Empty;
+            SaleError = string.Empty;
+            ReloadHeldCarts();
+            ScanHint = "تم تعليق السلة";
+            RefreshCheckout();
+            RequestFocus(UiFocusTarget.Barcode);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("hold cart failed", ex);
+            HeldCartError = ArabicUi.FromException(ex, "تعذر تعليق السلة.");
+            ScanHint = HeldCartError;
+        }
+    }
+
+    [RelayCommand]
+    private void OpenHeldCarts()
+    {
+        if (!CanOpenHeldCarts)
+            return;
+        HeldCartError = string.Empty;
+        ReloadHeldCarts();
+        ShowHeldCarts = true;
+    }
+
+    [RelayCommand]
+    private void CloseHeldCarts()
+    {
+        ShowHeldCarts = false;
+        HeldCartError = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void ResumeHeldCart(HeldCartSummary? held)
+    {
+        HeldCartError = string.Empty;
+        if (held is null || !CanOperate || IsTendering)
+            return;
+
+        try
+        {
+            if (HasLines)
+            {
+                var current = Lines.Select(line => line.ToHeldPayload()).ToArray();
+                _database.HoldCart(current, _currentCashier?.Id);
+            }
+
+            var lines = _database.TakeHeldCart(held.Id);
+            if (lines is null || lines.Count == 0)
+            {
+                HeldCartError = "السلة المعلّقة غير موجودة.";
+                ReloadHeldCarts();
+                return;
+            }
+
+            Lines.Clear();
+            ClearHighlight();
+            HasSettlement = false;
+            _settlementAt = null;
+            foreach (var payload in lines)
+            {
+                var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine);
+                Lines.Add(line);
+            }
+
+            if (Lines.Count > 0)
+                HighlightLine(Lines[^1]);
+
+            ShowHeldCarts = false;
+            ReloadHeldCarts();
+            ScanHint = $"استُرجعت سلة {held.Label}";
+            RefreshCheckout();
+            RequestFocus(UiFocusTarget.Barcode);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("resume held cart failed", ex);
+            HeldCartError = ArabicUi.FromException(ex, "تعذر استرجاع السلة.");
+            ReloadHeldCarts();
+        }
+    }
+
+    [RelayCommand]
+    private void DiscardHeldCart(HeldCartSummary? held)
+    {
+        HeldCartError = string.Empty;
+        if (held is null)
+            return;
+
+        try
+        {
+            _database.DiscardHeldCart(held.Id);
+            ReloadHeldCarts();
+            if (HeldCarts.Count == 0)
+                ShowHeldCarts = false;
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("discard held cart failed", ex);
+            HeldCartError = ArabicUi.FromException(ex, "تعذر حذف السلة المعلّقة.");
+        }
+    }
+
+    private void ReloadHeldCarts()
+    {
+        HeldCarts.Clear();
+        foreach (var cart in _database.ListHeldCarts())
+            HeldCarts.Add(cart);
+        OnPropertyChanged(nameof(HasHeldCarts));
+        OnPropertyChanged(nameof(HeldCartsButtonText));
+    }
+
+    partial void OnHeldCartErrorChanged(string value) => OnPropertyChanged(nameof(HasHeldCartError));
+
     public void SetClock(DateTime now)
     {
         ClockText = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
@@ -546,6 +697,13 @@ public partial class PosSession : ObservableObject
     partial void OnShowNotFoundChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
 
     partial void OnShowPriceCheckChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
+
+    partial void OnShowHeldCartsChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BlocksScanning));
+        OnPropertyChanged(nameof(CanHoldCart));
+        OnPropertyChanged(nameof(CanOpenHeldCarts));
+    }
 
     partial void OnPriceCheckResultChanged(PriceCheckResult? value) => OnPropertyChanged(nameof(HasPriceCheckResult));
 
@@ -895,6 +1053,8 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(IsCartEmpty));
         OnPropertyChanged(nameof(HasLines));
         OnPropertyChanged(nameof(CanBeginPayment));
+        OnPropertyChanged(nameof(CanHoldCart));
+        OnPropertyChanged(nameof(CanOpenHeldCarts));
         OnPropertyChanged(nameof(CanConfirmCash));
         OnPropertyChanged(nameof(LineCountText));
         OnPropertyChanged(nameof(AmountLabel));

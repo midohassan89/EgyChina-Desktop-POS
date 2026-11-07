@@ -9,8 +9,9 @@ Never run these against the ERP Prisma database.
 | 2 | `002_erp_product_link.sql` | ERP product link columns (`erp_numeric_id`, `erp_prisma_id`, …) |
 | 3 | `003_cashier_lockout.sql` | Cashier auth lockout support |
 | 4 | `004_product_favorite.sql` | Local till favorites (`product_favorite`) |
+| 5 | `005_held_cart.sql` | Suspended baskets (`held_cart`) |
 
-Current schema version on a fresh init: **4**.
+Current schema version on a fresh init: **5**.
 
 Adding a migration:
 

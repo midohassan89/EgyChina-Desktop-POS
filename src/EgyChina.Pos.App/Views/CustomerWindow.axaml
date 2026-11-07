@@ -6,7 +6,7 @@
         Title="شاشة العميل — ايجي شاينا"
         FlowDirection="RightToLeft"
         WindowStartupLocation="Manual"
-        Background="#064E3B"
+        Background="#0B1220"
         RequestedThemeVariant="Dark"
         MinWidth="480"
         MinHeight="560">
@@ -16,31 +16,32 @@
       <Setter Property="Background" Value="#FFFFFF" />
       <Setter Property="BorderBrush" Value="#E2E8F0" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="16" />
-      <Setter Property="Margin" Value="0,0,0,12" />
-      <Setter Property="Padding" Value="18,14" />
+      <Setter Property="CornerRadius" Value="18" />
+      <Setter Property="Margin" Value="0,0,0,14" />
+      <Setter Property="Padding" Value="16,14" />
     </Style>
     <Style Selector="Border.cfd-line.highlighted">
       <Setter Property="Background" Value="#ECFDF5" />
-      <Setter Property="BorderBrush" Value="#10B981" />
-      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BorderBrush" Value="#059669" />
+      <Setter Property="BorderThickness" Value="3" />
+      <Setter Property="BoxShadow" Value="0 8 24 0 #33059669" />
     </Style>
   </Window.Styles>
 
   <Grid>
-    <!-- IDLE — closer to web: brand + clock + welcome -->
+    <!-- IDLE -->
     <Grid IsVisible="{Binding IsCfdIdle}">
       <Grid.Background>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
           <GradientStop Color="#022C22" Offset="0" />
-          <GradientStop Color="#065F46" Offset="0.55" />
-          <GradientStop Color="#047857" Offset="1" />
+          <GradientStop Color="#064E3B" Offset="0.45" />
+          <GradientStop Color="#0B1220" Offset="1" />
         </LinearGradientBrush>
       </Grid.Background>
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" Margin="40">
-        <Border Width="280" Height="120" CornerRadius="22" Background="#000000"
-                HorizontalAlignment="Center" BorderBrush="#A7F3D0" BorderThickness="2"
-                Padding="16,12" ClipToBounds="True">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" Margin="40">
+        <Border Width="320" Height="132" CornerRadius="24" Background="#000000"
+                HorizontalAlignment="Center" BorderBrush="#D4AF37" BorderThickness="2"
+                Padding="18,14" ClipToBounds="True">
           <Image Source="{DynamicResource BrandLogo}"
                  Stretch="Uniform"
                  HorizontalAlignment="Center"
@@ -50,26 +51,26 @@
                    FontSize="18"
                    Foreground="#A7F3D0"
                    HorizontalAlignment="Center"
-                   TextAlignment="Center"
-                   Margin="0,4,0,0" />
-        <Border Background="#052E1F" CornerRadius="28" Padding="36,22" Margin="0,18,0,0"
-                BorderBrush="#10B981" BorderThickness="1" HorizontalAlignment="Center" MinWidth="280">
+                   TextAlignment="Center" />
+        <Border Background="#052E1F" CornerRadius="28" Padding="40,24" Margin="0,10,0,0"
+                BorderBrush="#10B981" BorderThickness="1" HorizontalAlignment="Center" MinWidth="300"
+                BoxShadow="0 16 40 0 #40000000">
           <TextBlock Text="{Binding ClockText}"
-                     FontSize="56"
+                     FontSize="64"
                      FontWeight="Bold"
                      Foreground="#F8FAFC"
                      HorizontalAlignment="Center"
                      FlowDirection="LeftToRight" />
         </Border>
         <TextBlock Text="{Binding IdleGreetingText}"
-                   FontSize="28"
+                   FontSize="30"
                    FontWeight="SemiBold"
                    Foreground="#ECFDF5"
                    HorizontalAlignment="Center"
                    TextAlignment="Center"
                    TextWrapping="Wrap"
-                   Margin="0,10,0,0"
-                   MaxWidth="560" />
+                   Margin="0,8,0,0"
+                   MaxWidth="600" />
         <TextBlock Text="{Binding DisplayBanner}"
                    FontSize="13"
                    Foreground="#6EE7B7"
@@ -77,79 +78,77 @@
                    HorizontalAlignment="Center"
                    TextAlignment="Center"
                    IsVisible="{Binding HasDisplayBanner}"
-                   Margin="0,12,0,0"
+                   Margin="0,8,0,0"
                    MaxWidth="520"
                    Opacity="0.85" />
       </StackPanel>
     </Grid>
 
-    <!-- SHOPPING — white bill + dark totals rail (web CFD structure) -->
-    <Grid IsVisible="{Binding IsCfdShopping}" ColumnDefinitions="0.34*,*">
-      <Border Background="#0F172A" Padding="22,28">
-        <DockPanel>
-          <StackPanel DockPanel.Dock="Top" Spacing="8" Margin="0,0,0,24">
-            <Border Background="#000000" CornerRadius="12" Padding="10,8" ClipToBounds="True">
-              <Image Source="{DynamicResource BrandLogo}"
-                     Stretch="Uniform"
-                     MaxHeight="52"
-                     HorizontalAlignment="Stretch" />
-            </Border>
-            <TextBlock Text="EgyChina Hyper Market" FontSize="12" Foreground="#94A3B8" FlowDirection="LeftToRight" />
+    <!-- SHOPPING -->
+    <Grid IsVisible="{Binding IsCfdShopping}" RowDefinitions="Auto,*">
+      <Border Grid.Row="0" Background="#0B1220" Padding="28,20" BorderBrush="#059669" BorderThickness="0,0,0,3">
+        <Grid ColumnDefinitions="*,Auto">
+          <StackPanel Spacing="4" VerticalAlignment="Center">
+            <TextBlock Text="فاتورتك الحالية" FontSize="28" FontWeight="Bold" Foreground="#F8FAFC" />
+            <TextBlock Text="您的当前账单 · Your current bill" FontSize="14" Foreground="#94A3B8" FlowDirection="LeftToRight" />
+            <TextBlock Text="{Binding LineCountText}" FontSize="15" Foreground="#6EE7B7" Margin="0,4,0,0" />
           </StackPanel>
-          <StackPanel DockPanel.Dock="Bottom" Spacing="10">
-            <TextBlock Text="المبلغ المطلوب" FontSize="15" Foreground="#94A3B8" />
-            <Border Background="#059669" CornerRadius="16" Padding="16,18">
+          <Border Grid.Column="1" Background="#059669" CornerRadius="18" Padding="22,14" MinWidth="220"
+                  VerticalAlignment="Center" BoxShadow="0 8 28 0 #40059669">
+            <StackPanel Spacing="2">
+              <TextBlock Text="المبلغ المطلوب" FontSize="13" Foreground="#D1FAE5" HorizontalAlignment="Center" />
               <TextBlock Text="{Binding TotalText}"
-                         FontSize="36"
+                         FontSize="34"
                          FontWeight="Bold"
                          Foreground="White"
                          HorizontalAlignment="Center"
                          TextWrapping="Wrap" />
-            </Border>
-          </StackPanel>
-          <StackPanel Spacing="8" VerticalAlignment="Center">
-            <TextBlock Text="عدد الأصناف" FontSize="15" Foreground="#94A3B8" />
-            <TextBlock Text="{Binding LineCountText}"
-                       FontSize="28"
-                       FontWeight="Bold"
-                       Foreground="#F8FAFC"
-                       TextWrapping="Wrap" />
-          </StackPanel>
-        </DockPanel>
+            </StackPanel>
+          </Border>
+        </Grid>
       </Border>
 
-      <Border Grid.Column="1" Background="#F8FAFC" Padding="28,24">
-        <DockPanel>
-          <StackPanel DockPanel.Dock="Top" Spacing="4" Margin="0,0,0,18">
-            <TextBlock Text="فاتورتك الحالية" FontSize="30" FontWeight="Bold" Foreground="#0F172A" />
-            <TextBlock Text="您的当前账单 · Your current bill" FontSize="14" Foreground="#64748B" FlowDirection="LeftToRight" />
-          </StackPanel>
-          <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{Binding Lines}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:CartLine">
-                  <Border Classes="cfd-line" Classes.highlighted="{Binding IsHighlighted}">
-                    <Grid ColumnDefinitions="*,Auto">
-                      <StackPanel Spacing="4">
-                        <TextBlock Text="{Binding NameAr}" FontSize="22" FontWeight="SemiBold" Foreground="#0F172A" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding NameZh}" FontSize="14" Foreground="#64748B" FlowDirection="LeftToRight"
-                                   IsVisible="{Binding HasNameZh}" />
-                        <TextBlock Text="{Binding QtyText, StringFormat=الكمية: {0}}" FontSize="14" Foreground="#059669" />
-                      </StackPanel>
-                      <TextBlock Grid.Column="1"
-                                 Text="{Binding LineTotalText}"
-                                 FontSize="24"
-                                 FontWeight="Bold"
-                                 Foreground="#0F172A"
-                                 VerticalAlignment="Center"
-                                 Margin="16,0,0,0" />
-                    </Grid>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </ScrollViewer>
-        </DockPanel>
+      <Border Grid.Row="1" Background="#F8FAFC" Padding="28,22">
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+          <ItemsControl ItemsSource="{Binding Lines}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:CartLine">
+                <Border Classes="cfd-line" Classes.highlighted="{Binding IsHighlighted}">
+                  <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Border Width="72" Height="72" CornerRadius="14" Background="#F1F5F9"
+                            ClipToBounds="True" Margin="0,0,14,0" VerticalAlignment="Center">
+                      <Grid>
+                        <Border Background="#0B1220"
+                                IsVisible="{Binding ProductId, Converter={StaticResource MissingProductImage}}">
+                          <Image Source="{DynamicResource BrandLogo}"
+                                 Stretch="Uniform"
+                                 Margin="10"
+                                 Opacity="0.9" />
+                        </Border>
+                        <Image Source="{Binding ProductId, Converter={StaticResource ProductImage}}"
+                               Stretch="UniformToFill"
+                               IsVisible="{Binding ProductId, Converter={StaticResource HasProductImage}}" />
+                      </Grid>
+                    </Border>
+                    <StackPanel Spacing="4" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding NameAr}" FontSize="22" FontWeight="SemiBold" Foreground="#0F172A" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding NameZh}" FontSize="14" Foreground="#64748B" FlowDirection="LeftToRight"
+                                 IsVisible="{Binding HasNameZh}" />
+                      <TextBlock Text="{Binding QtyText, StringFormat=الكمية: {0}}" FontSize="15" FontWeight="SemiBold" Foreground="#059669" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2"
+                               Text="{Binding LineTotalText}"
+                               FontSize="26"
+                               FontWeight="Bold"
+                               Foreground="#0F172A"
+                               VerticalAlignment="Center"
+                               Margin="16,0,0,0" />
+                  </Grid>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
       </Border>
     </Grid>
 
@@ -158,38 +157,44 @@
       <Grid.Background>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
           <GradientStop Color="#022C22" Offset="0" />
-          <GradientStop Color="#064E3B" Offset="1" />
+          <GradientStop Color="#0B1220" Offset="1" />
         </LinearGradientBrush>
       </Grid.Background>
       <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24">
-        <Border Background="#0B1220"
-                CornerRadius="24"
-                Padding="36,28"
-                MinWidth="360"
-                MaxWidth="480"
-                Margin="0,0,18,0"
+        <Border Background="#111827"
+                CornerRadius="28"
+                Padding="40,32"
+                MinWidth="380"
+                MaxWidth="520"
+                Margin="0,0,20,0"
                 BorderBrush="#1E293B"
-                BorderThickness="1">
+                BorderThickness="1"
+                BoxShadow="0 16 48 0 #60000000">
           <StackPanel Spacing="12">
-            <TextBlock Text="الدفع / Payment" FontSize="18" Foreground="#94A3B8" HorizontalAlignment="Center" />
+            <TextBlock Text="الدفع / Payment / 付款" FontSize="16" Foreground="#94A3B8" HorizontalAlignment="Center" />
             <TextBlock Text="{Binding PaymentMethodLabel}"
-                       FontSize="34"
+                       FontSize="36"
                        FontWeight="Bold"
                        Foreground="#34D399"
                        HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding PaymentMethodLabelEn}"
+                       FontSize="16"
+                       Foreground="#CBD5E1"
+                       HorizontalAlignment="Center"
+                       FlowDirection="LeftToRight" />
             <TextBlock Text="{Binding PaymentMethodLabelZh}"
                        FontSize="15"
                        Foreground="#64748B"
                        HorizontalAlignment="Center" />
-            <TextBlock Text="المستحق" FontSize="15" Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,8,0,0" />
+            <TextBlock Text="المستحق" FontSize="15" Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,10,0,0" />
             <TextBlock Text="{Binding TotalText}"
-                       FontSize="48"
+                       FontSize="52"
                        FontWeight="Bold"
                        Foreground="#F8FAFC"
                        HorizontalAlignment="Center" />
             <TextBlock Text="{Binding WeChatCnyText}"
                        IsVisible="{Binding IsWeChatPayment}"
-                       FontSize="28"
+                       FontSize="30"
                        FontWeight="Bold"
                        Foreground="#86EFAC"
                        HorizontalAlignment="Center" />
@@ -210,26 +215,26 @@
         <Border Grid.Column="1"
                 IsVisible="{Binding ShowWeChatQr}"
                 Background="White"
-                CornerRadius="24"
-                Padding="22"
-                Width="340"
+                CornerRadius="28"
+                Padding="26"
+                Width="360"
                 VerticalAlignment="Center"
-                BoxShadow="0 12 40 0 #40000000">
-          <StackPanel Spacing="10" HorizontalAlignment="Center">
-            <TextBlock Text="امسح الكود للدفع"
-                       FontSize="16"
+                BoxShadow="0 16 48 0 #50000000">
+          <StackPanel Spacing="12" HorizontalAlignment="Center">
+            <TextBlock Text="امسح للدفع"
+                       FontSize="22"
                        FontWeight="Bold"
                        Foreground="#0F172A"
                        TextAlignment="Center" />
             <TextBlock Text="Scan to Pay · 请扫码付款"
-                       FontSize="13"
+                       FontSize="14"
                        Foreground="#047857"
                        HorizontalAlignment="Center"
                        FlowDirection="LeftToRight" />
-            <Border Background="#F8FAFC" CornerRadius="12" Padding="8" BorderBrush="#E2E8F0" BorderThickness="1">
+            <Border Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="#E2E8F0" BorderThickness="1">
               <Image x:Name="WeChatQrImage"
-                     Width="250"
-                     Height="250"
+                     Width="300"
+                     Height="300"
                      Stretch="Uniform"
                      HorizontalAlignment="Center"
                      IsVisible="False" />
@@ -247,26 +252,26 @@
         <Border Grid.Column="1"
                 IsVisible="{Binding ShowInstaPayQr}"
                 Background="White"
-                CornerRadius="24"
-                Padding="22"
-                Width="340"
+                CornerRadius="28"
+                Padding="26"
+                Width="360"
                 VerticalAlignment="Center"
-                BoxShadow="0 12 40 0 #40000000">
-          <StackPanel Spacing="10" HorizontalAlignment="Center">
-            <TextBlock Text="امسح الكود عبر إنستا باي"
-                       FontSize="16"
+                BoxShadow="0 16 48 0 #50000000">
+          <StackPanel Spacing="12" HorizontalAlignment="Center">
+            <TextBlock Text="امسح للدفع"
+                       FontSize="22"
                        FontWeight="Bold"
                        Foreground="#5B2B8C"
                        TextAlignment="Center" />
             <TextBlock Text="Scan to Pay · InstaPay"
-                       FontSize="13"
+                       FontSize="14"
                        Foreground="#64748B"
                        HorizontalAlignment="Center"
                        FlowDirection="LeftToRight" />
-            <Border Background="#F8FAFC" CornerRadius="12" Padding="8" BorderBrush="#E2E8F0" BorderThickness="1">
+            <Border Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="#E2E8F0" BorderThickness="1">
               <Image x:Name="InstaPayQrImage"
-                     Width="250"
-                     Height="250"
+                     Width="300"
+                     Height="300"
                      Stretch="Uniform"
                      HorizontalAlignment="Center"
                      IsVisible="False" />
@@ -302,26 +307,41 @@
         </LinearGradientBrush>
       </Grid.Background>
       <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18" Margin="40">
-        <Border Width="96" Height="96" CornerRadius="48" Background="#10B981"
-                HorizontalAlignment="Center">
+        <Border Width="104" Height="104" CornerRadius="52" Background="#10B981"
+                HorizontalAlignment="Center" BoxShadow="0 12 36 0 #4010B981">
           <TextBlock Text="✓"
-                     FontSize="48"
+                     FontSize="52"
                      FontWeight="Bold"
                      Foreground="White"
                      HorizontalAlignment="Center"
                      VerticalAlignment="Center" />
         </Border>
-        <TextBlock Text="شكراً لكم"
-                   FontSize="44"
+        <TextBlock Text="شكراً لزيارتكم"
+                   FontSize="46"
                    FontWeight="Bold"
                    Foreground="#F8FAFC"
                    HorizontalAlignment="Center" />
-        <TextBlock Text="Thank you · 谢谢"
+        <TextBlock Text="Thank you · 谢谢光临"
                    FontSize="20"
                    Foreground="#A7F3D0"
                    HorizontalAlignment="Center"
                    FlowDirection="LeftToRight" />
-        <Border Background="#052E1F" CornerRadius="18" Padding="28,20" MinWidth="360"
+        <Border Background="#052E1F" CornerRadius="20" Padding="32,22" MinWidth="380"
+                BorderBrush="#10B981" BorderThickness="1"
+                IsVisible="{Binding HasLastPointsEarned}">
+          <StackPanel Spacing="4">
+            <TextBlock Text="نقاط الولاء المكتسبة"
+                       FontSize="15"
+                       Foreground="#94A3B8"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding LastPointsEarnedText}"
+                       FontSize="36"
+                       FontWeight="Bold"
+                       Foreground="#FBBF24"
+                       HorizontalAlignment="Center" />
+          </StackPanel>
+        </Border>
+        <Border Background="#052E1F" CornerRadius="20" Padding="32,22" MinWidth="380"
                 BorderBrush="#10B981" BorderThickness="1">
           <StackPanel Spacing="10">
             <TextBlock Text="{Binding SettlementText}"

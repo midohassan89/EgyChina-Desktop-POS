@@ -3,6 +3,7 @@ using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using EgyChina.Pos.App.Services;
 using EgyChina.Pos.Core;
 using EgyChina.Pos.Data;
 using EgyChina.Pos.Printing;
@@ -46,6 +47,7 @@ public partial class PosSession : ObservableObject
         PrinterCaption = _printer.IsConfigured
             ? "الطابعة جاهزة"
             : "الطابعة غير مضبوطة — البيع يُحفظ ويمكن إعادة الطباعة لاحقاً";
+        IsPrinterReady = _printer.IsConfigured;
 
         Lines.CollectionChanged += (_, _) => RefreshCheckout();
         _sync.Changed += HandleSyncChanged;
@@ -58,6 +60,7 @@ public partial class PosSession : ObservableObject
         _lastSaleId = _database.GetLastCompletedSaleId();
         RefreshShiftState();
         ReloadHeldCarts();
+        ReloadCategories();
     }
 
     public ObservableCollection<CartLine> Lines { get; } = new();
@@ -73,7 +76,16 @@ public partial class PosSession : ObservableObject
     private string _printerCaption = string.Empty;
 
     [ObservableProperty]
+    private bool _isPrinterReady;
+
+    [ObservableProperty]
+    private int _onlineOrdersCount;
+
+    [ObservableProperty]
     private string _cashierAlert = string.Empty;
+
+    [ObservableProperty]
+    private string? _selectedCategoryId;
 
     [ObservableProperty]
     private bool _blockNewSales;
@@ -88,6 +100,8 @@ public partial class PosSession : ObservableObject
         "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
 
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
+
+    public ObservableCollection<CatalogCategory> Categories { get; } = new();
 
     [ObservableProperty]
     private CustomerDisplayMode _customerDisplayMode = CustomerDisplayMode.Idle;
@@ -113,7 +127,9 @@ public partial class PosSession : ObservableObject
 
     public string PaymentMethodLabel => PosPaymentMethods.LabelAr(SelectedPayment);
 
-    public string PaymentMethodLabelZh => PosPaymentMethods.LabelArZh(SelectedPayment);
+    public string PaymentMethodLabelEn => PosPaymentMethods.LabelEn(SelectedPayment);
+
+    public string PaymentMethodLabelZh => PosPaymentMethods.LabelZh(SelectedPayment);
 
     public bool IsCashPayment => PosPaymentMethods.IsCash(SelectedPayment);
 
@@ -306,13 +322,57 @@ public partial class PosSession : ObservableObject
 
     public bool HasActiveQueueTicket => !string.IsNullOrWhiteSpace(_activeQueueTicketCode);
 
-    public bool IsCatalogAll => CatalogTab == CatalogTab.All;
+    public bool IsCatalogAll => CatalogTab == CatalogTab.All && SelectedCategoryId is null;
 
     public bool IsCatalogFavorites => CatalogTab == CatalogTab.Favorites;
 
     public double CatalogAllEmphasis => IsCatalogAll ? 1.0 : 0.45;
 
     public double CatalogFavoritesEmphasis => IsCatalogFavorites ? 1.0 : 0.45;
+
+    public bool HasCategories => Categories.Count > 0;
+
+    public bool HasSelectedCategory => !string.IsNullOrWhiteSpace(SelectedCategoryId);
+
+    public string SelectedCategoryCaption
+    {
+        get
+        {
+            if (SelectedCategoryId is null)
+                return string.Empty;
+            foreach (var category in Categories)
+            {
+                if (string.Equals(category.Id, SelectedCategoryId, StringComparison.Ordinal))
+                    return $"القسم: {category.NameAr}";
+            }
+
+            return "تصفية بقسم";
+        }
+    }
+
+    public string SessionChipText =>
+        NeedsLogin
+            ? "تسجيل الدخول"
+            : _currentShift is null
+                ? "بدون وردية"
+                : "وردية مفتوحة";
+
+    public string OnlineOrdersButtonText =>
+        OnlineOrdersCount > 0
+            ? $"أونلاين ({OnlineOrdersCount.ToString(CultureInfo.InvariantCulture)})"
+            : "طلبات أونلاين";
+
+    public string OutboxStatusText
+    {
+        get
+        {
+            if (DeadOutbox > 0)
+                return $"صادر {PendingOutbox.ToString(CultureInfo.InvariantCulture)} · تالف {DeadOutbox.ToString(CultureInfo.InvariantCulture)}";
+            return $"صادر {PendingOutbox.ToString(CultureInfo.InvariantCulture)}";
+        }
+    }
+
+    public bool IsOutboxHealthy => DeadOutbox == 0;
 
     public bool HasPriceCheckResult => PriceCheckResult is not null;
 
@@ -372,7 +432,17 @@ public partial class PosSession : ObservableObject
     private long _lastChangeMinor;
 
     [ObservableProperty]
+    private int _lastPointsEarned;
+
+    [ObservableProperty]
     private string _saleError = string.Empty;
+
+    public bool HasLastPointsEarned => LastPointsEarned > 0;
+
+    public string LastPointsEarnedText =>
+        HasLastPointsEarned
+            ? $"+{LastPointsEarned.ToString(CultureInfo.InvariantCulture)}"
+            : string.Empty;
 
     public string OnlineText => IsOnline ? "متصل" : "غير متصل";
 
@@ -537,13 +607,24 @@ public partial class PosSession : ObservableObject
         {
             IEnumerable<CatalogProduct> source = CatalogTab == CatalogTab.Favorites
                 ? _products.Where(product => product.IsFavorite)
-                : _products;
+                : SelectedCategoryId is { Length: > 0 } categoryId
+                    ? _products.Where(product => string.Equals(product.CategoryId, categoryId, StringComparison.Ordinal))
+                    : _products;
 
             var term = Search.Trim();
-            if (term.Length == 0)
-                return source.ToArray();
+            if (term.Length > 0)
+                return source.Where(product => Matches(product, term)).ToArray();
 
-            return source.Where(product => Matches(product, term)).ToArray();
+            // Default shelf: favorites first, then the rest (still the full catalog).
+            if (CatalogTab == CatalogTab.All && SelectedCategoryId is null)
+            {
+                return source
+                    .OrderByDescending(product => product.IsFavorite)
+                    .ThenBy(product => product.NameAr, StringComparer.Ordinal)
+                    .ToArray();
+            }
+
+            return source.ToArray();
         }
     }
 
@@ -583,6 +664,7 @@ public partial class PosSession : ObservableObject
         }
 
         ScanHint = product.NameAr;
+        ScanSound.PlaySuccess();
         RequestFocus(UiFocusTarget.Barcode);
     }
 
@@ -912,23 +994,50 @@ public partial class PosSession : ObservableObject
     [RelayCommand]
     private void ShowAllCatalog()
     {
+        SelectedCategoryId = null;
         CatalogTab = CatalogTab.All;
-        OnPropertyChanged(nameof(VisibleProducts));
-        OnPropertyChanged(nameof(HasNoSearchResults));
-        OnPropertyChanged(nameof(HasNoFavorites));
-        OnPropertyChanged(nameof(IsCatalogAll));
-        OnPropertyChanged(nameof(IsCatalogFavorites));
+        NotifyCatalogFilterChanged();
     }
 
     [RelayCommand]
     private void ShowFavoritesCatalog()
     {
+        SelectedCategoryId = null;
         CatalogTab = CatalogTab.Favorites;
+        NotifyCatalogFilterChanged();
+    }
+
+    [RelayCommand]
+    private void SelectCategory(CatalogCategory? category)
+    {
+        if (category is null)
+            return;
+        CatalogTab = CatalogTab.All;
+        SelectedCategoryId = category.Id;
+        NotifyCatalogFilterChanged();
+    }
+
+    private void NotifyCatalogFilterChanged()
+    {
         OnPropertyChanged(nameof(VisibleProducts));
         OnPropertyChanged(nameof(HasNoSearchResults));
         OnPropertyChanged(nameof(HasNoFavorites));
         OnPropertyChanged(nameof(IsCatalogAll));
         OnPropertyChanged(nameof(IsCatalogFavorites));
+        OnPropertyChanged(nameof(CatalogAllEmphasis));
+        OnPropertyChanged(nameof(CatalogFavoritesEmphasis));
+        OnPropertyChanged(nameof(Categories));
+        OnPropertyChanged(nameof(HasSelectedCategory));
+        OnPropertyChanged(nameof(SelectedCategoryCaption));
+    }
+
+    private void ReloadCategories()
+    {
+        Categories.Clear();
+        foreach (var category in _database.ListCategories())
+            Categories.Add(category);
+        OnPropertyChanged(nameof(HasCategories));
+        OnPropertyChanged(nameof(Categories));
     }
 
     [RelayCommand]
@@ -947,7 +1056,19 @@ public partial class PosSession : ObservableObject
             : $"أُزيل من المفضلة: {product.NameAr}";
     }
 
-    /// <summary>Rebinds catalog cards after local product images are downloaded.</summary>
+    /// <summary>Reloads shelf data from SQLite (e.g. after live image-url sync).</summary>
+    public void ReloadCatalogFromDatabase()
+    {
+        var demo = _database.GetSetting("catalog.source") == "demo";
+        _products = _database.ListActiveProducts();
+        CatalogCaption = FormatCatalogCaption(_products.Count, demo);
+        ReloadCategories();
+        OnPropertyChanged(nameof(VisibleProducts));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
+    }
+
+    /// <summary>Rebinds visible catalog cards after local product images are downloaded.</summary>
     public void NotifyCatalogVisualRefresh()
     {
         OnPropertyChanged(nameof(VisibleProducts));
@@ -1159,6 +1280,7 @@ public partial class PosSession : ObservableObject
         {
             HasSettlement = false;
             _settlementAt = null;
+            LastPointsEarned = 0;
         }
 
         RefreshCustomerDisplayMode(stamp);
@@ -1227,9 +1349,30 @@ public partial class PosSession : ObservableObject
 
     partial void OnIsOnlineChanged(bool value) => OnPropertyChanged(nameof(OnlineText));
 
-    partial void OnPendingOutboxChanged(int value) => OnPropertyChanged(nameof(OutboxCaption));
+    partial void OnPendingOutboxChanged(int value)
+    {
+        OnPropertyChanged(nameof(OutboxCaption));
+        OnPropertyChanged(nameof(OutboxStatusText));
+        OnPropertyChanged(nameof(IsOutboxHealthy));
+    }
 
-    partial void OnDeadOutboxChanged(int value) => OnPropertyChanged(nameof(OutboxCaption));
+    partial void OnDeadOutboxChanged(int value)
+    {
+        OnPropertyChanged(nameof(OutboxCaption));
+        OnPropertyChanged(nameof(OutboxStatusText));
+        OnPropertyChanged(nameof(IsOutboxHealthy));
+    }
+
+    partial void OnLastPointsEarnedChanged(int value)
+    {
+        OnPropertyChanged(nameof(HasLastPointsEarned));
+        OnPropertyChanged(nameof(LastPointsEarnedText));
+    }
+
+    partial void OnSelectedCategoryIdChanged(string? value) => NotifyCatalogFilterChanged();
+
+    partial void OnOnlineOrdersCountChanged(int value) =>
+        OnPropertyChanged(nameof(OnlineOrdersButtonText));
 
     partial void OnLastSyncErrorChanged(string value)
     {
@@ -1428,6 +1571,7 @@ public partial class PosSession : ObservableObject
         PinText = string.Empty;
         AuthError = string.Empty;
         RefreshShiftState();
+        OnPropertyChanged(nameof(SessionChipText));
         RefreshCheckout();
         RequestFocus(_currentShift is null ? UiFocusTarget.OpeningFloat : UiFocusTarget.Barcode);
     }
@@ -1443,6 +1587,7 @@ public partial class PosSession : ObservableObject
         IsTendering = false;
         HasSettlement = false;
         _settlementAt = null;
+        LastPointsEarned = 0;
         TenderText = string.Empty;
         SaleError = string.Empty;
         ShowCloseShift = false;
@@ -1456,6 +1601,7 @@ public partial class PosSession : ObservableObject
         SessionCaption = _currentShift is null
             ? "الجهاز مقفل. أدخل الرقم السري."
             : "الجهاز مقفل. الوردية ما زالت مفتوحة — أدخل الرقم السري للمتابعة.";
+        OnPropertyChanged(nameof(SessionChipText));
         RefreshCheckout();
         RequestFocus(UiFocusTarget.Pin);
     }
@@ -1481,6 +1627,7 @@ public partial class PosSession : ObservableObject
             _currentShift = _database.OpenShift(_currentCashier.Id, opening);
             NeedsOpenShift = false;
             SessionCaption = $"{_currentCashier.DisplayName} · وردية مفتوحة";
+            OnPropertyChanged(nameof(SessionChipText));
             RefreshCheckout();
             RequestFocus(UiFocusTarget.Barcode);
         }
@@ -1551,6 +1698,7 @@ public partial class PosSession : ObservableObject
             OnlineOrders.Clear();
             foreach (var order in orders)
                 OnlineOrders.Add(order);
+            OnlineOrdersCount = OnlineOrders.Count;
             OnlineOrdersError = error ?? string.Empty;
             OnPropertyChanged(nameof(HasNoOnlineOrders));
             OnPropertyChanged(nameof(HasOnlineOrdersError));
@@ -1589,6 +1737,7 @@ public partial class PosSession : ObservableObject
             CurrentZReport = null;
             NeedsOpenShift = true;
             SessionCaption = $"{_currentCashier.DisplayName} · لا توجد وردية مفتوحة";
+            OnPropertyChanged(nameof(SessionChipText));
             OnPropertyChanged(nameof(HasZReport));
             RefreshCheckout();
             RequestFocus(UiFocusTarget.OpeningFloat);
@@ -1712,6 +1861,7 @@ public partial class PosSession : ObservableObject
                 pointsRedeemed: pointsRedeemed);
             LastReceiptNo = sale.ReceiptNo;
             LastChangeMinor = sale.ChangeMinor;
+            LastPointsEarned = pointsEarned;
             _lastSaleWasReturn = wasReturn;
             TenderText = string.Empty;
             IsTendering = false;
@@ -1749,6 +1899,7 @@ public partial class PosSession : ObservableObject
     partial void OnSelectedPaymentChanged(PosPaymentMethod value)
     {
         OnPropertyChanged(nameof(PaymentMethodLabel));
+        OnPropertyChanged(nameof(PaymentMethodLabelEn));
         OnPropertyChanged(nameof(PaymentMethodLabelZh));
         OnPropertyChanged(nameof(IsCashPayment));
         OnPropertyChanged(nameof(IsWeChatPayment));

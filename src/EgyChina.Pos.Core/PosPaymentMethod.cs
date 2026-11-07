@@ -43,15 +43,28 @@ public static class PosPaymentMethods
         _ => "كاش",
     };
 
-    public static string LabelArZh(PosPaymentMethod method) => method switch
+    public static string LabelEn(PosPaymentMethod method) => method switch
     {
-        PosPaymentMethod.Cash => "النقدية / 现金",
-        PosPaymentMethod.Visa => "فيزا / 信用卡",
-        PosPaymentMethod.Wallet => "محفظة / 电子钱包",
-        PosPaymentMethod.InstaPay => "انستا باي / InstaPay",
-        PosPaymentMethod.WeChat => "وي شات / 微信支付",
-        _ => LabelAr(method),
+        PosPaymentMethod.Cash => "Cash",
+        PosPaymentMethod.Visa => "Card / Visa",
+        PosPaymentMethod.Wallet => "E-Wallet",
+        PosPaymentMethod.InstaPay => "InstaPay",
+        PosPaymentMethod.WeChat => "WeChat Pay",
+        _ => "Cash",
     };
+
+    public static string LabelZh(PosPaymentMethod method) => method switch
+    {
+        PosPaymentMethod.Cash => "现金",
+        PosPaymentMethod.Visa => "信用卡",
+        PosPaymentMethod.Wallet => "电子钱包",
+        PosPaymentMethod.InstaPay => "InstaPay",
+        PosPaymentMethod.WeChat => "微信支付",
+        _ => "现金",
+    };
+
+    public static string LabelArZh(PosPaymentMethod method) =>
+        $"{LabelAr(method)} / {LabelZh(method)}";
 
     /// <summary>Local SQLite <c>payment.method</c> value.</summary>
     public static string ToLocalDbMethod(PosPaymentMethod method) => method switch

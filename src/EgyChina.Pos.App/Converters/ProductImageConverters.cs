@@ -1,9 +1,8 @@
 using System;
 using System.Globalization;
 using Avalonia.Data.Converters;
-using Avalonia.Media.Imaging;
+using EgyChina.Pos.App.Services;
 using EgyChina.Pos.Core;
-using EgyChina.Pos.Data;
 
 namespace EgyChina.Pos.App.Converters;
 
@@ -22,18 +21,7 @@ public sealed class ProductImageConverter : IValueConverter
         if (string.IsNullOrWhiteSpace(productId))
             return null;
 
-        var path = ProductImageCache.TryLocalPath(productId);
-        if (path is null)
-            return null;
-
-        try
-        {
-            return new Bitmap(path);
-        }
-        catch (Exception)
-        {
-            return null;
-        }
+        return ProductImageBitmapCache.Get(productId);
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
@@ -46,13 +34,11 @@ public sealed class HasProductImageConverter : IValueConverter
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        var productId = value switch
-        {
-            CatalogProduct product => product.Id,
-            string id => id,
-            _ => null,
-        };
-        return !string.IsNullOrWhiteSpace(productId) && ProductImageCache.TryLocalPath(productId) is not null;
+        if (value is CatalogProduct product)
+            return product.HasLocalImage || ProductImageBitmapCache.HasFile(product.Id);
+
+        var productId = value as string;
+        return !string.IsNullOrWhiteSpace(productId) && ProductImageBitmapCache.HasFile(productId);
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>

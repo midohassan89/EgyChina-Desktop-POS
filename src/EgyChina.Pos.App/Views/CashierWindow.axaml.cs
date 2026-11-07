@@ -352,6 +352,14 @@ public partial class CashierWindow : Window
         session.ToggleFavoriteCommand.Execute(product);
     }
 
+    private void OnCategoryClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Button { Tag: CatalogCategory category } || DataContext is not PosSession session)
+            return;
+        session.SelectCategoryCommand.Execute(category);
+    }
+
     private void OnResumeHeldClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;

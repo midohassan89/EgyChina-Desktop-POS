@@ -150,6 +150,20 @@ public partial class App : Application
         {
             try
             {
+                var origin = mediaBase ?? ProductImageCache.DefaultMediaBase();
+                using (var liveHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(60) })
+                {
+                    liveHttp.DefaultRequestHeaders.UserAgent.ParseAdd("EgyChina-POS/0.1-live-catalog");
+                    var live = await LiveStoreCatalogSync.ApplyAsync(database, origin, liveHttp, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    PosLog.Info(
+                        live.Ok
+                            ? $"live catalog pages={live.Pages} seen={live.Seen} upserted={live.Upserted} deactivated={live.Deactivated}"
+                            : $"live catalog failed error={live.Error}");
+                }
+
+                await Dispatcher.UIThread.InvokeAsync(session.ReloadCatalogFromDatabase);
+
                 var items = database.ListProductsWithImageUrls();
                 var pending = items
                     .Where(item => ProductImageCache.TryLocalPath(item.ProductId) is null)
@@ -157,17 +171,31 @@ public partial class App : Application
                 if (pending.Count == 0)
                 {
                     PosLog.Info("product images already cached");
+                    await Dispatcher.UIThread.InvokeAsync(session.NotifyCatalogVisualRefresh);
                     return;
                 }
 
                 PosLog.Info($"product image warmup start pending={pending.Count}");
-                var warmed = await ProductImageCache.WarmAsync(
+                var lastUi = 0;
+                var progress = new Progress<int>(count =>
+                {
+                    var previous = Volatile.Read(ref lastUi);
+                    if (count - previous < 40)
+                        return;
+                    Interlocked.Exchange(ref lastUi, count);
+                    Dispatcher.UIThread.Post(session.NotifyCatalogVisualRefresh, DispatcherPriority.Background);
+                });
+
+                var result = await ProductImageCache.WarmAsync(
                     pending,
-                    mediaBase ?? ProductImageCache.DefaultMediaBase(),
+                    origin,
                     maxDownloads: pending.Count,
+                    parallelism: 8,
+                    progress,
                     CancellationToken.None).ConfigureAwait(false);
-                PosLog.Info($"product image warmup done warmed={warmed}");
-                await Dispatcher.UIThread.InvokeAsync(() => session.NotifyCatalogVisualRefresh());
+                PosLog.Info(
+                    $"product image warmup done attempted={result.Attempted} warmed={result.Warmed} failed={result.Failed}");
+                await Dispatcher.UIThread.InvokeAsync(session.NotifyCatalogVisualRefresh);
             }
             catch (Exception ex)
             {

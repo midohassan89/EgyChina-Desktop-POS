@@ -11,6 +11,8 @@ Never run these against the ERP Prisma database.
 | 4 | `004_product_favorite.sql` | Local till favorites (`product_favorite`) |
 | 5 | `005_held_cart.sql` | Suspended baskets (`held_cart`) |
 | 6 | `006_payment_wallet.sql` | Payment methods include `wallet` |
+| 7 | `007_product_image.sql` | Remote `image_url` on product |
+| 8 | `008_product_category.sql` | Local `category` table + `product.category_id` |
 
 Current schema version on a fresh init: **6**.
 

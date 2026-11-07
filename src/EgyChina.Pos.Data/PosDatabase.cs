@@ -21,10 +21,13 @@ public sealed class PosDatabase
     private const string ProductSelect = """
         SELECT p.id, p.sku, p.barcode, p.name_ar, p.name_en, p.name_zh, pr.amount_minor,
                CASE WHEN f.product_id IS NULL THEN 0 ELSE 1 END AS is_favorite,
-               p.image_url
+               p.image_url,
+               p.category_id,
+               c.name_ar AS category_name_ar
         FROM product p
         INNER JOIN product_price pr ON pr.product_id = p.id AND pr.currency = 'EGP'
         LEFT JOIN product_favorite f ON f.product_id = p.id
+        LEFT JOIN category c ON c.id = p.category_id
         WHERE p.is_active = 1
         """;
 
@@ -111,6 +114,13 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "007_product_image.sql");
                 MarkMigration(connection, 7, "product-image");
+                version = 7;
+            }
+
+            if (version < 8)
+            {
+                ApplyMigrationScript(connection, "008_product_category.sql");
+                MarkMigration(connection, 8, "product-category");
             }
 
             EnsureTerminal(connection);
@@ -992,7 +1002,8 @@ public sealed class PosDatabase
             isPackage ? prismaId : (prismaId ?? localId),
             priceMinor,
             isPackage,
-            ReadImageUrl(product));
+            ReadImageUrl(product),
+            ReadOptionalString(product, "categoryId"));
         return true;
     }
 
@@ -1083,10 +1094,10 @@ public sealed class PosDatabase
             product.CommandText = """
                 INSERT INTO product (
                   id, sku, barcode, name_ar, name_en, name_zh, unit_ar,
-                  tax_rate_bps, is_active, updated_at, erp_numeric_id, prisma_id, image_url
+                  tax_rate_bps, is_active, updated_at, erp_numeric_id, prisma_id, image_url, category_id
                 ) VALUES (
                   $id, $sku, $barcode, $nameAr, $nameEn, $nameZh, $unit,
-                  0, 1, $now, $erp, $prisma, $image
+                  0, 1, $now, $erp, $prisma, $image, $category
                 );
                 """;
             BindCatalogProduct(product, draft.LocalId, draft, now);
@@ -1123,7 +1134,8 @@ public sealed class PosDatabase
                     updated_at = $now,
                     erp_numeric_id = $erp,
                     prisma_id = COALESCE($prisma, prisma_id),
-                    image_url = COALESCE($image, image_url)
+                    image_url = COALESCE($image, image_url),
+                    category_id = COALESCE($category, category_id)
                 WHERE id = $id
                 """;
             BindCatalogProduct(product, existingId, draft, now);
@@ -1158,6 +1170,7 @@ public sealed class PosDatabase
         command.Parameters.AddWithValue("$erp", draft.ErpNumericId);
         command.Parameters.AddWithValue("$prisma", (object?)draft.PrismaId ?? DBNull.Value);
         command.Parameters.AddWithValue("$image", (object?)draft.ImageUrl ?? DBNull.Value);
+        command.Parameters.AddWithValue("$category", (object?)draft.CategoryId ?? DBNull.Value);
     }
 
     /// <summary>Active products that still need a remote image download.</summary>
@@ -1183,6 +1196,101 @@ public sealed class PosDatabase
                 rows.Add((reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1)));
             return rows;
         }
+    }
+
+    /// <summary>
+    /// Soft-deactivates active products whose id/prisma_id are not in the keep set
+    /// (used after a live catalog replace so stale local rows disappear from the shelf).
+    /// </summary>
+    public int DeactivateProductsNotIn(IReadOnlyCollection<string> keepIds)
+    {
+        if (keepIds.Count == 0)
+            return 0;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            using (var clear = connection.CreateCommand())
+            {
+                clear.CommandText = "DELETE FROM temp.keep_ids";
+                try { clear.ExecuteNonQuery(); } catch { /* temp table may not exist yet */ }
+            }
+
+            using (var create = connection.CreateCommand())
+            {
+                create.CommandText = "CREATE TEMP TABLE IF NOT EXISTS keep_ids (id TEXT PRIMARY KEY)";
+                create.ExecuteNonQuery();
+            }
+
+            using (var wipe = connection.CreateCommand())
+            {
+                wipe.CommandText = "DELETE FROM keep_ids";
+                wipe.ExecuteNonQuery();
+            }
+
+            foreach (var id in keepIds)
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                    continue;
+                using var insert = connection.CreateCommand();
+                insert.CommandText = "INSERT OR IGNORE INTO keep_ids (id) VALUES ($id)";
+                insert.Parameters.AddWithValue("$id", id.Trim());
+                insert.ExecuteNonQuery();
+            }
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE product
+                SET is_active = 0, updated_at = $now
+                WHERE is_active = 1
+                  AND id NOT IN (SELECT id FROM keep_ids)
+                  AND IFNULL(prisma_id, '') NOT IN (SELECT id FROM keep_ids)
+                """;
+            command.Parameters.AddWithValue("$now", Now());
+            var deactivated = command.ExecuteNonQuery();
+            tx.Commit();
+            return deactivated;
+        }
+    }
+
+    /// <summary>
+    /// Updates <c>image_url</c> for local products matched by id or prisma_id
+    /// (storefront public catalog uses the Prisma cuid).
+    /// </summary>
+    public int UpdateProductImageUrls(IReadOnlyList<(string ProductId, string ImageUrl)> rows)
+    {
+        if (rows.Count == 0)
+            return 0;
+
+        var updated = 0;
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var now = Now();
+            foreach (var row in rows)
+            {
+                if (string.IsNullOrWhiteSpace(row.ProductId) || string.IsNullOrWhiteSpace(row.ImageUrl))
+                    continue;
+
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    UPDATE product
+                    SET image_url = $image,
+                        updated_at = $now
+                    WHERE id = $id OR prisma_id = $id
+                    """;
+                command.Parameters.AddWithValue("$image", row.ImageUrl.Trim());
+                command.Parameters.AddWithValue("$now", now);
+                command.Parameters.AddWithValue("$id", row.ProductId.Trim());
+                updated += command.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        return updated;
     }
 
     /// <summary>
@@ -2528,6 +2636,9 @@ public sealed class PosDatabase
 
     private static CatalogProduct ReadProduct(SqliteDataReader reader)
     {
+        // HasLocalImage stays false here on purpose: checking the disk for every row
+        // on catalog reload freezes startup with thousands of products. The UI converter
+        // resolves local files lazily for the few cards that are actually on screen.
         return new CatalogProduct(
             reader.GetString(0),
             reader.GetString(1),
@@ -2537,7 +2648,83 @@ public sealed class PosDatabase
             reader.IsDBNull(5) ? null : reader.GetString(5),
             reader.GetInt64(6),
             reader.FieldCount > 7 && !reader.IsDBNull(7) && reader.GetInt64(7) != 0,
-            reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetString(8) : null);
+            reader.FieldCount > 8 && !reader.IsDBNull(8) ? reader.GetString(8) : null,
+            HasLocalImage: false,
+            CategoryId: reader.FieldCount > 9 && !reader.IsDBNull(9) ? reader.GetString(9) : null,
+            CategoryNameAr: reader.FieldCount > 10 && !reader.IsDBNull(10) ? reader.GetString(10) : null);
+    }
+
+    public IReadOnlyList<CatalogCategory> ListCategories()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, name_ar, name_en, name_zh, product_count
+                FROM category
+                ORDER BY product_count DESC, name_ar COLLATE NOCASE
+                """;
+            using var reader = command.ExecuteReader();
+            var list = new List<CatalogCategory>();
+            while (reader.Read())
+            {
+                list.Add(new CatalogCategory(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.IsDBNull(2) ? null : reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.IsDBNull(4) ? 0 : (int)reader.GetInt64(4)));
+            }
+
+            return list;
+        }
+    }
+
+    public int UpsertCategories(IReadOnlyList<CatalogCategoryDraft> categories)
+    {
+        if (categories.Count == 0)
+            return 0;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var now = DateTimeOffset.UtcNow.ToString("O");
+            var upserted = 0;
+            foreach (var category in categories)
+            {
+                if (string.IsNullOrWhiteSpace(category.Id) || string.IsNullOrWhiteSpace(category.NameAr))
+                    continue;
+
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    INSERT INTO category (id, name_ar, name_en, name_zh, slug, image_url, product_count, updated_at)
+                    VALUES ($id, $nameAr, $nameEn, $nameZh, $slug, $image, $count, $now)
+                    ON CONFLICT(id) DO UPDATE SET
+                      name_ar = excluded.name_ar,
+                      name_en = excluded.name_en,
+                      name_zh = excluded.name_zh,
+                      slug = excluded.slug,
+                      image_url = COALESCE(excluded.image_url, category.image_url),
+                      product_count = excluded.product_count,
+                      updated_at = excluded.updated_at;
+                    """;
+                command.Parameters.AddWithValue("$id", category.Id.Trim());
+                command.Parameters.AddWithValue("$nameAr", category.NameAr.Trim());
+                command.Parameters.AddWithValue("$nameEn", (object?)category.NameEn ?? DBNull.Value);
+                command.Parameters.AddWithValue("$nameZh", (object?)category.NameZh ?? DBNull.Value);
+                command.Parameters.AddWithValue("$slug", (object?)category.Slug ?? DBNull.Value);
+                command.Parameters.AddWithValue("$image", (object?)category.ImageUrl ?? DBNull.Value);
+                command.Parameters.AddWithValue("$count", Math.Max(0, category.ProductCount));
+                command.Parameters.AddWithValue("$now", now);
+                command.ExecuteNonQuery();
+                upserted++;
+            }
+
+            tx.Commit();
+            return upserted;
+        }
     }
 
     private static string? ReadSetting(SqliteConnection connection, string key)

@@ -38,4 +38,5 @@ public sealed record CatalogProductDraft(
     string? PrismaId,
     long PriceEgpMinor,
     bool IsPackage,
-    string? ImageUrl = null);
+    string? ImageUrl = null,
+    string? CategoryId = null);

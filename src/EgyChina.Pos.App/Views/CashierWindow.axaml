@@ -14,37 +14,60 @@
 
   <Grid>
   <Grid RowDefinitions="Auto,*">
-    <!-- Web-like ops header: navy bar + colorful action chips -->
+    <!-- Ops header: brand + cashier + status chips + actions -->
     <Border Grid.Row="0" Background="#0B1220" Padding="16,12">
       <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-        <StackPanel Spacing="4" VerticalAlignment="Center">
+        <StackPanel Spacing="8" VerticalAlignment="Center">
           <StackPanel Orientation="Horizontal" Spacing="10">
             <Border Height="40" MinWidth="40" MaxWidth="168" CornerRadius="10" Background="#000000"
-                    Padding="6,4" VerticalAlignment="Center" ClipToBounds="True">
+                    Padding="6,4" VerticalAlignment="Center" ClipToBounds="True"
+                    BorderBrush="#D4AF37" BorderThickness="1">
               <Image Source="{DynamicResource BrandLogo}"
                      Stretch="Uniform"
                      Height="32"
                      HorizontalAlignment="Center"
                      VerticalAlignment="Center" />
             </Border>
-            <TextBlock Text="ايجي شاينا ماركت" FontSize="22" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center" />
-            <Border Background="#064E3B" CornerRadius="999" Padding="10,3" VerticalAlignment="Center" BorderBrush="#10B981" BorderThickness="1">
-              <TextBlock Text="POS" FontSize="11" FontWeight="Bold" Foreground="#6EE7B7" />
+            <StackPanel Spacing="2" VerticalAlignment="Center">
+              <TextBlock Text="ايجي شاينا ماركت" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" />
+              <TextBlock Text="{Binding CashierName}" FontSize="13" Foreground="#A7F3D0"
+                         IsVisible="{Binding !NeedsLogin}" />
+            </StackPanel>
+            <Border Background="#831843" CornerRadius="999" Padding="12,4" VerticalAlignment="Center"
+                    BorderBrush="#FB7185" BorderThickness="1">
+              <TextBlock Text="{Binding SessionChipText}" FontSize="12" FontWeight="SemiBold" Foreground="#FFE4E6" />
             </Border>
           </StackPanel>
-          <TextBlock Text="{Binding SessionCaption}" FontSize="12" Foreground="#94A3B8" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding SyncMessage}" FontSize="12" Foreground="#CBD5E1" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding OutboxCaption}" FontSize="11" Foreground="#64748B" />
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Border CornerRadius="999" Padding="10,4" Background="#065F46" IsVisible="{Binding IsOnline}">
+              <TextBlock Text="متصل" FontSize="12" FontWeight="SemiBold" Foreground="#ECFDF5" />
+            </Border>
+            <Border CornerRadius="999" Padding="10,4" Background="#7F1D1D" IsVisible="{Binding !IsOnline}">
+              <TextBlock Text="غير متصل" FontSize="12" FontWeight="SemiBold" Foreground="#FEE2E2" />
+            </Border>
+            <Border CornerRadius="999" Padding="10,4" Background="#1E293B" BorderBrush="#334155" BorderThickness="1"
+                    IsVisible="{Binding IsOutboxHealthy}">
+              <TextBlock Text="{Binding OutboxStatusText}" FontSize="12" Foreground="#E2E8F0" />
+            </Border>
+            <Border CornerRadius="999" Padding="10,4" Background="#78350F" BorderBrush="#F59E0B" BorderThickness="1"
+                    IsVisible="{Binding !IsOutboxHealthy}">
+              <TextBlock Text="{Binding OutboxStatusText}" FontSize="12" Foreground="#FEF3C7" />
+            </Border>
+            <Border CornerRadius="999" Padding="10,4" Background="#064E3B" IsVisible="{Binding IsPrinterReady}">
+              <TextBlock Text="طابعة جاهزة" FontSize="12" Foreground="#D1FAE5" />
+            </Border>
+            <Border CornerRadius="999" Padding="10,4" Background="#44403C" IsVisible="{Binding !IsPrinterReady}">
+              <TextBlock Text="طابعة غير مضبوطة" FontSize="12" Foreground="#E7E5E4" />
+            </Border>
+          </StackPanel>
+          <TextBlock Text="{Binding SyncMessage}" FontSize="12" Foreground="#94A3B8" TextWrapping="Wrap" />
           <TextBlock Text="{Binding SyncErrorCaption}" IsVisible="{Binding HasSyncError}"
                      FontSize="12" Foreground="#FCA5A5" TextWrapping="Wrap" />
         </StackPanel>
 
         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-          <StackPanel Spacing="0" Margin="0,0,10,0" VerticalAlignment="Center">
-            <TextBlock Text="{Binding ClockText}" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC"
-                       FlowDirection="LeftToRight" HorizontalAlignment="Left" />
-            <TextBlock Text="{Binding OnlineText}" FontSize="12" Foreground="#34D399" HorizontalAlignment="Left" />
-          </StackPanel>
+          <TextBlock Text="{Binding ClockText}" FontSize="22" FontWeight="Bold" Foreground="#F8FAFC"
+                     FlowDirection="LeftToRight" VerticalAlignment="Center" Margin="0,0,8,0" />
           <Button Content="{Binding ReturnModeButtonText}"
                   Classes="pos-chip-return"
                   Command="{Binding ToggleReturnModeCommand}"
@@ -53,7 +76,7 @@
                   Classes="pos-chip-drawer"
                   Command="{Binding OpenCashDrawerCommand}"
                   IsEnabled="{Binding CanOpenDrawer}" />
-          <Button Content="طلبات أونلاين"
+          <Button Content="{Binding OnlineOrdersButtonText}"
                   Classes="pos-chip-online"
                   Command="{Binding OpenOnlineOrdersCommand}"
                   IsEnabled="{Binding CanOpenOnlineOrders}" />
@@ -187,62 +210,78 @@
               <Border Background="#ECFDF5" CornerRadius="14" Padding="14,12"
                       BorderBrush="#A7F3D0" BorderThickness="1"
                       IsVisible="{Binding !IsTendering}">
-                <Grid ColumnDefinitions="*,Auto">
-                  <TextBlock Text="{Binding AmountLabel}" Foreground="#047857" FontSize="14" VerticalAlignment="Center" />
-                  <TextBlock Grid.Column="1" Text="{Binding AmountText}" FontSize="32" FontWeight="Bold" Foreground="#047857" />
-                </Grid>
+                <StackPanel Spacing="6">
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Text="{Binding AmountLabel}" Foreground="#047857" FontSize="14" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="1" Text="{Binding AmountText}" FontSize="32" FontWeight="Bold" Foreground="#047857" />
+                  </Grid>
+                  <TextBlock Text="{Binding LoyaltyDiscountText}"
+                             IsVisible="{Binding ShowLoyaltyDiscount}"
+                             Foreground="#B45309"
+                             FontWeight="SemiBold"
+                             FontSize="13" />
+                </StackPanel>
               </Border>
 
-              <StackPanel Spacing="8" IsVisible="{Binding IsTendering}">
-                <TextBlock Text="طريقة الدفع" Foreground="#64748B" FontSize="13" />
-                <UniformGrid Columns="3" Rows="2">
-                  <Button Content="كاش" Margin="0,0,6,6" Tag="Cash" Click="OnPaymentMethodClick" Background="#059669" Foreground="White" />
-                  <Button Content="فيزا" Margin="0,0,6,6" Tag="Visa" Click="OnPaymentMethodClick" Background="#1E293B" Foreground="White" />
-                  <Button Content="محفظة" Margin="0,0,0,6" Tag="Wallet" Click="OnPaymentMethodClick" Background="#0F766E" Foreground="White" />
-                  <Button Content="انستا باي" Margin="0,0,6,0" Tag="InstaPay" Click="OnPaymentMethodClick" Background="#5B2B8C" Foreground="White" />
-                  <Button Content="وي شات" Margin="0,0,6,0" Tag="WeChat" Click="OnPaymentMethodClick" Background="#16A34A" Foreground="White" />
-                </UniformGrid>
-                <TextBlock Text="{Binding PaymentMethodLabelZh}" FontSize="13" Foreground="#334155" />
+              <Border Background="#0B1220" CornerRadius="16" Padding="14,12"
+                      IsVisible="{Binding IsTendering}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="اختر طريقة الدفع" Foreground="#94A3B8" FontSize="13" />
+                  <UniformGrid Columns="3" Rows="2">
+                    <Button Content="كاش" Margin="0,0,6,6" Tag="Cash" Click="OnPaymentMethodClick" Background="#059669" Foreground="White" CornerRadius="12" MinHeight="48" />
+                    <Button Content="فيزا" Margin="0,0,6,6" Tag="Visa" Click="OnPaymentMethodClick" Background="#1E293B" Foreground="White" CornerRadius="12" MinHeight="48" />
+                    <Button Content="محفظة" Margin="0,0,0,6" Tag="Wallet" Click="OnPaymentMethodClick" Background="#0F766E" Foreground="White" CornerRadius="12" MinHeight="48" />
+                    <Button Content="انستا باي" Margin="0,0,6,0" Tag="InstaPay" Click="OnPaymentMethodClick" Background="#5B2B8C" Foreground="White" CornerRadius="12" MinHeight="48" />
+                    <Button Content="وي شات" Margin="0,0,6,0" Tag="WeChat" Click="OnPaymentMethodClick" Background="#16A34A" Foreground="White" CornerRadius="12" MinHeight="48" />
+                  </UniformGrid>
+                  <TextBlock Text="{Binding PaymentMethodLabel}" FontSize="18" FontWeight="Bold" Foreground="#34D399" />
+                  <TextBlock Text="{Binding PaymentMethodLabelEn}" FontSize="13" Foreground="#CBD5E1" FlowDirection="LeftToRight" />
+                  <TextBlock Text="{Binding PaymentMethodLabelZh}" FontSize="13" Foreground="#94A3B8" />
 
-                <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
-                  <TextBlock Text="سعر الصرف (ج.م / يوان) — هامش أمان ٤٪ عند الجلب الحي لاحقاً" Foreground="#64748B" FontSize="12" TextWrapping="Wrap" />
-                  <TextBox Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
-                           FontSize="18"
-                           FlowDirection="LeftToRight"
-                           MinHeight="44" />
-                  <TextBlock Text="{Binding WeChatCnyText}" FontSize="20" FontWeight="Bold" Foreground="#16A34A" />
+                  <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
+                    <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
+                    <TextBox Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
+                             FontSize="18"
+                             FlowDirection="LeftToRight"
+                             MinHeight="44" />
+                    <TextBlock Text="{Binding WeChatCnyText}" FontSize="20" FontWeight="Bold" Foreground="#86EFAC" />
+                  </StackPanel>
+
+                  <TextBlock Text="المبلغ المستلم" Foreground="#94A3B8" FontSize="13" IsVisible="{Binding IsCashPayment}" />
+                  <Grid ColumnDefinitions="*,8,Auto" IsVisible="{Binding IsCashPayment}">
+                    <TextBox x:Name="TenderBox"
+                             Grid.Column="0"
+                             Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
+                             PlaceholderText="0.00"
+                             FontSize="22"
+                             MinHeight="48"
+                             FlowDirection="LeftToRight"
+                             KeyDown="OnTenderKeyDown" />
+                    <Button Grid.Column="2"
+                            Content="بالضبط"
+                            Command="{Binding SetExactTenderCommand}" />
+                  </Grid>
+                  <TextBlock Text="{Binding TenderHint}" Foreground="#E2E8F0" TextWrapping="Wrap" />
+                  <Grid ColumnDefinitions="*,8,*">
+                    <Button Grid.Column="0"
+                            Content="تأكيد الدفع"
+                            Classes="pos-primary"
+                            Command="{Binding ConfirmCashCommand}"
+                            IsEnabled="{Binding CanConfirmCash}"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            MinHeight="52" />
+                    <Button Grid.Column="2"
+                            Content="إلغاء"
+                            Command="{Binding CancelTenderCommand}"
+                            Background="#334155"
+                            Foreground="White"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            MinHeight="52" />
+                  </Grid>
                 </StackPanel>
-
-                <TextBlock Text="المبلغ المستلم" Foreground="#64748B" FontSize="13" IsVisible="{Binding IsCashPayment}" />
-                <Grid ColumnDefinitions="*,8,Auto" IsVisible="{Binding IsCashPayment}">
-                  <TextBox x:Name="TenderBox"
-                           Grid.Column="0"
-                           Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
-                           PlaceholderText="0.00"
-                           FontSize="22"
-                           MinHeight="48"
-                           FlowDirection="LeftToRight"
-                           KeyDown="OnTenderKeyDown" />
-                  <Button Grid.Column="2"
-                          Content="بالضبط"
-                          Command="{Binding SetExactTenderCommand}" />
-                </Grid>
-                <TextBlock Text="{Binding TenderHint}" Foreground="#0F172A" TextWrapping="Wrap" />
-                <Grid ColumnDefinitions="*,8,*">
-                  <Button Grid.Column="0"
-                          Content="تأكيد الدفع"
-                          Classes="pos-primary"
-                          Command="{Binding ConfirmCashCommand}"
-                          IsEnabled="{Binding CanConfirmCash}"
-                          HorizontalAlignment="Stretch"
-                          HorizontalContentAlignment="Center" />
-                  <Button Grid.Column="2"
-                          Content="إلغاء"
-                          Command="{Binding CancelTenderCommand}"
-                          HorizontalAlignment="Stretch"
-                          HorizontalContentAlignment="Center" />
-                </Grid>
-              </StackPanel>
+              </Border>
 
               <Button Content="الدفع"
                       Classes="pos-primary"
@@ -251,8 +290,9 @@
                       IsVisible="{Binding !IsTendering}"
                       HorizontalAlignment="Stretch"
                       HorizontalContentAlignment="Center"
-                      MinHeight="58"
-                      FontSize="22"
+                      MinHeight="62"
+                      FontSize="24"
+                      FontWeight="Bold"
                       CornerRadius="14" />
 
               <Grid ColumnDefinitions="*,8,*" IsVisible="{Binding !IsTendering}">
@@ -306,10 +346,22 @@
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:CartLine">
                   <Border Classes="cart-line" Classes.highlighted="{Binding IsHighlighted}">
-                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                      <TextBlock Text="{Binding NameAr}" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#0F172A" />
-                      <TextBlock Grid.Column="1" Text="{Binding LineTotalText}" FontWeight="Bold" Foreground="#059669" />
-                      <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto" Margin="0,8,0,0">
+                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
+                      <Border Grid.RowSpan="2" Width="52" Height="52" CornerRadius="12" Background="#F1F5F9"
+                              ClipToBounds="True" Margin="0,0,10,0" VerticalAlignment="Top">
+                        <Grid>
+                          <Border Background="#0B1220"
+                                  IsVisible="{Binding ProductId, Converter={StaticResource MissingProductImage}}">
+                            <Image Source="{DynamicResource BrandLogo}" Stretch="Uniform" Margin="8" Opacity="0.9" />
+                          </Border>
+                          <Image Source="{Binding ProductId, Converter={StaticResource ProductImage}}"
+                                 Stretch="UniformToFill"
+                                 IsVisible="{Binding ProductId, Converter={StaticResource HasProductImage}}" />
+                        </Grid>
+                      </Border>
+                      <TextBlock Grid.Column="1" Text="{Binding NameAr}" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#0F172A" />
+                      <TextBlock Grid.Column="2" Text="{Binding LineTotalText}" FontWeight="Bold" Foreground="#059669" />
+                      <Grid Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal" Spacing="6" FlowDirection="LeftToRight">
                           <Button Content="−" Command="{Binding DecrementCommand}" MinWidth="44" Padding="0" FontSize="20" />
                           <Border MinWidth="48" Background="#F1F5F9" CornerRadius="8" Padding="8,6">
@@ -387,30 +439,60 @@
                  MinHeight="44"
                  Margin="0,0,0,10" />
 
-        <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,8,Auto,8,*" Margin="0,0,0,10">
-          <Button Content="الكل"
-                  Command="{Binding ShowAllCatalogCommand}"
-                  Background="#059669"
-                  Foreground="White"
-                  CornerRadius="999"
-                  Padding="18,8"
-                  Opacity="{Binding CatalogAllEmphasis}"
-                  HorizontalContentAlignment="Center" />
-          <Button Grid.Column="2"
-                  Content="★ المفضلة"
-                  Command="{Binding ShowFavoritesCatalogCommand}"
-                  Background="#FEF3C7"
-                  Foreground="#92400E"
-                  CornerRadius="999"
-                  Padding="18,8"
-                  Opacity="{Binding CatalogFavoritesEmphasis}"
-                  HorizontalContentAlignment="Center" />
-          <Button Grid.Column="4"
+        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+          <Button DockPanel.Dock="Left"
                   Content="فحص سعر F4"
                   Command="{Binding OpenPriceCheckCommand}"
                   Classes="pos-chip-info"
-                  HorizontalAlignment="Left" />
-        </Grid>
+                  Margin="8,0,0,0"
+                  VerticalAlignment="Center" />
+          <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Content="الكل"
+                      Command="{Binding ShowAllCatalogCommand}"
+                      Background="#059669"
+                      Foreground="White"
+                      CornerRadius="999"
+                      Padding="18,8"
+                      Opacity="{Binding CatalogAllEmphasis}"
+                      HorizontalContentAlignment="Center" />
+              <Button Content="★ المفضلة"
+                      Command="{Binding ShowFavoritesCatalogCommand}"
+                      Background="#FEF3C7"
+                      Foreground="#92400E"
+                      CornerRadius="999"
+                      Padding="18,8"
+                      Opacity="{Binding CatalogFavoritesEmphasis}"
+                      HorizontalContentAlignment="Center" />
+              <ItemsControl ItemsSource="{Binding Categories}" IsVisible="{Binding HasCategories}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="8" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:CatalogCategory">
+                    <Button Content="{Binding ChipText}"
+                            Tag="{Binding}"
+                            Click="OnCategoryClick"
+                            Background="#E0F2FE"
+                            Foreground="#075985"
+                            CornerRadius="999"
+                            Padding="16,8"
+                            HorizontalContentAlignment="Center" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </ScrollViewer>
+        </DockPanel>
+        <TextBlock DockPanel.Dock="Top"
+                   Text="{Binding SelectedCategoryCaption}"
+                   IsVisible="{Binding HasSelectedCategory}"
+                   Margin="0,0,0,8"
+                   FontSize="13"
+                   FontWeight="SemiBold"
+                   Foreground="#0369A1" />
 
         <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0" Spacing="2">
           <TextBlock Text="{Binding ShortcutHint}" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" />
@@ -431,18 +513,21 @@
 
         <Border Background="#FFFFFF" CornerRadius="18" Padding="14" BorderBrush="#E2E8F0" BorderThickness="1"
                 BoxShadow="0 6 20 0 #10000000">
-          <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{Binding VisibleProducts}">
-              <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                  <WrapPanel />
-                </ItemsPanelTemplate>
-              </ItemsControl.ItemsPanel>
-              <ItemsControl.ItemTemplate>
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                        VerticalScrollBarVisibility="Auto">
+            <!-- Virtualized grid: all 3000+ products without loading every bitmap at once -->
+            <ItemsRepeater ItemsSource="{Binding VisibleProducts}">
+              <ItemsRepeater.Layout>
+                <UniformGridLayout MinItemWidth="188"
+                                   MinItemHeight="210"
+                                   MinColumnSpacing="12"
+                                   MinRowSpacing="12"
+                                   ItemsStretch="Fill"
+                                   ItemsJustification="Start" />
+              </ItemsRepeater.Layout>
+              <ItemsRepeater.ItemTemplate>
                 <DataTemplate x:DataType="core:CatalogProduct">
-                  <Border Width="188"
-                          MinHeight="168"
-                          Margin="0,0,12,12"
+                  <Border MinHeight="200"
                           Padding="0"
                           Background="#FFFFFF"
                           BorderBrush="#E2E8F0"
@@ -498,8 +583,8 @@
                     </DockPanel>
                   </Border>
                 </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
+              </ItemsRepeater.ItemTemplate>
+            </ItemsRepeater>
           </ScrollViewer>
         </Border>
       </DockPanel>
@@ -617,34 +702,38 @@
     </Border>
   </Border>
 
-  <Border Background="#CC7F1D1D" IsVisible="{Binding ShowNotFound}" ZIndex="40">
-    <Border Background="White" BorderBrush="#EF4444" BorderThickness="4" CornerRadius="16"
-            Padding="0" Width="480" HorizontalAlignment="Center" VerticalAlignment="Center">
+  <Border Background="#E0111111" IsVisible="{Binding ShowNotFound}" ZIndex="40">
+    <Border Background="#FFF7F7" BorderBrush="#B91C1C" BorderThickness="5" CornerRadius="18"
+            Padding="0" Width="500" HorizontalAlignment="Center" VerticalAlignment="Center"
+            BoxShadow="0 20 50 0 #66000000">
       <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#DC2626" Padding="20,16">
+        <Border DockPanel.Dock="Top" Background="#B91C1C" Padding="22,18">
           <StackPanel Spacing="4">
-            <TextBlock Text="المنتج غير متوفر" FontSize="24" FontWeight="Bold" Foreground="White" />
+            <TextBlock Text="المنتج غير متوفر" FontSize="26" FontWeight="Bold" Foreground="White" />
             <TextBlock Text="Product not found — أكّد قبل المتابعة" FontSize="14" Foreground="#FECACA" />
           </StackPanel>
         </Border>
         <StackPanel Margin="24" Spacing="14">
-          <TextBlock Text="{Binding NotFoundBarcode, StringFormat=الباركود: {0}}"
-                     FontSize="18"
-                     FontWeight="Bold"
-                     Foreground="#0F172A"
-                     FlowDirection="LeftToRight"
-                     TextWrapping="Wrap" />
-          <TextBlock Text="يجب تأكيد الخطأ قبل مسح الصنف التالي." Foreground="#64748B" TextWrapping="Wrap" />
+          <Border Background="#FEE2E2" CornerRadius="12" Padding="14,10">
+            <TextBlock Text="{Binding NotFoundBarcode, StringFormat=الباركود: {0}}"
+                       FontSize="20"
+                       FontWeight="Bold"
+                       Foreground="#7F1D1D"
+                       FlowDirection="LeftToRight"
+                       TextWrapping="Wrap" />
+          </Border>
+          <TextBlock Text="يجب تأكيد الخطأ قبل مسح الصنف التالي." Foreground="#334155" FontSize="15" TextWrapping="Wrap" />
           <Button x:Name="NotFoundOkButton"
                   Content="OK · موافق"
                   Command="{Binding DismissNotFoundCommand}"
-                  Background="#DC2626"
+                  Background="#B91C1C"
                   Foreground="White"
-                  FontSize="20"
+                  FontSize="22"
                   FontWeight="Bold"
-                  MinHeight="56"
+                  MinHeight="60"
                   HorizontalAlignment="Stretch"
-                  HorizontalContentAlignment="Center" />
+                  HorizontalContentAlignment="Center"
+                  CornerRadius="12" />
         </StackPanel>
       </DockPanel>
     </Border>

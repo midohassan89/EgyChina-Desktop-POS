@@ -64,9 +64,10 @@ public sealed class SyncWorkerTests : IDisposable
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
             8500);
         var status = new SyncStatus();
+        // Unreachable local port — proves we do not require a manager PIN UI; auto-enroll fails closed.
         var worker = new SyncWorker(database, status, new SyncOptions
         {
-            BaseAddress = new Uri("https://erp.echinamart.com/"),
+            BaseAddress = new Uri("http://127.0.0.1:9/"),
             Interval = TimeSpan.FromHours(1),
         });
 
@@ -74,7 +75,7 @@ public sealed class SyncWorkerTests : IDisposable
 
         Assert.Equal("auth-missing", database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
         Assert.Equal(1, database.CountPendingOutbox());
-        Assert.Contains("ربط الجهاز", status.Read().Message, StringComparison.Ordinal);
+        Assert.Contains("الجهاز", status.Read().Message, StringComparison.Ordinal);
         await worker.DisposeAsync();
     }
 

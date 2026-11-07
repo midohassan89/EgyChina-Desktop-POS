@@ -76,14 +76,37 @@ public sealed class SyncWorker : IAsyncDisposable
             return;
         }
 
-        // Token may be saved after startup (manager PIN enroll) — reload each tick.
+        // Staff PINs sync like the product catalog (public store route) — no manager PIN.
+        try
+        {
+            var staff = await LiveStaffSync.ApplyAsync(_database, _options.BaseAddress, _http, cancellationToken)
+                .ConfigureAwait(false);
+            if (staff.Ok && staff.Upserted > 0)
+                PosLog.Info($"staff sync upserted={staff.Upserted} deactivated={staff.Deactivated}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("staff sync tick failed", ex);
+        }
+
+        // Ensure device bearer exists for sale upload (silent auto-enroll).
         var deviceToken = !string.IsNullOrWhiteSpace(_options.DeviceToken)
             ? _options.DeviceToken
             : DeviceCredentialStore.Load();
         if (string.IsNullOrWhiteSpace(deviceToken))
         {
+            var enroll = await DeviceEnrollmentClient.AutoEnrollAsync(
+                _options.BaseAddress,
+                _database.GetTerminalKey(),
+                "EgyChina Desktop POS",
+                cancellationToken).ConfigureAwait(false);
+            deviceToken = enroll.Token;
+        }
+
+        if (string.IsNullOrWhiteSpace(deviceToken))
+        {
             _database.WriteCursor(CursorStream, "auth-missing", null);
-            PublishLocalStatus("المزامنة تنتظر ربط الجهاز (PIN المدير). لا يُرسل بيع.", online: false);
+            PublishLocalStatus("تعذر ربط الجهاز تلقائياً. المبيعات محفوظة محلياً.", online: false);
             return;
         }
 
@@ -106,7 +129,7 @@ public sealed class SyncWorker : IAsyncDisposable
             {
                 "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
                 "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
-                "auth-missing" => ("auth-missing", "المزامنة تنتظر ربط الجهاز (PIN المدير). لا يُرسل بيع."),
+                "auth-missing" => ("auth-missing", "تعذر ربط الجهاز تلقائياً. لا يُرسل بيع."),
                 _ => (NotConfiguredCursor, "البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP لرفع المبيعات."),
             };
             _database.WriteCursor(CursorStream, cursor, null);

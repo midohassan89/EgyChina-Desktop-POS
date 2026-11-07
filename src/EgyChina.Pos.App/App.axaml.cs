@@ -160,9 +160,27 @@ public partial class App : Application
                         live.Ok
                             ? $"live catalog pages={live.Pages} seen={live.Seen} upserted={live.Upserted} deactivated={live.Deactivated}"
                             : $"live catalog failed error={live.Error}");
+
+                    var staff = await LiveStaffSync.ApplyAsync(database, origin, liveHttp, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    PosLog.Info(
+                        staff.Ok
+                            ? $"live staff upserted={staff.Upserted} deactivated={staff.Deactivated}"
+                            : $"live staff failed error={staff.Error}");
+
+                    var enroll = await DeviceEnrollmentClient.AutoEnrollAsync(
+                        origin,
+                        database.GetTerminalKey(),
+                        "EgyChina Desktop POS",
+                        CancellationToken.None).ConfigureAwait(false);
+                    PosLog.Info(
+                        enroll.Ok
+                            ? "device auto-enroll ok"
+                            : $"device auto-enroll failed error={enroll.Error}");
                 }
 
                 await Dispatcher.UIThread.InvokeAsync(session.ReloadCatalogFromDatabase);
+                await Dispatcher.UIThread.InvokeAsync(session.NotifyStaffSyncCompleted);
 
                 var items = database.ListProductsWithImageUrls();
                 var pending = items

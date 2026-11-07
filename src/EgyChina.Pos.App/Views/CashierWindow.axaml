@@ -849,31 +849,6 @@
     </Border>
   </Border>
 
-  <Border Background="#CC0F172A" IsVisible="{Binding NeedsDeviceLink}" ZIndex="25">
-    <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
-            Padding="28" Width="460" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <StackPanel Spacing="12">
-        <TextBlock Text="ربط الجهاز بسيرفر ERP" FontSize="22" FontWeight="Bold" Foreground="#0F172A" />
-        <TextBlock Text="أدخل PIN المدير أو الأدمن مرة واحدة لربط هذا الجهاز ورفع المبيعات ومزامنة موظفي الكاشير."
-                   TextWrapping="Wrap" Foreground="#64748B" />
-        <TextBox Text="{Binding DeviceLinkPin}"
-                 PlaceholderText="PIN المدير"
-                 PasswordChar="•"
-                 FontSize="28"
-                 MinHeight="52"
-                 FlowDirection="LeftToRight" />
-        <TextBlock Text="{Binding DeviceLinkError}" Foreground="#B91C1C" TextWrapping="Wrap" />
-        <Button Content="ربط الجهاز"
-                Classes="pos-primary"
-                Command="{Binding SubmitDeviceLinkCommand}"
-                IsEnabled="{Binding !IsDeviceLinkBusy}"
-                HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Center"
-                MinHeight="48" />
-      </StackPanel>
-    </Border>
-  </Border>
-
   <Border Background="#CC0F172A" IsVisible="{Binding NeedsLogin}" ZIndex="20">
     <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
             Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">

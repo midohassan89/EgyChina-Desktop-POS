@@ -360,6 +360,60 @@ public sealed class PosDatabase
         }
     }
 
+    /// <summary>
+    /// Soft-deactivates ERP-synced cashiers that are no longer in the live staff pull
+    /// (new hires appear on the next sync; removed/suspended PINs stop working offline).
+    /// Never touches sale history. Leaves demo bootstrap ids alone when keep set is empty.
+    /// </summary>
+    public int DeactivateCashiersNotIn(IReadOnlyCollection<string> keepIds)
+    {
+        if (keepIds.Count == 0)
+            return 0;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var now = Now();
+            using (var create = connection.CreateCommand())
+            {
+                create.CommandText = "CREATE TEMP TABLE IF NOT EXISTS keep_cashiers (id TEXT PRIMARY KEY)";
+                create.ExecuteNonQuery();
+            }
+
+            using (var wipe = connection.CreateCommand())
+            {
+                wipe.CommandText = "DELETE FROM keep_cashiers";
+                wipe.ExecuteNonQuery();
+            }
+
+            foreach (var id in keepIds)
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                    continue;
+                using var insert = connection.CreateCommand();
+                insert.CommandText = "INSERT OR IGNORE INTO keep_cashiers (id) VALUES ($id)";
+                insert.Parameters.AddWithValue("$id", id.Trim());
+                insert.ExecuteNonQuery();
+            }
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE cashier
+                SET is_active = 0, updated_at = $now
+                WHERE is_active = 1
+                  AND id NOT IN (SELECT id FROM keep_cashiers)
+                  AND id NOT IN ($local, $supervisor)
+                """;
+            command.Parameters.AddWithValue("$now", now);
+            command.Parameters.AddWithValue("$local", LocalCashierId);
+            command.Parameters.AddWithValue("$supervisor", LocalSupervisorId);
+            var deactivated = command.ExecuteNonQuery();
+            tx.Commit();
+            return deactivated;
+        }
+    }
+
     public string GetTerminalKey()
     {
         lock (_gate)

@@ -52,8 +52,6 @@ public partial class PosSession : ObservableObject
             ? "الطابعة جاهزة"
             : "الطابعة غير مضبوطة — البيع يُحفظ ويمكن إعادة الطباعة لاحقاً";
         IsPrinterReady = _printer.IsConfigured;
-        NeedsDeviceLink = string.IsNullOrWhiteSpace(_syncOptions.DeviceToken)
-            && string.IsNullOrWhiteSpace(DeviceCredentialStore.Load());
 
         Lines.CollectionChanged += (_, _) => RefreshCheckout();
         _sync.Changed += HandleSyncChanged;
@@ -164,18 +162,6 @@ public partial class PosSession : ObservableObject
 
     [ObservableProperty]
     private bool _needsLogin = true;
-
-    [ObservableProperty]
-    private bool _needsDeviceLink;
-
-    [ObservableProperty]
-    private string _deviceLinkPin = string.Empty;
-
-    [ObservableProperty]
-    private string _deviceLinkError = string.Empty;
-
-    [ObservableProperty]
-    private bool _isDeviceLinkBusy;
 
     [ObservableProperty]
     private bool _needsOpenShift;
@@ -1717,73 +1703,16 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(SessionChipText));
         RefreshCheckout();
         RequestFocus(_currentShift is null ? UiFocusTarget.OpeningFloat : UiFocusTarget.Barcode);
-        _ = SyncStaffInBackgroundAsync();
     }
 
-    [RelayCommand]
-    private async Task SubmitDeviceLinkAsync()
+    /// <summary>Called after background live staff pull finishes (new cashiers become loginable).</summary>
+    public void NotifyStaffSyncCompleted()
     {
-        if (IsDeviceLinkBusy)
-            return;
-        DeviceLinkError = string.Empty;
-        IsDeviceLinkBusy = true;
-        try
+        if (string.Equals(_database.GetSetting(PosDatabase.StaffSourceSettingKey), "erp", StringComparison.Ordinal))
         {
-            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
-            var result = await DeviceEnrollmentClient.EnrollWithPinAsync(
-                origin,
-                _database.GetTerminalKey(),
-                DeviceLinkPin,
-                "EgyChina Desktop POS",
-                CancellationToken.None).ConfigureAwait(true);
-            DeviceLinkPin = string.Empty;
-            if (!result.Ok || string.IsNullOrWhiteSpace(result.Token))
-            {
-                DeviceLinkError = result.Error ?? "تعذر ربط الجهاز.";
-                return;
-            }
-
-            var staff = await DeviceEnrollmentClient.SyncStaffAsync(
-                _database,
-                origin,
-                result.Token,
-                CancellationToken.None).ConfigureAwait(true);
-            NeedsDeviceLink = false;
-            SessionCaption = staff.Upserted > 0
-                ? $"تم ربط الجهاز ومزامنة {staff.Upserted} موظف. سجّل الدخول بـ PIN الموظف."
-                : "تم ربط الجهاز. أضف PIN للموظفين من لوحة ERP ثم أعد فتح البرنامج أو اطلب مزامنة الموظفين.";
-            if (!string.IsNullOrWhiteSpace(staff.Error) && staff.Upserted == 0)
-                DeviceLinkError = staff.Error;
-            SyncMessage = "الجهاز مربوط بسيرفر ERP — جاهز لرفع المبيعات.";
-        }
-        catch (Exception ex)
-        {
-            PosLog.Error("device link failed", ex);
-            DeviceLinkError = ArabicUi.FromException(ex, "تعذر ربط الجهاز.");
-        }
-        finally
-        {
-            IsDeviceLinkBusy = false;
-        }
-    }
-
-    private async Task SyncStaffInBackgroundAsync()
-    {
-        try
-        {
-            var token = DeviceCredentialStore.Load() ?? _syncOptions.DeviceToken;
-            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
-            if (string.IsNullOrWhiteSpace(token) || origin is null)
-                return;
-            await DeviceEnrollmentClient.SyncStaffAsync(
-                _database,
-                origin,
-                token,
-                CancellationToken.None).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            PosLog.Error("staff sync failed", ex);
+            SessionCaption = "سجّل الدخول برقم PIN الموظف من منظومة ERP";
+            if (!string.IsNullOrWhiteSpace(DeviceCredentialStore.Load()) || !string.IsNullOrWhiteSpace(_syncOptions.DeviceToken))
+                SyncMessage = "الموظفون والجهاز مربوطان بسيرفر ERP.";
         }
     }
 

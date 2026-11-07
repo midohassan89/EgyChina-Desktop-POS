@@ -6,12 +6,13 @@ This file separates what was read from the running ERP on 6 Nov 2026 from what i
 
 | Check | Result |
 | --- | --- |
-| Origin `repo list` for this token | Empty. The ERP repository is not in this account. |
-| `gh` auth | Not logged in. |
+| Origin `repo list` for this token (cloud session) | Empty. The ERP repository was not in that account. |
+| Local workspace (7 Nov 2026) | `egychina-erp` is available beside this repo as `../ERP` in `EgyChina.code-workspace`. Facts below under **Verified from local ERP source** come from that tree. |
+| `gh` auth (cloud session) | Not logged in. |
 | Public web search for `removedPrismaIds` and `supermarket-pos` | No matching repository. |
 | Production source maps | 404. |
 
-Blocker: the ERP project source is not available from this session. Server idempotency, the money unit, and the allowed `paymentMethod` strings cannot be read from Prisma. Do not treat the local test stand-in as the ERP.
+Do not treat the local HTTP test stand-in in `EgyChina.Pos.Tests` as the ERP. Cloud sessions without the ERP tree must keep money scale and payment method unverified until someone reads the source or captures a browser request.
 
 ## Verified from the live client
 
@@ -67,18 +68,34 @@ The client treats any completed HTTP success as synced. It does not read a serve
 
 `/api/products` and `/api/checkout` without a session returned the same 401 `{"error":"Unauthorized"}` gate as the other `/api/*` paths checked on 5 Nov 2026. That confirms the routes are behind the auth gate. It does not show a success body.
 
-## Not verified
+## Verified from local ERP source (workspace `ERP`, 7 Nov 2026)
 
-These stay closed. The worker will not send a sale while any of them is unknown.
+Readable beside this repo. Re-checked against current files (not the earlier cloud-only notes).
+
+| Item | Evidence |
+| --- | --- |
+| POS catalog `id` | Full catalog `GET /api/products` (no `page`) returns `CachedProduct` via `expandPosCatalog` / `prismaProductToCached`: **`id` is already `wcId` (number)**; **`prismaId` is the Prisma cuid**. Do not treat POS `id` as a cuid. |
+| Admin catalog shape | With `?page=`, the same route returns Prisma `id` (cuid string) and separate `wcId`. Desktop linker prefers `wcId` when present. |
+| `localId` after success | Fast-path lookup returns `alreadySynced`. |
+| `localId` under concurrency (phase 2) | `commitPosCheckout` (`ERP/src/lib/pos/commitPosCheckout.ts`) inserts the sale first inside one transaction (claims `localId`), then applies stock/shift. Concurrent twin or lost-2xx retry → one sale, one stock move. Proven by `npm run test:checkout-idemp` on a temp SQLite DB — not against production. |
+| Money unit | `roundMoney` → two decimal pound amounts. Desktop: `EGYCHINA_POS_MONEY_SCALE=major`. |
+| Cash `paymentMethod` | `cash` (also `visa`, `wallet`, `instapay`, `wechat`, `STAFF_MEAL`). |
+| Line `productId` | Numeric `wcId` for stock/sale lines — not the cuid. |
+| Desktop catalog link (phase 1) | Exact non-empty SKU → `erp_numeric_id`; never changes `product_price`; never links `DEMO-*` / `demo-*` rows by guess. Unlinked lines stay outbox-blocked (`product-id-not-numeric`). |
+| Auth (phase 3) | Desktop tills use enrolled **device Bearer** (`PosDevice.tokenHash`). Staff cookie still works for browser `/pos`. Cookie alone does **not** open desktop sync. Enroll/revoke: `/api/pos/device/*` (MANAGER/ADMIN). |
+| Outbox recovery (phase 4) | `inflight` → `pending` on worker start and each tick. Poison map blocks → `dead` (sale kept). `product-id-not-numeric` stays `pending`. First failure retries immediately (`delay=0`); later failures back off 15s…15m. Cashier bar shows pending + dead + last error. Proven by `OutboxRecoveryTests` (local stub only). |
+| Live catalog pull (phase 5) | With `EGYCHINA_POS_CATALOG_PULL=1`, worker calls `ApplyCatalogFromErpJson`: upsert shelf price/barcode/names, set `catalog.source=erp`, purge unused `DEMO-*` (referenced demos stay inactive for FK/history), deactivate `removedPrismaIds`. Cursor `catalog` stores `serverTime` for next `updatedSince`. Never rewrites `sale_line`. Proven by `CatalogPullTests` (local stub only). |
+| Local cashier/shift (phase 6) | Desktop requires PIN + open local shift before sale. Payload keeps ERP `shiftId: null` and stores `localShiftId` for audit. Staff/shift push to `/api/shifts/*` not wired (those routes still expect browser session). |
+
+Default env with sync variables unset still posts nothing.
+
+## Not verified / still open for production till use
 
 | Gap | Why it matters |
 | --- | --- |
-| ERP repository | Cannot add or review server idempotency. |
-| `localId` dedupe | A lost 2xx followed by a retry may create a second stock movement if the server does not ignore a repeated `localId`. The client retries the same id. That is necessary and not proven safe. |
-| Money unit | The bundle forwards `total` and `unitPrice` as JSON numbers. It does not say pounds versus piasters. `EGYCHINA_POS_MONEY_SCALE` must be `major` or `minor` only after someone checks the server. Default is unverified, and nothing is posted. |
-| `paymentMethod` strings | The field is required by the client and the allowed values are not in the bundle. Set `EGYCHINA_POS_PAYMENT_METHOD` only to a value taken from the ERP source or a captured browser request. |
-| Device credential | None exists in the shipped client. `EGYCHINA_POS_COOKIE` is a staff Auth.js session, it expires, and it is not a till identity. |
-| Price field on `products` | Not referenced by the sync chunk. Catalog pull links `sku` to numeric `id` and does not change shelf prices. |
+| End-to-end post to production | Device auth + idempotency are local-proven only. Do not enable live till sync without a deliberate ops window. |
+| Enroll UX in the Avalonia app | Token is imported from env/DPAPI; no in-app enroll dialog yet. |
+| Refuse pay until `catalog.source=erp` | Still deferred; demo cash sales remain allowed offline. |
 
 The earlier `/api/pos/v1/*` device API in this document was a proposal. It is not what the browser calls. Do not implement it unless it appears in the ERP source.
 
@@ -89,14 +106,14 @@ The earlier `/api/pos/v1/*` device API in this document was a proposal. It is no
 Transmission starts only when all of these are set:
 
 - `EGYCHINA_POS_API`
-- `EGYCHINA_POS_COOKIE` (the session cookie; never commit it)
+- `EGYCHINA_POS_DEVICE_TOKEN` (enrolled device Bearer; stored under DPAPI on Windows — never commit it)
 - `EGYCHINA_POS_MONEY_SCALE` = `major` or `minor`
 - `EGYCHINA_POS_PAYMENT_METHOD`
 
-Optional: `EGYCHINA_POS_CATALOG_PULL=1` also calls `GET /api/products` and stores the numeric id on the local product with the same `sku`. Prices stay as they were.
+Optional: `EGYCHINA_POS_CATALOG_PULL=1` also calls `GET /api/products` (full, then `?updatedSince=` from the catalog cursor) and **applies** shelf prices, barcodes, and names. After a successful apply, `catalog.source=erp` and unused DEMO seed rows are removed. Committed `sale_line` name/price snapshots are never rewritten.
 
 A row is marked `done` and the sale `synced` only after the response body has been read and the status is 2xx. A dropped response, a 401, or a 5xx leaves the row pending. The next tick sends the same `localId`. Receipt numbers and minor-unit totals in SQLite are not rewritten.
 
-Demo barcodes stay pending until a catalog pull links their `sku` to a positive numeric `id`. The worker does not invent that id.
+Unlinked SKUs stay outbox-blocked (`product-id-not-numeric`) until a pull matches them. The worker does not invent a checkout `wcId`.
 
 No test in this repo calls `erp.echinamart.com`. The HTTP tests use a local stand-in.

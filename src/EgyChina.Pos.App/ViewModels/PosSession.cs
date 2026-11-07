@@ -11,7 +11,7 @@ namespace EgyChina.Pos.App.ViewModels;
 public partial class PosSession : ObservableObject
 {
     private readonly PosDatabase _database;
-    private readonly IReadOnlyList<CatalogProduct> _products;
+    private IReadOnlyList<CatalogProduct> _products;
     private readonly SyncStatus _sync;
 
     public PosSession(PosDatabase database, IReadOnlyList<CatalogProduct> products, SyncStatus sync, bool demoCatalog)
@@ -20,10 +20,10 @@ public partial class PosSession : ObservableObject
         _products = products;
         _sync = sync;
         DatabasePath = database.DatabasePath;
-        CatalogCaption = demoCatalog
-            ? $"{products.Count} أصناف تجريبية في القاعدة المحلية"
-            : $"{products.Count} أصناف في القاعدة المحلية";
+        CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog);
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        NeedsLogin = true;
+        SessionCaption = "سجّل الدخول برقم سري من ٦ أرقام";
 
         Lines.CollectionChanged += (_, _) => RefreshCheckout();
         _sync.Changed += HandleSyncChanged;
@@ -31,19 +31,56 @@ public partial class PosSession : ObservableObject
         IsOnline = snap.IsOnline;
         SyncMessage = snap.Message;
         PendingOutbox = snap.PendingOutbox;
+        DeadOutbox = snap.DeadOutbox;
+        LastSyncError = snap.LastError ?? string.Empty;
+        RefreshShiftState();
     }
 
     public ObservableCollection<CartLine> Lines { get; } = new();
 
     public string DatabasePath { get; }
 
-    public string CatalogCaption { get; }
+    [ObservableProperty]
+    private string _catalogCaption = string.Empty;
 
     public string ShellNotice { get; } = "نقد بالجنيه يُحفظ على هذا الجهاز. الطباعة ورفع البيع إلى المنظومة لم يُفعَّلا.";
 
     public Action? RequestCustomerDisplay { get; set; }
 
     public event Action? TenderOpened;
+
+    [ObservableProperty]
+    private bool _needsLogin = true;
+
+    [ObservableProperty]
+    private bool _needsOpenShift;
+
+    [ObservableProperty]
+    private bool _showCloseShift;
+
+    [ObservableProperty]
+    private string _pinText = string.Empty;
+
+    [ObservableProperty]
+    private string _authError = string.Empty;
+
+    [ObservableProperty]
+    private string _sessionCaption = string.Empty;
+
+    [ObservableProperty]
+    private string _cashierName = string.Empty;
+
+    [ObservableProperty]
+    private string _openingFloatText = "0";
+
+    [ObservableProperty]
+    private string _closingCashText = "0";
+
+    [ObservableProperty]
+    private string _shiftError = string.Empty;
+
+    private CashierRecord? _currentCashier;
+    private ShiftRecord? _currentShift;
 
     [ObservableProperty]
     private string _barcode = string.Empty;
@@ -59,6 +96,12 @@ public partial class PosSession : ObservableObject
 
     [ObservableProperty]
     private int _pendingOutbox;
+
+    [ObservableProperty]
+    private int _deadOutbox;
+
+    [ObservableProperty]
+    private string _lastSyncError = string.Empty;
 
     [ObservableProperty]
     private bool _isOnline;
@@ -92,7 +135,20 @@ public partial class PosSession : ObservableObject
 
     public string OnlineText => IsOnline ? "متصل" : "غير متصل";
 
-    public string OutboxCaption => $"صندوق الصادر: {PendingOutbox.ToString(CultureInfo.InvariantCulture)}";
+    public string OutboxCaption
+    {
+        get
+        {
+            var pending = PendingOutbox.ToString(CultureInfo.InvariantCulture);
+            if (DeadOutbox > 0)
+                return $"صندوق الصادر: {pending} · تالف: {DeadOutbox.ToString(CultureInfo.InvariantCulture)}";
+            return $"صندوق الصادر: {pending}";
+        }
+    }
+
+    public bool HasSyncError => !string.IsNullOrWhiteSpace(LastSyncError);
+
+    public string SyncErrorCaption => HasSyncError ? $"آخر خطأ: {LastSyncError}" : string.Empty;
 
     public bool HasDisplayBanner => !string.IsNullOrWhiteSpace(DisplayBanner);
 
@@ -100,7 +156,13 @@ public partial class PosSession : ObservableObject
 
     public bool HasLines => Lines.Count > 0;
 
-    public bool CanBeginPayment => HasLines && !IsTendering;
+    public bool CanOperate => !NeedsLogin && !NeedsOpenShift && _currentCashier is not null && _currentShift is not null;
+
+    public bool CanBeginPayment => CanOperate && HasLines && !IsTendering;
+
+    public bool CanLock => !NeedsLogin && _currentCashier is not null;
+
+    public bool CanOpenCloseShiftPanel => CanOperate && !IsTendering;
 
     public string LineCountText => Lines.Count == 0 ? "السلة فارغة" : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} سطور";
 
@@ -136,7 +198,8 @@ public partial class PosSession : ObservableObject
         : string.Empty;
 
     public bool CanConfirmCash =>
-        IsTendering
+        CanOperate
+        && IsTendering
         && HasLines
         && Money.TryParseEgp(TenderText, out var tender)
         && tender >= TotalMinor;
@@ -173,6 +236,12 @@ public partial class PosSession : ObservableObject
 
     public void AddProduct(CatalogProduct product)
     {
+        if (!CanOperate)
+        {
+            ScanHint = NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع";
+            return;
+        }
+
         HasSettlement = false;
         var existing = Lines.FirstOrDefault(line => line.ProductId == product.Id);
         if (existing is null)
@@ -185,6 +254,12 @@ public partial class PosSession : ObservableObject
 
     public void SubmitBarcode()
     {
+        if (!CanOperate)
+        {
+            ScanHint = NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع";
+            return;
+        }
+
         var code = Barcode.Trim();
         if (code.Length == 0)
             return;
@@ -215,6 +290,14 @@ public partial class PosSession : ObservableObject
 
     partial void OnPendingOutboxChanged(int value) => OnPropertyChanged(nameof(OutboxCaption));
 
+    partial void OnDeadOutboxChanged(int value) => OnPropertyChanged(nameof(OutboxCaption));
+
+    partial void OnLastSyncErrorChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasSyncError));
+        OnPropertyChanged(nameof(SyncErrorCaption));
+    }
+
     partial void OnDisplayBannerChanged(string value) => OnPropertyChanged(nameof(HasDisplayBanner));
 
     partial void OnIsTenderingChanged(bool value) => RefreshCheckout();
@@ -243,9 +326,132 @@ public partial class PosSession : ObservableObject
     private void ShowCustomerDisplay() => RequestCustomerDisplay?.Invoke();
 
     [RelayCommand]
+    private void SubmitPin()
+    {
+        AuthError = string.Empty;
+        var result = _database.TryAuthenticatePin(PinText);
+        if (result.Status != PinAuthStatus.Ok || result.Cashier is null)
+        {
+            AuthError = result.Message ?? "تعذر الدخول.";
+            PinText = string.Empty;
+            return;
+        }
+
+        _currentCashier = result.Cashier;
+        CashierName = result.Cashier.DisplayName;
+        NeedsLogin = false;
+        PinText = string.Empty;
+        AuthError = string.Empty;
+        RefreshShiftState();
+        RefreshCheckout();
+    }
+
+    [RelayCommand]
+    private void LockSession()
+    {
+        if (_currentCashier is null)
+            return;
+
+        Lines.Clear();
+        IsTendering = false;
+        HasSettlement = false;
+        TenderText = string.Empty;
+        SaleError = string.Empty;
+        ShowCloseShift = false;
+        _currentCashier = null;
+        CashierName = string.Empty;
+        NeedsLogin = true;
+        SessionCaption = _currentShift is null
+            ? "الجهاز مقفل. أدخل الرقم السري."
+            : "الجهاز مقفل. الوردية ما زالت مفتوحة — أدخل الرقم السري للمتابعة.";
+        RefreshCheckout();
+    }
+
+    [RelayCommand]
+    private void OpenShift()
+    {
+        ShiftError = string.Empty;
+        if (_currentCashier is null)
+        {
+            ShiftError = "سجّل الدخول أولاً.";
+            return;
+        }
+
+        if (!Money.TryParseEgp(OpeningFloatText, out var opening) || opening < 0)
+        {
+            ShiftError = "أدخل نقدية الافتتاح، مثل 500 أو 500.00";
+            return;
+        }
+
+        try
+        {
+            _currentShift = _database.OpenShift(_currentCashier.Id, opening);
+            NeedsOpenShift = false;
+            SessionCaption = $"{_currentCashier.DisplayName} · وردية مفتوحة";
+            RefreshCheckout();
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("open shift failed", ex);
+            ShiftError = ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private void BeginCloseShift()
+    {
+        if (!CanOpenCloseShiftPanel || _currentShift is null)
+            return;
+        if (HasLines || IsTendering)
+        {
+            ShiftError = "أفرغ السلة قبل إغلاق الوردية.";
+            return;
+        }
+
+        ClosingCashText = Money.FormatAmount(_currentShift.OpeningFloatMinor);
+        ShiftError = string.Empty;
+        ShowCloseShift = true;
+    }
+
+    [RelayCommand]
+    private void CancelCloseShift()
+    {
+        ShowCloseShift = false;
+        ShiftError = string.Empty;
+    }
+
+    [RelayCommand]
+    private void ConfirmCloseShift()
+    {
+        ShiftError = string.Empty;
+        if (_currentCashier is null || _currentShift is null)
+            return;
+        if (!Money.TryParseEgp(ClosingCashText, out var closing) || closing < 0)
+        {
+            ShiftError = "أدخل نقدية الإغلاق بالجنيه.";
+            return;
+        }
+
+        try
+        {
+            _database.CloseShift(_currentShift.Id, _currentCashier.Id, closing);
+            _currentShift = null;
+            ShowCloseShift = false;
+            NeedsOpenShift = true;
+            SessionCaption = $"{_currentCashier.DisplayName} · لا توجد وردية مفتوحة";
+            RefreshCheckout();
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("close shift failed", ex);
+            ShiftError = ex.Message;
+        }
+    }
+
+    [RelayCommand]
     private void BeginCashPayment()
     {
-        if (!HasLines || IsTendering)
+        if (!CanBeginPayment)
             return;
 
         HasSettlement = false;
@@ -281,9 +487,15 @@ public partial class PosSession : ObservableObject
             .Select(line => new CashSaleLine(line.ProductId, line.Barcode, line.NameAr, line.Qty, line.UnitPriceMinor))
             .ToArray();
 
+        if (_currentCashier is null || _currentShift is null)
+        {
+            SaleError = "سجّل الدخول وافتح وردية قبل البيع.";
+            return;
+        }
+
         try
         {
-            var sale = _database.CompleteCashSale(lines, tender);
+            var sale = _database.CompleteCashSale(lines, tender, _currentCashier.Id, _currentShift.Id);
             LastReceiptNo = sale.ReceiptNo;
             LastChangeMinor = sale.ChangeMinor;
             TenderText = string.Empty;
@@ -297,8 +509,23 @@ public partial class PosSession : ObservableObject
         catch (Exception ex)
         {
             PosLog.Error("cash sale failed", ex);
-            SaleError = "تعذر حفظ البيع. السلة ما زالت هنا.";
+            SaleError = string.IsNullOrWhiteSpace(ex.Message) ? "تعذر حفظ البيع. السلة ما زالت هنا." : ex.Message;
         }
+    }
+
+    private void RefreshShiftState()
+    {
+        _currentShift = _database.GetOpenShift();
+        if (_currentCashier is null)
+        {
+            NeedsOpenShift = false;
+            return;
+        }
+
+        NeedsOpenShift = _currentShift is null;
+        SessionCaption = _currentShift is null
+            ? $"{_currentCashier.DisplayName} · افتح وردية للمتابعة"
+            : $"{_currentCashier.DisplayName} · وردية مفتوحة";
     }
 
     private long ParsedTender =>
@@ -321,16 +548,31 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(ShowSettlement));
         OnPropertyChanged(nameof(SettlementText));
         OnPropertyChanged(nameof(IdleCustomerText));
+        OnPropertyChanged(nameof(CanOperate));
+        OnPropertyChanged(nameof(CanLock));
+        OnPropertyChanged(nameof(CanOpenCloseShiftPanel));
     }
+
+    partial void OnNeedsLoginChanged(bool value) => RefreshCheckout();
+
+    partial void OnNeedsOpenShiftChanged(bool value) => RefreshCheckout();
 
     private void HandleSyncChanged()
     {
         var snap = _sync.Read();
+        var products = _database.ListActiveProducts();
+        var demo = _database.GetSetting("catalog.source") == "demo";
         void Apply()
         {
             IsOnline = snap.IsOnline;
             SyncMessage = snap.Message;
             PendingOutbox = snap.PendingOutbox;
+            DeadOutbox = snap.DeadOutbox;
+            LastSyncError = snap.LastError ?? string.Empty;
+            _products = products;
+            CatalogCaption = FormatCatalogCaption(products.Count, demo);
+            OnPropertyChanged(nameof(VisibleProducts));
+            OnPropertyChanged(nameof(HasNoSearchResults));
         }
 
         if (Dispatcher.UIThread.CheckAccess())
@@ -338,6 +580,11 @@ public partial class PosSession : ObservableObject
         else
             Dispatcher.UIThread.Post(Apply);
     }
+
+    private static string FormatCatalogCaption(int count, bool demoCatalog) =>
+        demoCatalog
+            ? $"{count.ToString(CultureInfo.InvariantCulture)} أصناف تجريبية في القاعدة المحلية"
+            : $"{count.ToString(CultureInfo.InvariantCulture)} أصناف في القاعدة المحلية";
 
     private static bool Matches(CatalogProduct product, string term)
     {

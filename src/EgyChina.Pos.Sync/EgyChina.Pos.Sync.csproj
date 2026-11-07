@@ -9,4 +9,8 @@
     <ProjectReference Include="..\EgyChina.Pos.Core\EgyChina.Pos.Core.csproj" />
     <ProjectReference Include="..\EgyChina.Pos.Data\EgyChina.Pos.Data.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
 </Project>

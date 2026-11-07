@@ -4,9 +4,8 @@ using EgyChina.Pos.Data;
 namespace EgyChina.Pos.Sync;
 
 /// <summary>
-/// Background tick. Posts pending sales to the live <c>/api/checkout</c> route only when the
-/// verified gates are set: Auth.js cookie, money scale, and payment-method string.
-/// Anything less stays local. A sale is marked synced only after a full 2xx response.
+/// Background tick. Posts pending sales when device auth gates are set.
+/// On start, requeues any <c>inflight</c> rows left by a crash. Never deletes a committed sale.
 /// </summary>
 public sealed class SyncWorker : IAsyncDisposable
 {
@@ -57,6 +56,12 @@ public sealed class SyncWorker : IAsyncDisposable
         if (Interlocked.Exchange(ref _started, 1) == 1)
             return;
 
+        // Crash mid-POST left rows as inflight — make them pending before the first tick.
+        var recovered = _database.RecoverInflightOutbox();
+        if (recovered > 0)
+            PosLog.Info($"recovered {recovered} inflight outbox row(s) at startup");
+
+        PublishLocalStatus();
         _cts = new CancellationTokenSource();
         _loop = Task.Run(() => Loop(_cts.Token));
     }
@@ -64,22 +69,21 @@ public sealed class SyncWorker : IAsyncDisposable
     public async Task TickAsync(CancellationToken cancellationToken)
     {
         var block = _options.TransmissionBlock();
-        if (block is not null || _http is null || _options.BaseAddress is null || _options.SessionCookie is null)
+        if (block is not null || _http is null || _options.BaseAddress is null || string.IsNullOrWhiteSpace(_options.DeviceToken))
         {
-            var pending = _database.CountPendingOutbox();
             var (cursor, message) = block switch
             {
-                "auth-missing" => ("auth-missing", "المزامنة تنتظر جلسة Auth.js. لا يُرسل بيع."),
+                "auth-missing" => ("auth-missing", "المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع."),
                 "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
                 "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
                 _ => (NotConfiguredCursor, "المزامنة المحلية تعمل. عنوان الخادم غير مضبوط."),
             };
             _database.WriteCursor(CursorStream, cursor, null);
-            _status.Update(false, message, pending);
+            PublishLocalStatus(message, online: false);
             return;
         }
 
-        var sync = new SaleOutboxSync(_database, new ErpPosClient(_options.BaseAddress, _options.SessionCookie, _http), _options);
+        var sync = new SaleOutboxSync(_database, new ErpPosClient(_options.BaseAddress, _options.DeviceToken, _http), _options);
         SyncTickResult result;
         try
         {
@@ -90,7 +94,8 @@ public sealed class SyncWorker : IAsyncDisposable
             throw;
         }
 
-        var left = result.Pending >= 0 ? result.Pending : _database.CountPendingOutbox();
+        var snap = result.Snapshot ?? _database.ReadOutboxSnapshot();
+        var left = result.Pending >= 0 ? result.Pending : snap.Pending + snap.Inflight;
         var online = result.Code is "idle";
         var text = result.Code switch
         {
@@ -98,11 +103,16 @@ public sealed class SyncWorker : IAsyncDisposable
             "transport" => "انقطع الرد قبل تأكيد القبول. البيع ما زال في صندوق الصادر.",
             "catalog-rejected" => "تعذر قراءة الأصناف من /api/products. لم يُقبل بيع.",
             "idle" when result.Accepted > 0 => "قُبلت مبيعات على الخادم دون تكرار محلي.",
-            "idle" when left == 0 => "لا توجد مبيعات بانتظار الإرسال.",
+            "idle" when result.MarkedDead > 0 => "بعض المبيعات معلّمة كتالفة محلياً؛ الإيصال محفوظ.",
+            "idle" when left == 0 && snap.Dead == 0 =>
+                _options.CatalogPull
+                    ? "الكتالوج والمبيعات المحلية محدَّثان."
+                    : "لا توجد مبيعات بانتظار الإرسال.",
+            "idle" when left == 0 => "لا بانتظار إرسال. توجد قيود تالفة تحتاج مراجعة.",
             _ => "صندوق الصادر ينتظر رقم صنف من الـ ERP أو رداً مكتملاً.",
         };
         _database.WriteCursor(CursorStream, result.Code, result.Detail);
-        _status.Update(online, text, left);
+        _status.Update(online, text, left, snap.Dead, snap.LastError);
     }
 
     public async ValueTask DisposeAsync()
@@ -137,6 +147,17 @@ public sealed class SyncWorker : IAsyncDisposable
         return new Uri(new Uri(text, UriKind.Absolute), "api/checkout");
     }
 
+    private void PublishLocalStatus(string? message = null, bool online = false)
+    {
+        var snap = _database.ReadOutboxSnapshot();
+        var pending = snap.Pending + snap.Inflight;
+        var text = message
+            ?? (pending > 0
+                ? "صندوق الصادر يحتفظ بالمبيعات المكتملة محلياً."
+                : "المزامنة المحلية جاهزة.");
+        _status.Update(online, text, pending, snap.Dead, snap.LastError);
+    }
+
     private async Task Loop(CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
@@ -154,7 +175,13 @@ public sealed class SyncWorker : IAsyncDisposable
                 PosLog.Error("sync tick failed", ex);
                 try
                 {
-                    _status.Update(false, "توقفت دورة المزامنة بسبب خطأ داخلي.", _database.CountPendingOutbox());
+                    var snap = _database.ReadOutboxSnapshot();
+                    _status.Update(
+                        false,
+                        "توقفت دورة المزامنة بسبب خطأ داخلي.",
+                        snap.Pending + snap.Inflight,
+                        snap.Dead,
+                        snap.LastError ?? ex.Message);
                 }
                 catch (Exception statusError)
                 {

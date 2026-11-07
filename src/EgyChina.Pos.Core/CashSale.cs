@@ -22,6 +22,7 @@ public sealed record CompletedCashSale(
     string SaleId,
     string TerminalId,
     string CashierId,
+    string ShiftId,
     int ReceiptNo,
     long TotalMinor,
     long TenderMinor,

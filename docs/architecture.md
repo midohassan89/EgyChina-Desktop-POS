@@ -164,7 +164,7 @@ Money is a signed integer in minor units (EGP piasters, CNY fen). Quantities are
 
 The in-progress cart is **not** a table. A crash loses the basket and cannot lose a committed sale. Completed sales are written before any print.
 
-Demo seed: if `product` is empty and `catalog.source` is not `erp`, three `DEMO-*` rows are inserted and `catalog.source` is set to `demo`. A future pull sets `catalog.source=erp` and deletes `DEMO-*`. The seed must not come back over a real empty catalog.
+Demo seed: if `product` is empty and `catalog.source` is not `erp`, three `DEMO-*` rows are inserted and `catalog.source` is set to `demo`. A successful phase-5 catalog apply sets `catalog.source=erp`, deletes unused `DEMO-*`, and only deactivates DEMO rows still referenced by `sale_line`. The seed must not come back over a real empty ERP catalog.
 
 ### Sale transaction
 
@@ -181,7 +181,7 @@ One SQLite transaction, in this order:
 
 If the process dies before commit, there is no sale. If it dies after commit, the sale and the outbox row are already stored. Never print first.
 
-Push retries use the same idempotency key. The server returns the original `serverId`. The client stores it on `sale.server_id` and marks the outbox row `done`. A completed sale is never moved to `dead` because the network failed. `dead` is only for a payload this build cannot send (poison). The cashier status bar shows an outbox that is not draining.
+Push retries use the same `localId` / idempotency key. The client marks the outbox row `done` and the sale `synced` only after a completed HTTP 2xx body. A crash mid-POST leaves the row `inflight`; `RecoverInflightOutbox` returns it to `pending` at worker start and on each tick — the local sale is never deleted. Transient transport/HTTP failures stay `pending` with backoff (first failure immediate, then 15s…15m). `dead` is only for poison payloads this build cannot map; the sale row stays for reprint/audit. Unlinked SKUs (`product-id-not-numeric`) stay `pending` until catalog link. The cashier status bar shows pending count, dead count, and the last actionable error.
 
 Catalog pull and cursor advance commit in one transaction, so a crash cannot skip a page or apply it twice.
 
@@ -334,7 +334,7 @@ Implemented:
 
 Not implemented, on purpose:
 
-- PIN, shifts, void, refund, discount, print, reprint.
+- Void, refund, discount, print, reprint. PIN + local shifts landed in phase 6 (ERP staff/shift sync still open).
 - Any POST of a sale. The outbox waits for the device API in the contract, which is still an **ASSUMPTION**.
 - ESC/POS bytes, QR images, CNY tender, catalog pull.
 - Auto-logon, the launcher, code signing.

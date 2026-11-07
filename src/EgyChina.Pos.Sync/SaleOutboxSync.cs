@@ -5,11 +5,25 @@ using EgyChina.Pos.Data;
 namespace EgyChina.Pos.Sync;
 
 /// <summary>
-/// Sends pending cash sales to the live <c>POST /api/checkout</c> route.
-/// The row stays pending unless a full 2xx response arrives. Receipt amounts in SQLite are not edited.
+/// Sends pending cash sales to <c>POST /api/checkout</c>.
+/// Inflight rows are recovered on each run. Transient failures stay pending with backoff.
+/// Poison payloads become <c>dead</c> without deleting the local sale.
 /// </summary>
 public sealed class SaleOutboxSync
 {
+    private static readonly HashSet<string> PoisonBlocks = new(StringComparer.Ordinal)
+    {
+        "payload-missing-sale-id",
+        "payload-missing-total",
+        "payload-missing-lines",
+        "line-missing-product-id",
+        "line-missing-name",
+        "qty-not-whole",
+        "line-missing-price",
+        "line-missing-line-total",
+        "line-total-mismatch",
+    };
+
     private readonly PosDatabase _database;
     private readonly ErpPosClient _client;
     private readonly SyncOptions _options;
@@ -21,30 +35,51 @@ public sealed class SaleOutboxSync
         _options = options;
     }
 
+    public static bool IsPoisonBlock(string? block) =>
+        !string.IsNullOrWhiteSpace(block) && PoisonBlocks.Contains(block);
+
     public async Task<SyncTickResult> RunAsync(CancellationToken cancellationToken)
     {
-        _database.RecoverInflightOutbox();
+        var recovered = _database.RecoverInflightOutbox();
         if (_options.CatalogPull)
         {
-            var catalog = await _client.GetProductsAsync(null, cancellationToken).ConfigureAwait(false);
+            var since = _database.ReadCursor(PosDatabase.CatalogCursorStream)?.Cursor;
+            var catalog = await _client.GetProductsAsync(since, cancellationToken).ConfigureAwait(false);
             if (!catalog.ResponseCompleted)
-                return Stop("transport", catalog.Error ?? "catalog transport failed", posted: 0, accepted: 0);
+                return Stop("transport", catalog.Error ?? "catalog transport failed", posted: 0, accepted: 0, recovered);
             if (catalog.Unauthorized)
-                return Stop("unauthorized", "401", posted: 0, accepted: 0);
+                return Stop("unauthorized", "401", posted: 0, accepted: 0, recovered);
             if (!catalog.Accepted || catalog.Body is null)
-                return Stop("catalog-rejected", catalog.Error ?? "catalog rejected", posted: 0, accepted: 0);
-            _database.LinkCatalogFromErpJson(catalog.Body);
+                return Stop("catalog-rejected", catalog.Error ?? "catalog rejected", posted: 0, accepted: 0, recovered);
+
+            var applied = _database.ApplyCatalogFromErpJson(catalog.Body);
+            if (!string.IsNullOrWhiteSpace(applied.ServerTime))
+                _database.WriteCursor(PosDatabase.CatalogCursorStream, applied.ServerTime, null);
+            else
+                _database.WriteCursor(PosDatabase.CatalogCursorStream, DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture), null);
         }
 
         var rows = _database.ListPendingSales(20);
         var posted = 0;
         var accepted = 0;
+        var dead = 0;
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!ErpCheckoutMapper.TryMap(row.PayloadJson, _options.MoneyScale, _options.PaymentMethod, _database.TryGetErpNumericId, out var template, out var block))
             {
-                _database.RecordOutboxFailure(row.Id, block ?? "blocked");
+                var reason = block ?? "blocked";
+                if (IsPoisonBlock(reason))
+                {
+                    _database.MarkOutboxDead(row.Id, reason);
+                    dead++;
+                }
+                else
+                {
+                    // e.g. product-id-not-numeric — retry after catalog link; sale kept.
+                    _database.RecordOutboxFailure(row.Id, reason);
+                }
+
                 continue;
             }
 
@@ -78,17 +113,32 @@ public sealed class SaleOutboxSync
                     : "http-" + result.StatusCode + ":" + (result.Error ?? "rejected");
             _database.RecordOutboxFailure(row.Id, error);
             if (result.Unauthorized)
-                return Stop("unauthorized", error, posted, accepted);
+                return Stop("unauthorized", error, posted, accepted, recovered, dead);
             if (result.TransportFailed)
-                return Stop("transport", error, posted, accepted);
+                return Stop("transport", error, posted, accepted, recovered, dead);
         }
 
-        var pending = _database.CountPendingOutbox();
-        return new SyncTickResult("idle", accepted > 0 ? "accepted" : "pending", posted, accepted, pending);
+        var snapshot = _database.ReadOutboxSnapshot();
+        var detail = accepted > 0
+            ? "accepted"
+            : dead > 0
+                ? "dead:" + dead
+                : snapshot.Pending + snapshot.Inflight > 0
+                    ? "pending"
+                    : "idle";
+        return new SyncTickResult("idle", detail, posted, accepted, snapshot.Pending + snapshot.Inflight, recovered, dead, snapshot);
     }
 
-    private static SyncTickResult Stop(string code, string error, int posted, int accepted) =>
-        new(code, error, posted, accepted, -1);
+    private static SyncTickResult Stop(
+        string code,
+        string error,
+        int posted,
+        int accepted,
+        int recovered,
+        int dead = 0)
+    {
+        return new SyncTickResult(code, error, posted, accepted, -1, recovered, dead, null);
+    }
 
     private static string WithCreatedAt(string json, string createdAt)
     {
@@ -121,4 +171,12 @@ public sealed class SaleOutboxSync
     }
 }
 
-public sealed record SyncTickResult(string Code, string Detail, int Posted, int Accepted, int Pending);
+public sealed record SyncTickResult(
+    string Code,
+    string Detail,
+    int Posted,
+    int Accepted,
+    int Pending,
+    int Recovered = 0,
+    int MarkedDead = 0,
+    OutboxSnapshot? Snapshot = null);

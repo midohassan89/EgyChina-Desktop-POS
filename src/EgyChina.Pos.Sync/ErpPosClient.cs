@@ -1,4 +1,4 @@
-using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 
@@ -16,9 +16,8 @@ public sealed record ErpCallResult(bool ResponseCompleted, int? StatusCode, stri
 }
 
 /// <summary>
-/// Speaks only the calls present in the production browser bundle:
-/// GET /api/products and POST /api/checkout. Auth is the Auth.js cookie the browser already sends.
-/// A sale is accepted only when the HTTP response is fully received and the status is 2xx.
+/// Speaks <c>GET /api/products</c> and <c>POST /api/checkout</c>.
+/// Production tills authenticate with an enrolled device Bearer token (not a staff cookie).
 /// </summary>
 public sealed class ErpPosClient : IDisposable
 {
@@ -26,10 +25,10 @@ public sealed class ErpPosClient : IDisposable
     private readonly Uri _baseAddress;
     private readonly bool _ownsClient;
 
-    public ErpPosClient(Uri baseAddress, string sessionCookie, HttpClient? httpClient = null)
+    public ErpPosClient(Uri baseAddress, string deviceBearerToken, HttpClient? httpClient = null)
     {
-        if (string.IsNullOrWhiteSpace(sessionCookie))
-            throw new ArgumentException("Session cookie is required.", nameof(sessionCookie));
+        if (string.IsNullOrWhiteSpace(deviceBearerToken))
+            throw new ArgumentException("Device bearer token is required.", nameof(deviceBearerToken));
         _baseAddress = baseAddress;
         if (httpClient is null)
         {
@@ -44,8 +43,9 @@ public sealed class ErpPosClient : IDisposable
 
         if (!_http.DefaultRequestHeaders.UserAgent.Any())
             _http.DefaultRequestHeaders.UserAgent.ParseAdd("EgyChina-POS/0.1");
+        _http.DefaultRequestHeaders.Remove("Authorization");
         _http.DefaultRequestHeaders.Remove("Cookie");
-        _http.DefaultRequestHeaders.TryAddWithoutValidation("Cookie", sessionCookie);
+        _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", deviceBearerToken.Trim());
     }
 
     public Uri CheckoutUri => Combine("api/checkout");

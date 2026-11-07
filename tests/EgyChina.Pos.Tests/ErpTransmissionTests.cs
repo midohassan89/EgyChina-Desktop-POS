@@ -11,8 +11,9 @@ namespace EgyChina.Pos.Tests;
 /// <summary>
 /// These tests drive the desktop client against a local stand-in.
 /// The stand-in is not the ERP. It checks that we speak the request the live bundle sends,
-/// and that we acknowledge a sale only after a finished 2xx. Server-side dedupe of localId
-/// is not something these tests can prove.
+/// and that we acknowledge a sale only after a finished 2xx.
+/// Server-side concurrent localId + stock safety is documented in docs/implementation-plan.md
+/// (phase 2) and is not claimed by this stub.
 /// </summary>
 public sealed class ErpTransmissionTests : IDisposable
 {
@@ -69,7 +70,7 @@ public sealed class ErpTransmissionTests : IDisposable
             bodies.Add(await Read(context));
             Assert.Equal("POST", context.Request.HttpMethod);
             Assert.Equal("/api/checkout", context.Request.Url?.AbsolutePath);
-            Assert.False(string.IsNullOrEmpty(context.Request.Headers["Cookie"]));
+            Assert.StartsWith("Bearer ", context.Request.Headers["Authorization"] ?? "", StringComparison.Ordinal);
             context.Response.StatusCode = 200;
             context.Response.Close();
         });
@@ -80,7 +81,7 @@ public sealed class ErpTransmissionTests : IDisposable
         Assert.Single(bodies);
         using var json = JsonDocument.Parse(bodies[0]);
         var root = json.RootElement;
-        Assert.Equal("fixture-method", root.GetProperty("paymentMethod").GetString());
+        Assert.Equal("cash", root.GetProperty("paymentMethod").GetString());
         Assert.Equal(85.00m, root.GetProperty("total").GetDecimal());
         Assert.Equal(85.00m, root.GetProperty("amount").GetDecimal());
         Assert.False(root.GetProperty("isReturn").GetBoolean());
@@ -172,16 +173,29 @@ public sealed class ErpTransmissionTests : IDisposable
     }
 
     [Fact]
-    public async Task Catalog_pull_links_numeric_id_without_changing_price()
+    public async Task Catalog_pull_applies_prices_writes_cursor_and_keeps_sale_intact()
     {
-        var database = SeedSale(link: false);
+        var database = new PosDatabase(Path.Combine(_directory, "catalog-pull.db"));
+        database.Initialize();
+        InsertLinkedReadyProduct(database, "rice-1", "RICE-5KG", "2000000099999", "أرز اختبار", 8_500);
+        TestShift.Sell(
+            database,
+            [new CashSaleLine("rice-1", "2000000099999", "أرز اختبار", 1, 8_500)],
+            10_000);
+
+        string? productsQuery = null;
         await using var server = await StubServer.Start(async context =>
         {
             if (context.Request.HttpMethod == "GET")
             {
                 Assert.Equal("/api/products", context.Request.Url?.AbsolutePath);
+                productsQuery = context.Request.Url?.Query;
+                // Live POS shape from prismaProductToCached: id === wcId (number).
                 await Write(context, 200, """
-                    {"serverTime":"2026-11-06T00:00:00Z","products":[{"id":55,"sku":"DEMO-RICE","prismaId":"p-rice","name":"أرز"}],"removedPrismaIds":[]}
+                    {"serverTime":"2026-11-07T00:00:00.000Z","products":[
+                      {"id":9042,"sku":"RICE-5KG","prismaId":"clxyz001","name":"أرز","price":"99.00","meta_data":[{"key":"_op_barcode","value":"2000000099999"}]},
+                      {"id":55,"sku":"DEMO-RICE","prismaId":"p-rice","name":"أرز تجريبي","price":"10.00"}
+                    ],"removedPrismaIds":[]}
                     """);
                 return;
             }
@@ -192,15 +206,64 @@ public sealed class ErpTransmissionTests : IDisposable
 
         await Tick(database, server.BaseAddress, catalogPull: true);
 
-        Assert.Equal(55, database.TryGetErpNumericId("demo-rice"));
+        Assert.Equal(9042, database.TryGetErpNumericId("rice-1"));
+        Assert.Equal(9_900, ReadShelfPrice(database, "rice-1"));
+        Assert.Equal("erp", database.GetSetting("catalog.source"));
+        Assert.Equal("2026-11-07T00:00:00.000Z", database.ReadCursor(PosDatabase.CatalogCursorStream)?.Cursor);
+        Assert.Null(database.TryGetErpNumericId("demo-rice"));
         AssertSaleIntact(database, total: 8_500, receipt: 1, synced: true);
+        Assert.True(string.IsNullOrEmpty(productsQuery) || !productsQuery.Contains("updatedSince", StringComparison.Ordinal));
+
+        productsQuery = null;
+        await Tick(database, server.BaseAddress, catalogPull: true);
+        Assert.Contains("updatedSince=", productsQuery, StringComparison.Ordinal);
+    }
+
+    private static long ReadShelfPrice(PosDatabase database, string productId)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = database.DatabasePath,
+            Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadOnly,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT amount_minor FROM product_price WHERE product_id = $id AND currency = 'EGP'";
+        command.Parameters.AddWithValue("$id", productId);
+        return (long)command.ExecuteScalar()!;
+    }
+
+    [Fact]
+    public void Checkout_mapper_emits_cash_and_major_units_like_erp()
+    {
+        // ERP paymentMethods.ts: cash. money.ts roundMoney: major pounds with 2 decimals.
+        var ok = ErpCheckoutMapper.TryMap(
+            """
+            {"saleId":"sale-1","totalMinor":8500,"lines":[
+              {"productId":"demo-rice","nameAr":"أرز","qtyMilli":1000,"unitPriceMinor":8500,"lineTotalMinor":8500}
+            ]}
+            """,
+            ErpMoneyScale.MajorUnits,
+            "cash",
+            _ => 9042,
+            out var json,
+            out var block);
+        Assert.True(ok, block);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal("cash", doc.RootElement.GetProperty("paymentMethod").GetString());
+        Assert.Equal(85.00m, doc.RootElement.GetProperty("total").GetDecimal());
+        Assert.Equal(85.00m, doc.RootElement.GetProperty("amount").GetDecimal());
+        Assert.Equal(9042, doc.RootElement.GetProperty("lines")[0].GetProperty("productId").GetInt64());
+        Assert.Equal("sale-1", doc.RootElement.GetProperty("localId").GetString());
     }
 
     private PosDatabase SeedSale(bool link = true)
     {
         var database = new PosDatabase(Path.Combine(_directory, "pos.db"));
         database.Initialize();
-        database.CompleteCashSale(
+        TestShift.Sell(
+            database,
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8_500)],
             10_000);
         if (link)
@@ -208,13 +271,57 @@ public sealed class ErpTransmissionTests : IDisposable
         return database;
     }
 
+    private static void InsertLinkedReadyProduct(
+        PosDatabase database,
+        string id,
+        string sku,
+        string barcode,
+        string nameAr,
+        long priceMinor)
+    {
+        using var connection = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        {
+            DataSource = database.DatabasePath,
+            Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite,
+            Pooling = false,
+        }.ToString());
+        connection.Open();
+        using (var product = connection.CreateCommand())
+        {
+            product.CommandText = """
+                INSERT INTO product (
+                  id, sku, barcode, name_ar, name_en, name_zh, unit_ar, tax_rate_bps, is_active, updated_at
+                ) VALUES (
+                  $id, $sku, $barcode, $nameAr, null, null, 'قطعة', 0, 1, $now
+                );
+                """;
+            product.Parameters.AddWithValue("$id", id);
+            product.Parameters.AddWithValue("$sku", sku);
+            product.Parameters.AddWithValue("$barcode", barcode);
+            product.Parameters.AddWithValue("$nameAr", nameAr);
+            product.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            product.ExecuteNonQuery();
+        }
+
+        using (var price = connection.CreateCommand())
+        {
+            price.CommandText = """
+                INSERT INTO product_price (product_id, currency, amount_minor)
+                VALUES ($id, 'EGP', $amount);
+                """;
+            price.Parameters.AddWithValue("$id", id);
+            price.Parameters.AddWithValue("$amount", priceMinor);
+            price.ExecuteNonQuery();
+        }
+    }
+
     private static async Task Tick(PosDatabase database, Uri baseAddress, bool catalogPull = false)
     {
         var worker = new SyncWorker(database, new SyncStatus(), new SyncOptions
         {
             BaseAddress = baseAddress,
-            SessionCookie = "test-session=fixture",
-            PaymentMethod = "fixture-method",
+            DeviceToken = "test-device-token",
+            PaymentMethod = "cash",
             MoneyScale = ErpMoneyScale.MajorUnits,
             CatalogPull = catalogPull,
             Interval = TimeSpan.FromHours(1),

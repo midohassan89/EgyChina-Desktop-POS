@@ -59,7 +59,8 @@ public sealed class SyncWorkerTests : IDisposable
     public async Task Tick_with_only_a_base_address_does_not_open_a_socket()
     {
         var database = NewDatabase();
-        database.CompleteCashSale(
+        TestShift.Sell(
+            database,
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
             8500);
         var status = new SyncStatus();
@@ -73,7 +74,7 @@ public sealed class SyncWorkerTests : IDisposable
 
         Assert.Equal("auth-missing", database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
         Assert.Equal(1, database.CountPendingOutbox());
-        Assert.Contains("Auth.js", status.Read().Message, StringComparison.Ordinal);
+        Assert.Contains("اعتماد جهاز", status.Read().Message, StringComparison.Ordinal);
         await worker.DisposeAsync();
     }
 

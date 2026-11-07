@@ -12,12 +12,14 @@
         MinWidth="880"
         MinHeight="640">
 
-  <Grid RowDefinitions="Auto,*,Auto">
+  <Grid>
+  <Grid RowDefinitions="Auto,*,Auto" IsEnabled="{Binding CanOperate}">
     <Border Grid.Row="0" Background="#12382F" Padding="18,12">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Spacing="2">
           <TextBlock Text="ايجي شاينا ماركت" FontSize="22" FontWeight="Bold" Foreground="#F6F1E4" />
           <TextBlock Text="سوق العبور  ·  نقطة البيع" FontSize="13" Foreground="#D5C7A4" />
+          <TextBlock Text="{Binding SessionCaption}" FontSize="13" Foreground="#E3C57A" TextWrapping="Wrap" />
         </StackPanel>
         <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Left" MaxWidth="460">
           <TextBlock Text="{Binding ClockText}" FontSize="20" FontWeight="SemiBold" Foreground="#F6F1E4"
@@ -25,7 +27,19 @@
           <TextBlock Text="{Binding OnlineText}" Foreground="#E3C57A" FontSize="13" />
           <TextBlock Text="{Binding SyncMessage}" Foreground="#F6F1E4" FontSize="13" TextWrapping="Wrap" />
           <TextBlock Text="{Binding OutboxCaption}" Foreground="#D5C7A4" FontSize="12" />
+          <TextBlock Text="{Binding SyncErrorCaption}" IsVisible="{Binding HasSyncError}"
+                     Foreground="#E8A0A0" FontSize="12" TextWrapping="Wrap" />
           <TextBlock Text="{Binding ScreenModeText}" Foreground="#D5C7A4" FontSize="12" TextWrapping="Wrap" />
+          <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+            <Button Content="قفل"
+                    Command="{Binding LockSessionCommand}"
+                    IsEnabled="{Binding CanLock}"
+                    MinWidth="88" />
+            <Button Content="إغلاق وردية"
+                    Command="{Binding BeginCloseShiftCommand}"
+                    IsEnabled="{Binding CanOpenCloseShiftPanel}"
+                    MinWidth="120" />
+          </StackPanel>
         </StackPanel>
       </Grid>
     </Border>
@@ -193,5 +207,83 @@
         </StackPanel>
       </StackPanel>
     </Border>
+  </Grid>
+
+  <Border Background="#CC0F1C18" IsVisible="{Binding NeedsLogin}" ZIndex="20">
+    <Border Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="14"
+            Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="12">
+        <TextBlock Text="دخول الكاشير" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
+        <TextBlock Text="{Binding SessionCaption}" TextWrapping="Wrap" Foreground="#6E675C" />
+        <TextBox Text="{Binding PinText}"
+                 PlaceholderText="الرقم السري"
+                 PasswordChar="•"
+                 FontSize="28"
+                 MinHeight="52"
+                 FlowDirection="LeftToRight" />
+        <TextBlock Text="{Binding AuthError}" Foreground="#B42318" TextWrapping="Wrap" />
+        <Button Content="دخول"
+                Command="{Binding SubmitPinCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Background="#12382F"
+                Foreground="#F6F1E4"
+                MinHeight="48" />
+      </StackPanel>
+    </Border>
+  </Border>
+
+  <Border Background="#CC0F1C18" IsVisible="{Binding NeedsOpenShift}" ZIndex="21">
+    <Border Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="14"
+            Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="12">
+        <TextBlock Text="فتح وردية" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
+        <TextBlock Text="{Binding CashierName}" Foreground="#6E675C" />
+        <TextBlock Text="نقدية الافتتاح (ج.م)" Foreground="#6E675C" />
+        <TextBox Text="{Binding OpeningFloatText}"
+                 FontSize="24"
+                 MinHeight="52"
+                 FlowDirection="LeftToRight" />
+        <TextBlock Text="{Binding ShiftError}" Foreground="#B42318" TextWrapping="Wrap" />
+        <Button Content="فتح الوردية"
+                Command="{Binding OpenShiftCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Background="#12382F"
+                Foreground="#F6F1E4"
+                MinHeight="48" />
+        <Button Content="قفل الجهاز"
+                Command="{Binding LockSessionCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center" />
+      </StackPanel>
+    </Border>
+  </Border>
+
+  <Border Background="#CC0F1C18" IsVisible="{Binding ShowCloseShift}" ZIndex="22">
+    <Border Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="14"
+            Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <StackPanel Spacing="12">
+        <TextBlock Text="إغلاق الوردية" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
+        <TextBlock Text="نقدية الإغلاق (ج.م)" Foreground="#6E675C" />
+        <TextBox Text="{Binding ClosingCashText}"
+                 FontSize="24"
+                 MinHeight="52"
+                 FlowDirection="LeftToRight" />
+        <TextBlock Text="{Binding ShiftError}" Foreground="#B42318" TextWrapping="Wrap" />
+        <Button Content="تأكيد الإغلاق"
+                Command="{Binding ConfirmCloseShiftCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Background="#12382F"
+                Foreground="#F6F1E4"
+                MinHeight="48" />
+        <Button Content="إلغاء"
+                Command="{Binding CancelCloseShiftCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center" />
+      </StackPanel>
+    </Border>
+  </Border>
   </Grid>
 </Window>

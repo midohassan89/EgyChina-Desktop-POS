@@ -11,3 +11,9 @@ artifacts/
 *.db
 *.db-wal
 *.db-shm
+*.cred
+dev.env
+*.local.env
+.env
+.env.*
+!docs/dev.env.example

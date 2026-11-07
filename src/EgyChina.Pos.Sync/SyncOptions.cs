@@ -5,6 +5,8 @@ namespace EgyChina.Pos.Sync;
 public sealed class SyncOptions
 {
     public const string EnvironmentVariable = "EGYCHINA_POS_API";
+    public const string DeviceTokenVariable = "EGYCHINA_POS_DEVICE_TOKEN";
+    /// <summary>Legacy staff cookie — never enough alone to transmit (phase 3).</summary>
     public const string CookieVariable = "EGYCHINA_POS_COOKIE";
     public const string PaymentMethodVariable = "EGYCHINA_POS_PAYMENT_METHOD";
     public const string MoneyScaleVariable = "EGYCHINA_POS_MONEY_SCALE";
@@ -17,14 +19,13 @@ public sealed class SyncOptions
     public Uri? BaseAddress { get; init; }
 
     /// <summary>
-    /// Auth.js session cookie. This is the only credential the shipped browser client sends.
-    /// There is no device token in that client. Never log this value.
+    /// Enrolled device bearer from DPAPI / env. Required for transmission.
+    /// Never log this value.
     /// </summary>
-    public string? SessionCookie { get; init; }
+    public string? DeviceToken { get; init; }
 
     /// <summary>
     /// Value of <c>paymentMethod</c> on <c>POST /api/checkout</c>.
-    /// The live bundle sends the field and does not show the allowed strings.
     /// </summary>
     public string? PaymentMethod { get; init; }
 
@@ -40,7 +41,7 @@ public sealed class SyncOptions
     {
         if (BaseAddress is null)
             return "not-configured";
-        if (string.IsNullOrWhiteSpace(SessionCookie))
+        if (string.IsNullOrWhiteSpace(DeviceToken))
             return "auth-missing";
         if (MoneyScale == ErpMoneyScale.Unverified)
             return "money-scale-unverified";
@@ -76,10 +77,12 @@ public sealed class SyncOptions
             _ => ErpMoneyScale.Unverified,
         };
 
+        var deviceToken = DeviceCredentialStore.ImportFromEnvironmentIfPresent();
+
         return new SyncOptions
         {
             BaseAddress = uri,
-            SessionCookie = Environment.GetEnvironmentVariable(CookieVariable),
+            DeviceToken = deviceToken,
             PaymentMethod = Environment.GetEnvironmentVariable(PaymentMethodVariable),
             MoneyScale = scale,
             CatalogPull = string.Equals(Environment.GetEnvironmentVariable(CatalogPullVariable), "1", StringComparison.Ordinal),

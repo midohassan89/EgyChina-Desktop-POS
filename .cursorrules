@@ -1,0 +1,23 @@
+# Project Context: EgyChina Desktop POS
+You are working on the Avalonia Windows cashier (`EgyChina-Desktop-POS`) for EgyChina / Souq El Obour.
+
+## Place in the system
+- Online source of truth: `egychina-erp` (`https://erp.echinamart.com`), sibling folder `ERP` in `EgyChina.code-workspace`.
+- This app replaces the **browser** till at `/pos` for Windows PCs. It is **not** that web UI and **not** `egychina-pos-app` (Expo).
+- No WordPress / WooCommerce client. Do not invent Woo sync.
+
+## Stack (as in repo)
+- .NET 8 (`TargetFramework=net8.0`), C#, Avalonia 12, SQLite via `Microsoft.Data.Sqlite`.
+- Build needs SDK **10.0.100** per `global.json` (Avalonia/Roslyn). Publish stays self-contained net8.
+- Projects: `EgyChina.Pos.App`, `.Core`, `.Data`, `.Sync`, tests under `tests/`.
+
+## Safety
+- Default: sync **off**. Do not set `EGYCHINA_POS_*` env vars against production during normal work.
+- Cash EGP offline is supported; print/PIN/device enrollment are not complete.
+- HTTP tests use a local stub — never claim ERP integration is proven from those alone.
+- See `docs/local-workspace.md` and `docs/erp-sync-contract.md`.
+
+## Agent rules
+1. Complete code only — no `// ...` placeholders.
+2. Prefer fixing build/run/docs for local-first demo; ask before system-wide tool installs or production sync.
+3. Arabic RTL cashier UI; Western digits for money (invariant culture).

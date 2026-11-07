@@ -11,9 +11,12 @@ public sealed class PosDatabase
 {
     public const string DefaultStoreCode = "OBOUR";
     public const string LocalCashierId = "local-cashier";
+    public const string LocalSupervisorId = "local-supervisor";
     public const string DemoRiceBarcode = "2000000000018";
     public const string DemoOilBarcode = "2000000000025";
     public const string DemoTeaBarcode = "2000000000032";
+    public const int PinMaxFailures = 5;
+    public static readonly TimeSpan PinLockoutDuration = TimeSpan.FromMinutes(5);
 
     private const string ProductSelect = """
         SELECT p.id, p.sku, p.barcode, p.name_ar, p.name_en, p.name_zh, pr.amount_minor
@@ -70,10 +73,18 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "002_erp_product_link.sql");
                 MarkMigration(connection, 2, "erp-product-link");
+                version = 2;
+            }
+
+            if (version < 3)
+            {
+                ApplyMigrationScript(connection, "003_cashier_lockout.sql");
+                MarkMigration(connection, 3, "cashier-lockout");
             }
 
             EnsureTerminal(connection);
             EnsureLocalCashier(connection);
+            EnsureBootstrapCashiers(connection);
             SeedDemoCatalogIfNeeded(connection);
             tx.Commit();
         }
@@ -166,12 +177,54 @@ public sealed class PosDatabase
         }
     }
 
-    public void RecoverInflightOutbox()
+    public int CountDeadOutbox()
     {
         lock (_gate)
         {
             using var connection = Open();
-            Exec(connection, "UPDATE outbox SET status = 'pending' WHERE status = 'inflight'");
+            return (int)ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'dead'");
+        }
+    }
+
+    public OutboxSnapshot ReadOutboxSnapshot()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            var pending = (int)ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'pending'");
+            var inflight = (int)ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'inflight'");
+            var dead = (int)ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'dead'");
+            using var errorCmd = connection.CreateCommand();
+            errorCmd.CommandText = """
+                SELECT last_error FROM outbox
+                WHERE last_error IS NOT NULL AND last_error <> ''
+                ORDER BY CASE status WHEN 'inflight' THEN 0 WHEN 'pending' THEN 1 WHEN 'dead' THEN 2 ELSE 3 END,
+                         created_at DESC
+                LIMIT 1
+                """;
+            var lastError = errorCmd.ExecuteScalar() as string;
+            return new OutboxSnapshot(pending, inflight, dead, lastError);
+        }
+    }
+
+    /// <summary>
+    /// After a crash mid-POST, rows left as <c>inflight</c> become <c>pending</c> again.
+    /// Completed sales are never deleted.
+    /// </summary>
+    public int RecoverInflightOutbox()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE outbox
+                SET status = 'pending',
+                    next_attempt_at = $now
+                WHERE status = 'inflight'
+                """;
+            command.Parameters.AddWithValue("$now", Now());
+            return command.ExecuteNonQuery();
         }
     }
 
@@ -181,13 +234,17 @@ public sealed class PosDatabase
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
+            var now = Now();
             command.CommandText = """
                 SELECT id, aggregate_id, event_type, payload_json, attempt_count
                 FROM outbox
-                WHERE status = 'pending' AND event_type = 'SaleCompleted'
+                WHERE status = 'pending'
+                  AND event_type = 'SaleCompleted'
+                  AND next_attempt_at <= $now
                 ORDER BY created_at
                 LIMIT $limit
                 """;
+            command.Parameters.AddWithValue("$now", now);
             command.Parameters.AddWithValue("$limit", limit);
             using var reader = command.ExecuteReader();
             var rows = new List<PendingOutboxRow>();
@@ -221,7 +278,50 @@ public sealed class PosDatabase
         }
     }
 
+    /// <summary>
+    /// Transient failure: keep the sale, bump attempts, schedule backoff. Never deletes the sale.
+    /// </summary>
     public void RecordOutboxFailure(string outboxId, string error)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            int attempts;
+            using (var read = connection.CreateCommand())
+            {
+                read.CommandText = "SELECT attempt_count FROM outbox WHERE id = $id";
+                read.Parameters.AddWithValue("$id", outboxId);
+                attempts = Convert.ToInt32(read.ExecuteScalar() ?? 0, System.Globalization.CultureInfo.InvariantCulture);
+            }
+
+            var nextAttempts = attempts + 1;
+            // First failure retries immediately (lost 2xx / blip). Later failures back off 15s…15m.
+            var delaySeconds = nextAttempts <= 1
+                ? 0
+                : Math.Min(900, 15 * (1 << Math.Min(nextAttempts - 2, 6)));
+            var nextAt = DateTimeOffset.UtcNow.AddSeconds(delaySeconds).ToString("O");
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE outbox
+                SET status = 'pending',
+                    attempt_count = $attempts,
+                    last_error = $error,
+                    next_attempt_at = $next
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$id", outboxId);
+            command.Parameters.AddWithValue("$attempts", nextAttempts);
+            command.Parameters.AddWithValue("$error", error);
+            command.Parameters.AddWithValue("$next", nextAt);
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>
+    /// Poison payload this build cannot send. Sale row stays in SQLite for reprint/audit.
+    /// </summary>
+    public void MarkOutboxDead(string outboxId, string error)
     {
         lock (_gate)
         {
@@ -229,14 +329,32 @@ public sealed class PosDatabase
             using var command = connection.CreateCommand();
             command.CommandText = """
                 UPDATE outbox
-                SET status = 'pending',
+                SET status = 'dead',
                     attempt_count = attempt_count + 1,
                     last_error = $error,
                     next_attempt_at = $now
-                WHERE id = $id
+                WHERE id = $id AND status IN ('pending', 'inflight')
                 """;
             command.Parameters.AddWithValue("$id", outboxId);
             command.Parameters.AddWithValue("$error", error);
+            command.Parameters.AddWithValue("$now", Now());
+            command.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Test helper: force a pending row due immediately.</summary>
+    public void ForceOutboxDueNow(string outboxId)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE outbox
+                SET next_attempt_at = $now, status = 'pending'
+                WHERE id = $id
+                """;
+            command.Parameters.AddWithValue("$id", outboxId);
             command.Parameters.AddWithValue("$now", Now());
             command.ExecuteNonQuery();
         }
@@ -300,7 +418,17 @@ public sealed class PosDatabase
             command.CommandText = "SELECT erp_numeric_id FROM product WHERE id = $id";
             command.Parameters.AddWithValue("$id", localProductId);
             var value = command.ExecuteScalar();
-            return value is long number ? number : null;
+            if (value is null || value is DBNull)
+                return null;
+            try
+            {
+                var number = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+                return number > 0 ? number : null;
+            }
+            catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException)
+            {
+                return null;
+            }
         }
     }
 
@@ -322,47 +450,137 @@ public sealed class PosDatabase
         }
     }
 
+    public const string CatalogCursorStream = "catalog";
+
     /// <summary>
-    /// Applies a GET /api/products body. Links sku to the numeric id. Does not change shelf prices.
+    /// Full catalog pull from <c>GET /api/products</c>: upsert names/barcodes/EGP prices, link
+    /// <c>wcId</c>, deactivate removals, flip <c>catalog.source=erp</c>, and drop unused DEMO rows.
+    /// Never updates <c>sale_line</c> (receipt snapshots stay frozen).
+    /// </summary>
+    public CatalogApplyResult ApplyCatalogFromErpJson(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        string? serverTime = null;
+        if (root.TryGetProperty("serverTime", out var serverNode)
+            && serverNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(serverNode.GetString()))
+        {
+            serverTime = serverNode.GetString();
+        }
+
+        var upserted = 0;
+        var deactivated = 0;
+        var demoRemoved = 0;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var now = Now();
+
+            if (root.TryGetProperty("products", out var products) && products.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var product in products.EnumerateArray())
+                {
+                    if (!TryReadCatalogProduct(product, out var draft))
+                        continue;
+                    if (IsDemoSku(draft.Sku))
+                        continue;
+
+                    var existingId = FindCatalogMatchId(connection, draft);
+                    if (existingId is null)
+                    {
+                        InsertCatalogProduct(connection, draft, now);
+                        upserted++;
+                    }
+                    else
+                    {
+                        UpdateCatalogProduct(connection, existingId, draft, now);
+                        upserted++;
+                    }
+                }
+            }
+
+            if (root.TryGetProperty("removedPrismaIds", out var removed) && removed.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in removed.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.String)
+                        continue;
+                    var prismaId = item.GetString();
+                    if (string.IsNullOrWhiteSpace(prismaId))
+                        continue;
+                    using var command = connection.CreateCommand();
+                    command.CommandText = """
+                        UPDATE product
+                        SET is_active = 0, updated_at = $now
+                        WHERE prisma_id = $id OR id = $id OR id LIKE $pkg
+                        """;
+                    command.Parameters.AddWithValue("$id", prismaId);
+                    command.Parameters.AddWithValue("$pkg", prismaId + "-pkg-%");
+                    command.Parameters.AddWithValue("$now", now);
+                    deactivated += command.ExecuteNonQuery();
+                }
+            }
+
+            WriteSetting(connection, "catalog.source", "erp");
+            demoRemoved = PurgeDemoCatalog(connection, now);
+            tx.Commit();
+        }
+
+        return new CatalogApplyResult(upserted, deactivated, demoRemoved, serverTime);
+    }
+
+    /// <summary>
+    /// Applies a <c>GET /api/products</c> body. Links local rows by exact non-empty SKU to the
+    /// numeric checkout id (<c>wcId</c>). Does not change shelf prices.
+    /// <para>
+    /// POS full-catalog shape (<c>expandPosCatalog</c>): <c>id</c> is already <c>wcId</c> (number),
+    /// <c>prismaId</c> is the cuid. Admin paginated shape: <c>id</c> is cuid string and <c>wcId</c>
+    /// is the number — prefer <c>wcId</c> when present.
+    /// </para>
+    /// Demo rows (<c>DEMO-*</c> / <c>demo-*</c>) are never linked by SKU guess.
+    /// Prefer <see cref="ApplyCatalogFromErpJson"/> for live shelf sync (phase 5).
     /// </summary>
     public int LinkCatalogFromErpJson(string json)
     {
-        using var document = System.Text.Json.JsonDocument.Parse(json);
+        using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         var linked = 0;
-        if (root.TryGetProperty("products", out var products) && products.ValueKind == System.Text.Json.JsonValueKind.Array)
+        if (root.TryGetProperty("products", out var products) && products.ValueKind == JsonValueKind.Array)
         {
             foreach (var product in products.EnumerateArray())
             {
-                if (!product.TryGetProperty("sku", out var skuNode) || skuNode.ValueKind != System.Text.Json.JsonValueKind.String)
+                if (!TryReadCatalogLink(product, out var sku, out var numericId, out var prismaId))
                     continue;
-                if (!product.TryGetProperty("id", out var idNode) || idNode.ValueKind != System.Text.Json.JsonValueKind.Number || !idNode.TryGetInt64(out var numericId) || numericId <= 0)
-                    continue;
-                var prisma = product.TryGetProperty("prismaId", out var prismaNode) && prismaNode.ValueKind == System.Text.Json.JsonValueKind.String
-                    ? prismaNode.GetString()
-                    : null;
+
                 lock (_gate)
                 {
                     using var connection = Open();
                     using var command = connection.CreateCommand();
+                    // Exact SKU only. Never touch product_price. Never link demo seed rows.
                     command.CommandText = """
                         UPDATE product
                         SET erp_numeric_id = $erp, prisma_id = COALESCE($prisma, prisma_id)
                         WHERE sku = $sku
+                          AND id NOT LIKE 'demo-%'
+                          AND sku NOT GLOB 'DEMO-*'
+                          AND sku NOT GLOB 'demo-*'
                         """;
                     command.Parameters.AddWithValue("$erp", numericId);
-                    command.Parameters.AddWithValue("$prisma", (object?)prisma ?? DBNull.Value);
-                    command.Parameters.AddWithValue("$sku", skuNode.GetString());
+                    command.Parameters.AddWithValue("$prisma", (object?)prismaId ?? DBNull.Value);
+                    command.Parameters.AddWithValue("$sku", sku);
                     linked += command.ExecuteNonQuery();
                 }
             }
         }
 
-        if (root.TryGetProperty("removedPrismaIds", out var removed) && removed.ValueKind == System.Text.Json.JsonValueKind.Array)
+        if (root.TryGetProperty("removedPrismaIds", out var removed) && removed.ValueKind == JsonValueKind.Array)
         {
             foreach (var item in removed.EnumerateArray())
             {
-                if (item.ValueKind != System.Text.Json.JsonValueKind.String)
+                if (item.ValueKind != JsonValueKind.String)
                     continue;
                 lock (_gate)
                 {
@@ -376,6 +594,423 @@ public sealed class PosDatabase
         }
 
         return linked;
+    }
+
+    /// <summary>
+    /// Resolves checkout numeric id and prisma cuid from either POS CachedProduct or admin row JSON.
+    /// </summary>
+    public static bool TryReadCatalogLink(
+        JsonElement product,
+        out string sku,
+        out long numericId,
+        out string? prismaId)
+    {
+        sku = string.Empty;
+        numericId = 0;
+        prismaId = null;
+
+        if (!product.TryGetProperty("sku", out var skuNode) || skuNode.ValueKind != JsonValueKind.String)
+            return false;
+        sku = (skuNode.GetString() ?? string.Empty).Trim();
+        if (sku.Length == 0)
+            return false;
+
+        // Prefer explicit wcId (admin page shape). Else numeric id (POS CachedProduct = wcId).
+        if (product.TryGetProperty("wcId", out var wcNode)
+            && wcNode.ValueKind == JsonValueKind.Number
+            && wcNode.TryGetInt64(out var wcId)
+            && wcId > 0)
+        {
+            numericId = wcId;
+        }
+        else if (product.TryGetProperty("id", out var idNumber)
+                 && idNumber.ValueKind == JsonValueKind.Number
+                 && idNumber.TryGetInt64(out var asNumber)
+                 && asNumber > 0)
+        {
+            numericId = asNumber;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (product.TryGetProperty("prismaId", out var prismaNode)
+            && prismaNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(prismaNode.GetString()))
+        {
+            prismaId = prismaNode.GetString();
+        }
+        else if (product.TryGetProperty("id", out var idString)
+                 && idString.ValueKind == JsonValueKind.String
+                 && !string.IsNullOrWhiteSpace(idString.GetString()))
+        {
+            // Admin shape: id is the Prisma cuid.
+            prismaId = idString.GetString();
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Reads a sellable POS/admin catalog row including shelf price and barcode.
+    /// Packages may have an empty SKU; local id then uses <c>posKey</c>.
+    /// </summary>
+    public static bool TryReadCatalogProduct(JsonElement product, out CatalogProductDraft draft)
+    {
+        draft = default!;
+        var isPackage = product.TryGetProperty("isPackage", out var pkgNode)
+            && pkgNode.ValueKind == JsonValueKind.True;
+
+        string? prismaId = null;
+        if (product.TryGetProperty("prismaId", out var prismaNode)
+            && prismaNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(prismaNode.GetString()))
+        {
+            prismaId = prismaNode.GetString()!.Trim();
+        }
+        else if (!isPackage
+                 && product.TryGetProperty("id", out var idString)
+                 && idString.ValueKind == JsonValueKind.String
+                 && !string.IsNullOrWhiteSpace(idString.GetString()))
+        {
+            prismaId = idString.GetString()!.Trim();
+        }
+
+        string? posKey = null;
+        if (product.TryGetProperty("posKey", out var posKeyNode)
+            && posKeyNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(posKeyNode.GetString()))
+        {
+            posKey = posKeyNode.GetString()!.Trim();
+        }
+
+        long numericId = 0;
+        if (product.TryGetProperty("wcId", out var wcNode)
+            && wcNode.ValueKind == JsonValueKind.Number
+            && wcNode.TryGetInt64(out var wcId)
+            && wcId > 0)
+        {
+            numericId = wcId;
+        }
+        else if (product.TryGetProperty("id", out var idNumber)
+                 && idNumber.ValueKind == JsonValueKind.Number
+                 && idNumber.TryGetInt64(out var asNumber)
+                 && asNumber > 0)
+        {
+            numericId = asNumber;
+        }
+
+        if (numericId <= 0)
+            return false;
+
+        var sku = string.Empty;
+        if (product.TryGetProperty("sku", out var skuNode) && skuNode.ValueKind == JsonValueKind.String)
+            sku = (skuNode.GetString() ?? string.Empty).Trim();
+
+        var localId = isPackage
+            ? (posKey ?? (prismaId is null ? null : prismaId + "-pkg"))
+            : (prismaId ?? posKey);
+        if (string.IsNullOrWhiteSpace(localId))
+            return false;
+
+        if (sku.Length == 0)
+            sku = isPackage ? "PKG:" + localId : "ERP:" + numericId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (!product.TryGetProperty("name", out var nameNode)
+            || nameNode.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(nameNode.GetString()))
+        {
+            return false;
+        }
+
+        var nameAr = nameNode.GetString()!.Trim();
+        var nameEn = ReadOptionalString(product, "nameEn");
+        var nameZh = ReadOptionalString(product, "nameZh");
+        var unit = ReadOptionalString(product, "unit") ?? "قطعة";
+        var barcode = ReadBarcode(product);
+        if (!TryReadShelfPriceMinor(product, out var priceMinor))
+            return false;
+
+        draft = new CatalogProductDraft(
+            localId,
+            sku,
+            barcode,
+            nameAr,
+            nameEn,
+            nameZh,
+            unit,
+            numericId,
+            isPackage ? prismaId : (prismaId ?? localId),
+            priceMinor,
+            isPackage);
+        return true;
+    }
+
+    private static string? FindCatalogMatchId(SqliteConnection connection, CatalogProductDraft draft)
+    {
+        using (var byId = connection.CreateCommand())
+        {
+            byId.CommandText = "SELECT id FROM product WHERE id = $id LIMIT 1";
+            byId.Parameters.AddWithValue("$id", draft.LocalId);
+            if (byId.ExecuteScalar() is string idByKey)
+                return idByKey;
+        }
+
+        if (!string.IsNullOrWhiteSpace(draft.PrismaId) && !draft.IsPackage)
+        {
+            using var byPrisma = connection.CreateCommand();
+            byPrisma.CommandText = "SELECT id FROM product WHERE prisma_id = $prisma LIMIT 1";
+            byPrisma.Parameters.AddWithValue("$prisma", draft.PrismaId);
+            if (byPrisma.ExecuteScalar() is string idByPrisma)
+                return idByPrisma;
+        }
+
+        if (!IsDemoSku(draft.Sku) && !draft.Sku.StartsWith("PKG:", StringComparison.Ordinal) && !draft.Sku.StartsWith("ERP:", StringComparison.Ordinal))
+        {
+            using var bySku = connection.CreateCommand();
+            bySku.CommandText = """
+                SELECT id FROM product
+                WHERE sku = $sku
+                  AND id NOT LIKE 'demo-%'
+                  AND sku NOT GLOB 'DEMO-*'
+                  AND sku NOT GLOB 'demo-*'
+                LIMIT 1
+                """;
+            bySku.Parameters.AddWithValue("$sku", draft.Sku);
+            if (bySku.ExecuteScalar() is string idBySku)
+                return idBySku;
+        }
+
+        if (!string.IsNullOrWhiteSpace(draft.Barcode))
+        {
+            using var byBarcode = connection.CreateCommand();
+            byBarcode.CommandText = """
+                SELECT id FROM product
+                WHERE barcode = $barcode
+                  AND id NOT LIKE 'demo-%'
+                LIMIT 1
+                """;
+            byBarcode.Parameters.AddWithValue("$barcode", draft.Barcode);
+            if (byBarcode.ExecuteScalar() is string idByBarcode)
+                return idByBarcode;
+        }
+
+        return null;
+    }
+
+    private static void InsertCatalogProduct(SqliteConnection connection, CatalogProductDraft draft, string now)
+    {
+        using (var product = connection.CreateCommand())
+        {
+            product.CommandText = """
+                INSERT INTO product (
+                  id, sku, barcode, name_ar, name_en, name_zh, unit_ar,
+                  tax_rate_bps, is_active, updated_at, erp_numeric_id, prisma_id
+                ) VALUES (
+                  $id, $sku, $barcode, $nameAr, $nameEn, $nameZh, $unit,
+                  0, 1, $now, $erp, $prisma
+                );
+                """;
+            BindCatalogProduct(product, draft.LocalId, draft, now);
+            product.ExecuteNonQuery();
+        }
+
+        using var price = connection.CreateCommand();
+        price.CommandText = """
+            INSERT INTO product_price (product_id, currency, amount_minor)
+            VALUES ($id, 'EGP', $amount);
+            """;
+        price.Parameters.AddWithValue("$id", draft.LocalId);
+        price.Parameters.AddWithValue("$amount", draft.PriceEgpMinor);
+        price.ExecuteNonQuery();
+    }
+
+    private static void UpdateCatalogProduct(
+        SqliteConnection connection,
+        string existingId,
+        CatalogProductDraft draft,
+        string now)
+    {
+        using (var product = connection.CreateCommand())
+        {
+            product.CommandText = """
+                UPDATE product
+                SET sku = $sku,
+                    barcode = $barcode,
+                    name_ar = $nameAr,
+                    name_en = $nameEn,
+                    name_zh = $nameZh,
+                    unit_ar = $unit,
+                    is_active = 1,
+                    updated_at = $now,
+                    erp_numeric_id = $erp,
+                    prisma_id = COALESCE($prisma, prisma_id)
+                WHERE id = $id
+                """;
+            BindCatalogProduct(product, existingId, draft, now);
+            product.ExecuteNonQuery();
+        }
+
+        using var price = connection.CreateCommand();
+        price.CommandText = """
+            INSERT INTO product_price (product_id, currency, amount_minor)
+            VALUES ($id, 'EGP', $amount)
+            ON CONFLICT (product_id, currency) DO UPDATE SET amount_minor = excluded.amount_minor;
+            """;
+        price.Parameters.AddWithValue("$id", existingId);
+        price.Parameters.AddWithValue("$amount", draft.PriceEgpMinor);
+        price.ExecuteNonQuery();
+    }
+
+    private static void BindCatalogProduct(
+        SqliteCommand command,
+        string id,
+        CatalogProductDraft draft,
+        string now)
+    {
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$sku", draft.Sku);
+        command.Parameters.AddWithValue("$barcode", (object?)draft.Barcode ?? DBNull.Value);
+        command.Parameters.AddWithValue("$nameAr", draft.NameAr);
+        command.Parameters.AddWithValue("$nameEn", (object?)draft.NameEn ?? DBNull.Value);
+        command.Parameters.AddWithValue("$nameZh", (object?)draft.NameZh ?? DBNull.Value);
+        command.Parameters.AddWithValue("$unit", draft.UnitAr);
+        command.Parameters.AddWithValue("$now", now);
+        command.Parameters.AddWithValue("$erp", draft.ErpNumericId);
+        command.Parameters.AddWithValue("$prisma", (object?)draft.PrismaId ?? DBNull.Value);
+    }
+
+    /// <summary>
+    /// Removes unused DEMO seed rows after an ERP catalog apply. Rows referenced by
+    /// <c>sale_line</c> are only deactivated so receipt history stays intact.
+    /// </summary>
+    private static int PurgeDemoCatalog(SqliteConnection connection, string now)
+    {
+        using (var deactivate = connection.CreateCommand())
+        {
+            deactivate.CommandText = """
+                UPDATE product
+                SET is_active = 0, updated_at = $now
+                WHERE id LIKE 'demo-%'
+                   OR sku GLOB 'DEMO-*'
+                   OR sku GLOB 'demo-*'
+                """;
+            deactivate.Parameters.AddWithValue("$now", now);
+            deactivate.ExecuteNonQuery();
+        }
+
+        using (var prices = connection.CreateCommand())
+        {
+            prices.CommandText = """
+                DELETE FROM product_price
+                WHERE product_id IN (
+                  SELECT p.id FROM product p
+                  WHERE (p.id LIKE 'demo-%' OR p.sku GLOB 'DEMO-*' OR p.sku GLOB 'demo-*')
+                    AND NOT EXISTS (SELECT 1 FROM sale_line sl WHERE sl.product_id = p.id)
+                )
+                """;
+            prices.ExecuteNonQuery();
+        }
+
+        using var products = connection.CreateCommand();
+        products.CommandText = """
+            DELETE FROM product
+            WHERE (id LIKE 'demo-%' OR sku GLOB 'DEMO-*' OR sku GLOB 'demo-*')
+              AND NOT EXISTS (SELECT 1 FROM sale_line sl WHERE sl.product_id = product.id)
+            """;
+        return products.ExecuteNonQuery();
+    }
+
+    private static bool IsDemoSku(string sku) =>
+        sku.StartsWith("DEMO-", StringComparison.OrdinalIgnoreCase)
+        || sku.StartsWith("demo-", StringComparison.Ordinal);
+
+    private static string? ReadOptionalString(JsonElement product, string name)
+    {
+        if (!product.TryGetProperty(name, out var node) || node.ValueKind != JsonValueKind.String)
+            return null;
+        var value = node.GetString()?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static string? ReadBarcode(JsonElement product)
+    {
+        var top = ReadOptionalString(product, "barcode");
+        if (!string.IsNullOrWhiteSpace(top))
+            return top;
+
+        if (!product.TryGetProperty("meta_data", out var meta) || meta.ValueKind != JsonValueKind.Array)
+            return null;
+
+        foreach (var row in meta.EnumerateArray())
+        {
+            if (!row.TryGetProperty("key", out var keyNode) || keyNode.ValueKind != JsonValueKind.String)
+                continue;
+            var key = keyNode.GetString();
+            if (!string.Equals(key, "_op_barcode", StringComparison.Ordinal)
+                && !string.Equals(key, "op_barcode", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!row.TryGetProperty("value", out var valueNode))
+                continue;
+            if (valueNode.ValueKind == JsonValueKind.String)
+            {
+                var text = valueNode.GetString()?.Trim();
+                if (!string.IsNullOrWhiteSpace(text))
+                    return text;
+            }
+            else if (valueNode.ValueKind == JsonValueKind.Number)
+            {
+                return valueNode.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadShelfPriceMinor(JsonElement product, out long minor)
+    {
+        minor = 0;
+        // Prefer active sale price when the POS card is on sale.
+        if (TryReadMoneyProperty(product, "sale_price", out minor) && minor > 0)
+            return true;
+        if (TryReadMoneyProperty(product, "price", out minor))
+            return true;
+        return TryReadMoneyProperty(product, "regular_price", out minor);
+    }
+
+    private static bool TryReadMoneyProperty(JsonElement product, string name, out long minor)
+    {
+        minor = 0;
+        if (!product.TryGetProperty(name, out var node))
+            return false;
+
+        if (node.ValueKind == JsonValueKind.String)
+            return Money.TryParseEgp(node.GetString(), out minor);
+
+        if (node.ValueKind == JsonValueKind.Number)
+        {
+            if (node.TryGetInt64(out var whole) && node.GetRawText().IndexOf('.') < 0)
+            {
+                // Integer pounds from admin JSON (e.g. 85 → 8500 piasters).
+                try
+                {
+                    minor = checked(whole * 100);
+                    return minor >= 0;
+                }
+                catch (OverflowException)
+                {
+                    return false;
+                }
+            }
+
+            return Money.TryParseEgp(node.GetRawText(), out minor);
+        }
+
+        return false;
     }
 
     public void WriteCursor(string stream, string? cursor, string? error)
@@ -434,16 +1069,214 @@ public sealed class PosDatabase
         }
     }
 
+    public PinAuthResult TryAuthenticatePin(string pin)
+    {
+        if (!PinHasher.IsValidFormat(pin))
+            return new PinAuthResult(PinAuthStatus.InvalidFormat, null, "الرقم السري يجب أن يكون ٦ أرقام على الأقل.");
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            EnsureBootstrapCashiers(connection);
+            var now = DateTimeOffset.UtcNow;
+            if (ReadGlobalLockout(connection, now) is { } lockedUntil)
+            {
+                return new PinAuthResult(
+                    PinAuthStatus.Locked,
+                    null,
+                    "الجهاز مقفل مؤقتاً بعد محاولات خاطئة.",
+                    lockedUntil);
+            }
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, display_name, role, pin_hash, pin_salt, is_active
+                FROM cashier
+                ORDER BY CASE role WHEN 'manager' THEN 0 WHEN 'supervisor' THEN 1 ELSE 2 END, id
+                """;
+            using var reader = command.ExecuteReader();
+            CashierRecord? matchedInactive = null;
+            while (reader.Read())
+            {
+                var id = reader.GetString(0);
+                var name = reader.GetString(1);
+                var role = ParseRole(reader.GetString(2));
+                var hash = reader.GetString(3);
+                var salt = reader.GetString(4);
+                var active = reader.GetInt32(5) == 1;
+                if (!PinHasher.Verify(pin, hash, salt))
+                    continue;
+
+                if (!active)
+                {
+                    matchedInactive = new CashierRecord(id, name, role, false);
+                    continue;
+                }
+
+                reader.Close();
+                ClearGlobalLockout(connection);
+                return new PinAuthResult(
+                    PinAuthStatus.Ok,
+                    new CashierRecord(id, name, role, true),
+                    null);
+            }
+
+            reader.Close();
+            if (matchedInactive is not null)
+                return new PinAuthResult(PinAuthStatus.Inactive, matchedInactive, "هذا الحساب غير مفعّل.");
+
+            var failures = BumpGlobalPinFailure(connection, now);
+            if (failures >= PinMaxFailures)
+            {
+                var until = now.Add(PinLockoutDuration);
+                return new PinAuthResult(
+                    PinAuthStatus.Locked,
+                    null,
+                    "الجهاز مقفل مؤقتاً بعد محاولات خاطئة.",
+                    until);
+            }
+
+            return new PinAuthResult(
+                PinAuthStatus.WrongPin,
+                null,
+                $"الرقم السري غير صحيح. متبقّي {(PinMaxFailures - failures).ToString(System.Globalization.CultureInfo.InvariantCulture)} محاولات.");
+        }
+    }
+
+    public void ClearPinLockout()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            ClearGlobalLockout(connection);
+        }
+    }
+
+    public ShiftRecord? GetOpenShift()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return ReadOpenShift(connection);
+        }
+    }
+
+    public ShiftRecord OpenShift(string cashierId, long openingFloatMinor)
+    {
+        if (string.IsNullOrWhiteSpace(cashierId))
+            throw new ArgumentException("Cashier id is required.", nameof(cashierId));
+        if (openingFloatMinor < 0)
+            throw new ArgumentOutOfRangeException(nameof(openingFloatMinor));
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            EnsureBootstrapCashiers(connection);
+
+            if (ReadOpenShift(connection) is not null)
+                throw new InvalidOperationException("هناك وردية مفتوحة بالفعل على هذا الجهاز.");
+
+            if (!CashierExistsActive(connection, cashierId))
+                throw new InvalidOperationException("الكاشير غير موجود أو غير مفعّل.");
+
+            var shiftId = Guid.NewGuid().ToString("D");
+            var now = Now();
+            using (var insert = connection.CreateCommand())
+            {
+                insert.CommandText = """
+                    INSERT INTO shift (
+                      id, server_id, cashier_id, opened_at, closed_at,
+                      opening_float_minor, closing_cash_minor, status, sync_status
+                    ) VALUES (
+                      $id, NULL, $cashier, $now, NULL,
+                      $float, NULL, 'open', 'pending'
+                    );
+                    """;
+                insert.Parameters.AddWithValue("$id", shiftId);
+                insert.Parameters.AddWithValue("$cashier", cashierId);
+                insert.Parameters.AddWithValue("$now", now);
+                insert.Parameters.AddWithValue("$float", openingFloatMinor);
+                insert.ExecuteNonQuery();
+            }
+
+            // Shift push to ERP is not wired yet; keep sync_status=pending for a later phase.
+            tx.Commit();
+            return new ShiftRecord(shiftId, cashierId, now, null, openingFloatMinor, null, "open", "pending");
+        }
+    }
+
+    public ShiftRecord CloseShift(string shiftId, string actorCashierId, long closingCashMinor)
+    {
+        if (string.IsNullOrWhiteSpace(shiftId))
+            throw new ArgumentException("Shift id is required.", nameof(shiftId));
+        if (closingCashMinor < 0)
+            throw new ArgumentOutOfRangeException(nameof(closingCashMinor));
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var tx = connection.BeginTransaction();
+            var open = ReadOpenShift(connection);
+            if (open is null || !string.Equals(open.Id, shiftId, StringComparison.Ordinal))
+                throw new InvalidOperationException("لا توجد وردية مفتوحة مطابقة.");
+
+            var actor = ReadCashier(connection, actorCashierId);
+            if (actor is null || !actor.IsActive)
+                throw new InvalidOperationException("الكاشير غير موجود أو غير مفعّل.");
+
+            var canClose = string.Equals(actor.Id, open.CashierId, StringComparison.Ordinal)
+                || actor.Role is CashierRole.Supervisor or CashierRole.Manager;
+            if (!canClose)
+                throw new InvalidOperationException("إغلاق الوردية متاح لصاحبها أو للمشرف.");
+
+            var now = Now();
+            using (var update = connection.CreateCommand())
+            {
+                update.CommandText = """
+                    UPDATE shift
+                    SET closed_at = $now,
+                        closing_cash_minor = $cash,
+                        status = 'closed',
+                        sync_status = 'pending'
+                    WHERE id = $id AND status = 'open'
+                    """;
+                update.Parameters.AddWithValue("$now", now);
+                update.Parameters.AddWithValue("$cash", closingCashMinor);
+                update.Parameters.AddWithValue("$id", shiftId);
+                if (update.ExecuteNonQuery() != 1)
+                    throw new InvalidOperationException("تعذر إغلاق الوردية.");
+            }
+
+            tx.Commit();
+            return open with
+            {
+                ClosedAt = now,
+                ClosingCashMinor = closingCashMinor,
+                Status = "closed",
+                SyncStatus = "pending",
+            };
+        }
+    }
+
     /// <summary>
-    /// Commits one cash EGP sale, its lines, its payment, and the outbox row in a single transaction.
-    /// Does not talk to the network. The payload matches the proposed SaleCompleted shape; posting it is still an ASSUMPTION.
+    /// Commits one cash EGP sale under an open local shift. Does not talk to the network.
+    /// ERP checkout still receives <c>shiftId: null</c> until shift push exists (phase later).
     /// </summary>
-    public CompletedCashSale CompleteCashSale(IReadOnlyList<CashSaleLine> lines, long tenderMinor)
+    public CompletedCashSale CompleteCashSale(
+        IReadOnlyList<CashSaleLine> lines,
+        long tenderMinor,
+        string cashierId,
+        string shiftId)
     {
         if (lines is null || lines.Count == 0)
             throw new ArgumentException("A cash sale needs at least one line.", nameof(lines));
         if (tenderMinor < 0)
             throw new ArgumentOutOfRangeException(nameof(tenderMinor));
+        if (string.IsNullOrWhiteSpace(cashierId))
+            throw new ArgumentException("Cashier id is required.", nameof(cashierId));
+        if (string.IsNullOrWhiteSpace(shiftId))
+            throw new ArgumentException("Shift id is required.", nameof(shiftId));
 
         long total = 0;
         foreach (var line in lines)
@@ -466,9 +1299,15 @@ public sealed class PosDatabase
         {
             using var connection = Open();
             using var tx = connection.BeginTransaction();
-            EnsureLocalCashier(connection);
+            EnsureBootstrapCashiers(connection);
 
-            var terminalId = ScalarString(connection, "SELECT id FROM terminal LIMIT 1");
+            var open = ReadOpenShift(connection);
+            if (open is null || !string.Equals(open.Id, shiftId, StringComparison.Ordinal))
+                throw new InvalidOperationException("يجب فتح وردية قبل إتمام البيع.");
+            if (!CashierExistsActive(connection, cashierId))
+                throw new InvalidOperationException("الكاشير غير موجود أو غير مفعّل.");
+
+            var terminalId = TerminalId(connection);
             if (string.IsNullOrEmpty(terminalId))
                 throw new InvalidOperationException("Terminal row is missing.");
 
@@ -489,13 +1328,14 @@ public sealed class PosDatabase
                       subtotal_minor, discount_minor, tax_minor, total_minor,
                       created_at, completed_at, sync_status
                     ) VALUES (
-                      $id, NULL, NULL, $cashier, $receipt, 'completed', 'EGP',
+                      $id, NULL, $shift, $cashier, $receipt, 'completed', 'EGP',
                       $total, 0, 0, $total,
                       $now, $now, 'pending'
                     );
                     """;
                 sale.Parameters.AddWithValue("$id", saleId);
-                sale.Parameters.AddWithValue("$cashier", LocalCashierId);
+                sale.Parameters.AddWithValue("$shift", shiftId);
+                sale.Parameters.AddWithValue("$cashier", cashierId);
                 sale.Parameters.AddWithValue("$receipt", receiptNo);
                 sale.Parameters.AddWithValue("$total", total);
                 sale.Parameters.AddWithValue("$now", now);
@@ -545,7 +1385,7 @@ public sealed class PosDatabase
             }
 
             var idempotencyKey = $"{terminalId}:sale:{saleId}";
-            var payload = BuildSalePayload(saleId, receiptNo, total, tenderMinor, now, lines);
+            var payload = BuildSalePayload(saleId, shiftId, cashierId, receiptNo, total, tenderMinor, now, lines);
             using (var outbox = connection.CreateCommand())
             {
                 outbox.CommandText = """
@@ -569,13 +1409,14 @@ public sealed class PosDatabase
             var completed = new CompletedCashSale(
                 saleId,
                 terminalId,
-                LocalCashierId,
+                cashierId,
+                shiftId,
                 receiptNo,
                 total,
                 tenderMinor,
                 tenderMinor - total,
                 idempotencyKey);
-            PosLog.Info($"cash sale committed receipt={receiptNo} total={total} tender={tenderMinor}");
+            PosLog.Info($"cash sale committed receipt={receiptNo} total={total} tender={tenderMinor} cashier={cashierId}");
             return completed;
         }
     }
@@ -659,18 +1500,21 @@ public sealed class PosDatabase
 
     private static string BuildSalePayload(
         string saleId,
+        string localShiftId,
+        string cashierId,
         int receiptNo,
         long total,
         long tenderMinor,
         string createdAt,
         IReadOnlyList<CashSaleLine> lines)
     {
-        // Local outbox document. ErpCheckoutMapper turns it into the live POST /api/checkout body.
+        // Local outbox document. ErpCheckoutMapper posts shiftId=null until ERP shift push exists.
         var payload = new
         {
             saleId,
             shiftId = (string?)null,
-            cashierId = LocalCashierId,
+            localShiftId,
+            cashierId,
             receiptNo,
             currency = "EGP",
             subtotalMinor = total,
@@ -707,7 +1551,6 @@ public sealed class PosDatabase
 
     private static void EnsureLocalCashier(SqliteConnection connection)
     {
-        // Placeholder until PIN sync. Not a verifier and not a person.
         using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO cashier (id, display_name, role, pin_hash, pin_salt, is_active, updated_at)
@@ -718,6 +1561,162 @@ public sealed class PosDatabase
         command.Parameters.AddWithValue("$now", Now());
         command.ExecuteNonQuery();
     }
+
+    /// <summary>
+    /// Ensures local demo staff have real PBKDF2 hashes (bootstrap PIN) until ERP cashier sync.
+    /// </summary>
+    private static void EnsureBootstrapCashiers(SqliteConnection connection)
+    {
+        EnsureLocalCashier(connection);
+        UpsertBootstrapCashier(connection, LocalCashierId, "كاشير محلي", "cashier", PinHasher.BootstrapCashierPin);
+        UpsertBootstrapCashier(connection, LocalSupervisorId, "مشرف محلي", "supervisor", PinHasher.BootstrapSupervisorPin);
+    }
+
+    private static void UpsertBootstrapCashier(
+        SqliteConnection connection,
+        string id,
+        string displayName,
+        string role,
+        string pin)
+    {
+        string? hash;
+        string? salt;
+        using (var read = connection.CreateCommand())
+        {
+            read.CommandText = "SELECT pin_hash, pin_salt FROM cashier WHERE id = $id";
+            read.Parameters.AddWithValue("$id", id);
+            using var reader = read.ExecuteReader();
+            if (reader.Read())
+            {
+                hash = reader.GetString(0);
+                salt = reader.GetString(1);
+            }
+            else
+            {
+                hash = null;
+                salt = null;
+            }
+        }
+
+        var needsHash = hash is null
+            || salt is null
+            || string.Equals(hash, "pending-pin-sync", StringComparison.Ordinal)
+            || string.Equals(salt, "local", StringComparison.Ordinal);
+        if (!needsHash && hash is not null)
+            return;
+
+        var (newHash, newSalt) = PinHasher.Hash(pin);
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            INSERT INTO cashier (id, display_name, role, pin_hash, pin_salt, is_active, updated_at, failed_attempts, locked_until)
+            VALUES ($id, $name, $role, $hash, $salt, 1, $now, 0, NULL)
+            ON CONFLICT (id) DO UPDATE SET
+              display_name = excluded.display_name,
+              role = excluded.role,
+              pin_hash = excluded.pin_hash,
+              pin_salt = excluded.pin_salt,
+              is_active = 1,
+              updated_at = excluded.updated_at;
+            """;
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$name", displayName);
+        command.Parameters.AddWithValue("$role", role);
+        command.Parameters.AddWithValue("$hash", newHash);
+        command.Parameters.AddWithValue("$salt", newSalt);
+        command.Parameters.AddWithValue("$now", Now());
+        command.ExecuteNonQuery();
+    }
+
+    private static string TerminalId(SqliteConnection connection) =>
+        ScalarString(connection, "SELECT id FROM terminal LIMIT 1") ?? string.Empty;
+
+    private static ShiftRecord? ReadOpenShift(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, cashier_id, opened_at, closed_at, opening_float_minor, closing_cash_minor, status, sync_status
+            FROM shift
+            WHERE status = 'open'
+            ORDER BY opened_at DESC
+            LIMIT 1
+            """;
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+        return new ShiftRecord(
+            reader.GetString(0),
+            reader.GetString(1),
+            reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3),
+            reader.GetInt64(4),
+            reader.IsDBNull(5) ? null : reader.GetInt64(5),
+            reader.GetString(6),
+            reader.GetString(7));
+    }
+
+    private static CashierRecord? ReadCashier(SqliteConnection connection, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, display_name, role, is_active
+            FROM cashier WHERE id = $id
+            """;
+        command.Parameters.AddWithValue("$id", id);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+        return new CashierRecord(
+            reader.GetString(0),
+            reader.GetString(1),
+            ParseRole(reader.GetString(2)),
+            reader.GetInt32(3) == 1);
+    }
+
+    private static bool CashierExistsActive(SqliteConnection connection, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM cashier WHERE id = $id AND is_active = 1";
+        command.Parameters.AddWithValue("$id", id);
+        return (long)command.ExecuteScalar()! == 1;
+    }
+
+    private static DateTimeOffset? ReadGlobalLockout(SqliteConnection connection, DateTimeOffset now)
+    {
+        var raw = ReadSetting(connection, "auth.locked_until");
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+        if (!DateTimeOffset.TryParse(raw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var until))
+            return null;
+        return until > now ? until : null;
+    }
+
+    private static int BumpGlobalPinFailure(SqliteConnection connection, DateTimeOffset now)
+    {
+        var raw = ReadSetting(connection, "auth.failed_attempts");
+        var failures = 0;
+        if (!string.IsNullOrWhiteSpace(raw))
+            _ = int.TryParse(raw, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out failures);
+        failures++;
+        WriteSetting(connection, "auth.failed_attempts", failures.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (failures >= PinMaxFailures)
+            WriteSetting(connection, "auth.locked_until", now.Add(PinLockoutDuration).ToString("O"));
+        return failures;
+    }
+
+    private static void ClearGlobalLockout(SqliteConnection connection)
+    {
+        WriteSetting(connection, "auth.failed_attempts", "0");
+        using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM app_setting WHERE key = 'auth.locked_until'";
+        command.ExecuteNonQuery();
+    }
+
+    private static CashierRole ParseRole(string role) => role switch
+    {
+        "supervisor" => CashierRole.Supervisor,
+        "manager" => CashierRole.Manager,
+        _ => CashierRole.Cashier,
+    };
 
     private static void EnsureTerminal(SqliteConnection connection)
     {

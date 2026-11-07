@@ -10,7 +10,8 @@ Cash EGP checkout works offline. The app opens two windows, stores the sale in S
 
 - [Architecture](docs/architecture.md) — process, screens, schema, printing, security, the i5-6300U budget
 - [Roadmap](docs/roadmap.md) — shell, then an offline cash lane, then parity with the web POS, then many tills
-- [ERP contract](docs/erp-sync-contract.md) — proposed `/api/pos/v1` routes. Every route is an **ASSUMPTION**
+- [ERP contract](docs/erp-sync-contract.md) — live `/api/checkout` shape + gaps; local ERP source notes when available
+- [Local workspace setup](docs/local-workspace.md) — how this repo sits next to `egychina-erp` in `EgyChina.code-workspace`, safe build/run commands, env names without secrets
 
 ## Stack
 

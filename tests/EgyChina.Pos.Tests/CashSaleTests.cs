@@ -32,7 +32,8 @@ public sealed class CashSaleTests : IDisposable
     public void Cash_sale_persists_lines_payment_and_pending_outbox()
     {
         var database = NewDatabase();
-        var sale = database.CompleteCashSale(
+        var sale = TestShift.Sell(
+            database,
             [
                 new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500),
                 new CashSaleLine("demo-oil", PosDatabase.DemoOilBarcode, "زيت ذرة ١ لتر", 2, 6250),
@@ -44,6 +45,7 @@ public sealed class CashSaleTests : IDisposable
         Assert.Equal(30_000, sale.TenderMinor);
         Assert.Equal(9_000, sale.ChangeMinor);
         Assert.Equal(PosDatabase.LocalCashierId, sale.CashierId);
+        Assert.False(string.IsNullOrWhiteSpace(sale.ShiftId));
         Assert.Equal($"{sale.TerminalId}:sale:{sale.SaleId}", sale.IdempotencyKey);
         Assert.Equal(1, database.CountPendingOutbox());
 
@@ -108,6 +110,8 @@ public sealed class CashSaleTests : IDisposable
         Assert.Equal(21_000, root.GetProperty("totalMinor").GetInt64());
         Assert.Equal(JsonValueKind.Null, root.GetProperty("fx").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("shiftId").ValueKind);
+        Assert.Equal(sale.ShiftId, root.GetProperty("localShiftId").GetString());
+        Assert.Equal(PosDatabase.LocalCashierId, root.GetProperty("cashierId").GetString());
         Assert.Equal("cash_egp", root.GetProperty("payments")[0].GetProperty("method").GetString());
         Assert.Equal(30_000, root.GetProperty("payments")[0].GetProperty("amountMinor").GetInt64());
         Assert.Equal(2000, root.GetProperty("lines")[1].GetProperty("qtyMilli").GetInt64());
@@ -121,9 +125,12 @@ public sealed class CashSaleTests : IDisposable
     public void Short_tender_writes_nothing()
     {
         var database = NewDatabase();
+        var shift = TestShift.Open(database);
         Assert.Throws<InvalidOperationException>(() => database.CompleteCashSale(
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
-            1000));
+            1000,
+            PosDatabase.LocalCashierId,
+            shift.Id));
 
         Assert.Equal(0, database.CountPendingOutbox());
         using var connection = Open(database.DatabasePath);
@@ -139,9 +146,12 @@ public sealed class CashSaleTests : IDisposable
     public void Failed_line_rolls_back_the_receipt_number()
     {
         var database = NewDatabase();
+        var shift = TestShift.Open(database);
         Assert.ThrowsAny<SqliteException>(() => database.CompleteCashSale(
             [new CashSaleLine("missing-product", "000", "صنف غير موجود", 1, 100)],
-            100));
+            100,
+            PosDatabase.LocalCashierId,
+            shift.Id));
 
         Assert.Equal(0, database.CountPendingOutbox());
         using var connection = Open(database.DatabasePath);
@@ -157,7 +167,8 @@ public sealed class CashSaleTests : IDisposable
     public async Task Sync_tick_leaves_the_sale_pending()
     {
         var database = NewDatabase();
-        database.CompleteCashSale(
+        TestShift.Sell(
+            database,
             [new CashSaleLine("demo-tea", PosDatabase.DemoTeaBarcode, "شاي أخضر ٤٠٠ جم", 1, 4500)],
             4500);
 
@@ -179,10 +190,12 @@ public sealed class CashSaleTests : IDisposable
     public void Receipt_numbers_advance()
     {
         var database = NewDatabase();
-        var first = database.CompleteCashSale(
+        var first = TestShift.Sell(
+            database,
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
             8500);
-        var second = database.CompleteCashSale(
+        var second = TestShift.Sell(
+            database,
             [new CashSaleLine("demo-tea", PosDatabase.DemoTeaBarcode, "شاي أخضر ٤٠٠ جم", 1, 4500)],
             5000);
 

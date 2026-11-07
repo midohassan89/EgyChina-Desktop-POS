@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.Versioning;
 using System.Threading.Tasks;
 
 namespace EgyChina.Pos.App.Services;
@@ -8,16 +9,22 @@ public static class ScanSound
 {
     public static void PlaySuccess()
     {
-        _ = Task.Run(static () =>
+        if (!OperatingSystem.IsWindows())
+            return;
+
+        _ = Task.Run(PlayWindowsBeep);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void PlayWindowsBeep()
+    {
+        try
         {
-            try
-            {
-                Console.Beep(1320, 55);
-            }
-            catch (Exception)
-            {
-                // Headless / non-Windows hosts — ignore.
-            }
-        });
+            Console.Beep(1320, 55);
+        }
+        catch (Exception)
+        {
+            // Ignore failures on locked audio devices / headless sessions.
+        }
     }
 }

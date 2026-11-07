@@ -69,8 +69,11 @@ public static class LiveStoreCatalogSync
                     ? "ERP:" + numericId.ToString(CultureInfo.InvariantCulture)
                     : product.Sku.Trim();
                 var barcode = FirstBarcode(product);
-                var price = product.SalePrice is > 0 ? product.SalePrice.Value : product.Price;
-                if (price < 0)
+                var regular = product.Price;
+                var sale = product.SalePrice is > 0 ? product.SalePrice.Value : (double?)null;
+                // Shelf price = promo when present, otherwise regular (never sell at pre-discount).
+                var shelf = sale ?? regular;
+                if (shelf < 0)
                     continue;
 
                 keepIds.Add(product.Id.Trim());
@@ -86,10 +89,13 @@ public static class LiveStoreCatalogSync
                     ["name"] = product.Name.Trim(),
                     ["nameEn"] = product.NameEn,
                     ["nameZh"] = product.NameZh,
-                    ["price"] = price.ToString("0.##", CultureInfo.InvariantCulture),
-                    ["regular_price"] = product.Price.ToString("0.##", CultureInfo.InvariantCulture),
-                    ["sale_price"] = product.SalePrice is > 0
-                        ? product.SalePrice.Value.ToString("0.##", CultureInfo.InvariantCulture)
+                    ["price"] = shelf.ToString("0.##", CultureInfo.InvariantCulture),
+                    ["regular_price"] = regular.ToString("0.##", CultureInfo.InvariantCulture),
+                    ["sale_price"] = sale is > 0
+                        ? sale.Value.ToString("0.##", CultureInfo.InvariantCulture)
+                        : "",
+                    ["salePrice"] = sale is > 0
+                        ? sale.Value.ToString("0.##", CultureInfo.InvariantCulture)
                         : "",
                     ["images"] = string.IsNullOrWhiteSpace(product.Image)
                         ? Array.Empty<object>()
@@ -110,7 +116,7 @@ public static class LiveStoreCatalogSync
                     if (string.IsNullOrWhiteSpace(pkg.Id))
                         continue;
                     var packSize = Math.Max(1, pkg.PackSize ?? 1);
-                    var packPrice = pkg.Price is > 0 ? pkg.Price.Value : price * packSize;
+                    var packPrice = pkg.Price is > 0 ? pkg.Price.Value : shelf * packSize;
                     var posKey = product.Id.Trim() + "-pkg-" + pkg.Id.Trim();
                     keepIds.Add(posKey);
                     products.Add(new Dictionary<string, object?>
@@ -183,9 +189,10 @@ public static class LiveStoreCatalogSync
             {
                 if (string.IsNullOrWhiteSpace(row.Id) || string.IsNullOrWhiteSpace(row.Name))
                     continue;
+                var localized = ProductDisplayNames.PreferLocalized(row.Name, row.NameEn, row.NameZh);
                 drafts.Add(new CatalogCategoryDraft(
                     row.Id.Trim(),
-                    row.Name.Trim(),
+                    localized,
                     row.NameEn,
                     row.NameZh,
                     row.Slug,

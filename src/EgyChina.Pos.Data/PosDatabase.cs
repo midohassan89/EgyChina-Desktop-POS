@@ -510,6 +510,89 @@ public sealed class PosDatabase
         }
     }
 
+    public IReadOnlyList<OutboxHealthRow> ListOutboxHealth(int limit = 40)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, aggregate_id, status, attempt_count, last_error, created_at
+                FROM outbox
+                WHERE status IN ('pending', 'inflight', 'dead')
+                ORDER BY
+                  CASE status WHEN 'dead' THEN 0 WHEN 'inflight' THEN 1 ELSE 2 END,
+                  created_at DESC
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$limit", Math.Clamp(limit, 1, 200));
+            using var reader = command.ExecuteReader();
+            var rows = new List<OutboxHealthRow>();
+            while (reader.Read())
+            {
+                rows.Add(new OutboxHealthRow(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    (int)reader.GetInt64(3),
+                    reader.IsDBNull(4) ? null : reader.GetString(4),
+                    reader.IsDBNull(5) ? string.Empty : reader.GetString(5)));
+            }
+
+            return rows;
+        }
+    }
+
+    /// <summary>Moves dead rows back to pending so the sync worker can retry.</summary>
+    public int RequeueDeadOutbox(string? outboxId = null)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            if (string.IsNullOrWhiteSpace(outboxId))
+            {
+                command.CommandText = """
+                    UPDATE outbox
+                    SET status = 'pending',
+                        next_attempt_at = $now,
+                        last_error = NULL
+                    WHERE status = 'dead'
+                    """;
+            }
+            else
+            {
+                command.CommandText = """
+                    UPDATE outbox
+                    SET status = 'pending',
+                        next_attempt_at = $now,
+                        last_error = NULL
+                    WHERE id = $id AND status = 'dead'
+                    """;
+                command.Parameters.AddWithValue("$id", outboxId.Trim());
+            }
+
+            command.Parameters.AddWithValue("$now", Now());
+            return command.ExecuteNonQuery();
+        }
+    }
+
+    public int NudgeAllPendingOutbox()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                UPDATE outbox
+                SET next_attempt_at = $now, status = 'pending'
+                WHERE status IN ('pending', 'inflight')
+                """;
+            command.Parameters.AddWithValue("$now", Now());
+            return command.ExecuteNonQuery();
+        }
+    }
+
     /// <summary>
     /// Acknowledges one sale only after the ERP returned a completed success response.
     /// Receipt totals are not rewritten.
@@ -1386,12 +1469,17 @@ public sealed class PosDatabase
     private static bool TryReadShelfPriceMinor(JsonElement product, out long minor)
     {
         minor = 0;
-        // Prefer active sale price when the POS card is on sale.
+        // Prefer active sale / promo price (ERP has regular + sale).
+        if (TryReadMoneyProperty(product, "salePrice", out minor) && minor > 0)
+            return true;
         if (TryReadMoneyProperty(product, "sale_price", out minor) && minor > 0)
             return true;
-        if (TryReadMoneyProperty(product, "price", out minor))
+        // Live store often puts the effective shelf price in `price`.
+        if (TryReadMoneyProperty(product, "price", out minor) && minor > 0)
             return true;
-        return TryReadMoneyProperty(product, "regular_price", out minor);
+        if (TryReadMoneyProperty(product, "regularPrice", out minor) && minor > 0)
+            return true;
+        return TryReadMoneyProperty(product, "regular_price", out minor) && minor > 0;
     }
 
     private static bool TryReadMoneyProperty(JsonElement product, string name, out long minor)

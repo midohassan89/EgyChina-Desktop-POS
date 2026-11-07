@@ -7,10 +7,18 @@ public sealed record CatalogCategory(
     string? NameZh,
     int ProductCount)
 {
-    public string ChipText =>
-        ProductCount > 0
-            ? $"{NameAr} ({ProductCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})"
-            : NameAr;
+    public string DisplayName => ProductDisplayNames.PreferLocalized(NameAr, NameEn, NameZh);
+
+    public string ChipText
+    {
+        get
+        {
+            var label = DisplayName;
+            return ProductCount > 0
+                ? $"{label} ({ProductCount.ToString(System.Globalization.CultureInfo.InvariantCulture)})"
+                : label;
+        }
+    }
 }
 
 public sealed record CatalogCategoryDraft(

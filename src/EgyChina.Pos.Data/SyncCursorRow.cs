@@ -9,6 +9,23 @@ public sealed record PendingOutboxRow(
     string PayloadJson,
     int AttemptCount);
 
+/// <summary>Cashier outbox health list (pending / dead).</summary>
+public sealed record OutboxHealthRow(
+    string Id,
+    string AggregateId,
+    string Status,
+    int AttemptCount,
+    string? LastError,
+    string UpdatedAt)
+{
+    public string Caption =>
+        string.IsNullOrWhiteSpace(LastError)
+            ? $"{Status} · {AggregateId}"
+            : $"{Status} · {AggregateId} · {LastError}";
+
+    public bool IsDead => string.Equals(Status, "dead", StringComparison.OrdinalIgnoreCase);
+}
+
 /// <summary>Cashier-facing outbox counters. Never implies a completed sale was deleted.</summary>
 public sealed record OutboxSnapshot(
     int Pending,

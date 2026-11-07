@@ -109,14 +109,17 @@
       </Border>
 
       <Border Grid.Row="1" Background="#F8FAFC" Padding="28,22">
-        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="CfdCartScroll"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
           <ItemsControl ItemsSource="{Binding Lines}">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:CartLine">
-                <Border Classes="cfd-line" Classes.highlighted="{Binding IsHighlighted}">
-                  <Grid ColumnDefinitions="Auto,*,Auto">
+                <Border Classes="cfd-line" Classes.highlighted="{Binding IsHighlighted}" MinHeight="96">
+                  <Grid ColumnDefinitions="72,16,*,16,Auto,16,140" MinHeight="72">
                     <Border Width="72" Height="72" CornerRadius="14" Background="#F1F5F9"
-                            ClipToBounds="True" Margin="0,0,14,0" VerticalAlignment="Center">
+                            ClipToBounds="True" VerticalAlignment="Center"
+                            HorizontalAlignment="Stretch">
                       <Grid>
                         <Border Background="#0B1220"
                                 IsVisible="{Binding ProductId, Converter={StaticResource MissingProductImage}}">
@@ -130,19 +133,45 @@
                                IsVisible="{Binding ProductId, Converter={StaticResource HasProductImage}}" />
                       </Grid>
                     </Border>
-                    <StackPanel Spacing="4" VerticalAlignment="Center">
-                      <TextBlock Text="{Binding NameAr}" FontSize="22" FontWeight="SemiBold" Foreground="#0F172A" TextWrapping="Wrap" />
-                      <TextBlock Text="{Binding NameZh}" FontSize="14" Foreground="#64748B" FlowDirection="LeftToRight"
-                                 IsVisible="{Binding HasNameZh}" />
-                      <TextBlock Text="{Binding QtyText, StringFormat=الكمية: {0}}" FontSize="15" FontWeight="SemiBold" Foreground="#059669" />
+                    <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center" MinWidth="0">
+                      <TextBlock Text="{Binding DisplayNameAr}"
+                                 FontSize="22"
+                                 FontWeight="SemiBold"
+                                 Foreground="#0F172A"
+                                 TextWrapping="Wrap"
+                                 TextTrimming="CharacterEllipsis"
+                                 MaxLines="2"
+                                 MaxHeight="60" />
+                      <TextBlock Text="{Binding NameZh}"
+                                 FontSize="14"
+                                 Foreground="#64748B"
+                                 FlowDirection="LeftToRight"
+                                 TextTrimming="CharacterEllipsis"
+                                 MaxLines="1"
+                                 IsVisible="{Binding ShowCustomerNameZh}" />
                     </StackPanel>
-                    <TextBlock Grid.Column="2"
+                    <Border Grid.Column="4"
+                            Background="#ECFDF5"
+                            CornerRadius="10"
+                            Padding="12,8"
+                            VerticalAlignment="Center"
+                            MinWidth="72">
+                      <TextBlock Text="{Binding QtyCaption}"
+                                 FontSize="15"
+                                 FontWeight="SemiBold"
+                                 Foreground="#047857"
+                                 HorizontalAlignment="Center"
+                                 FlowDirection="LeftToRight" />
+                    </Border>
+                    <TextBlock Grid.Column="6"
                                Text="{Binding LineTotalText}"
-                               FontSize="26"
+                               FontSize="24"
                                FontWeight="Bold"
                                Foreground="#0F172A"
                                VerticalAlignment="Center"
-                               Margin="16,0,0,0" />
+                               HorizontalAlignment="Stretch"
+                               TextAlignment="Left"
+                               TextWrapping="NoWrap" />
                   </Grid>
                 </Border>
               </DataTemplate>

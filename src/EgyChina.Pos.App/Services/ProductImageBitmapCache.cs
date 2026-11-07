@@ -13,6 +13,7 @@ namespace EgyChina.Pos.App.Services;
 public static class ProductImageBitmapCache
 {
     private const int MaxEntries = 128;
+    /// <summary>In-memory shelf thumbs (CDN full files stay on disk; decode is bounded).</summary>
     private const int MaxEdge = 220;
     private static readonly object Gate = new();
     private static readonly Dictionary<string, Bitmap> Cache = new(StringComparer.Ordinal);

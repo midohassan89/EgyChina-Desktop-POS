@@ -43,7 +43,7 @@ public sealed class SyncWorkerTests : IDisposable
         var snap = status.Read();
         Assert.False(snap.IsOnline);
         Assert.Equal(1, snap.PendingOutbox);
-        Assert.Contains("غير مضبوط", snap.Message, StringComparison.Ordinal);
+        Assert.Contains("EGYCHINA_POS_API", snap.Message, StringComparison.Ordinal);
         Assert.Equal(SyncWorker.NotConfiguredCursor, database.ReadCursor(SyncWorker.CursorStream)?.Cursor);
         await worker.DisposeAsync();
     }

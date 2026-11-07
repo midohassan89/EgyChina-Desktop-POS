@@ -255,9 +255,24 @@ public partial class PosSession : ObservableObject
     private bool _showOnlineOrders;
 
     [ObservableProperty]
+    private bool _showOutboxPanel;
+
+    [ObservableProperty]
+    private bool _showMoreActions;
+
+    [ObservableProperty]
     private string _onlineOrdersError = string.Empty;
 
+    [ObservableProperty]
+    private string _outboxPanelHint = string.Empty;
+
     public ObservableCollection<OnlineOrderSummary> OnlineOrders { get; } = new();
+
+    public ObservableCollection<OutboxHealthRow> OutboxRows { get; } = new();
+
+    public bool HasNoOutboxRows => ShowOutboxPanel && OutboxRows.Count == 0;
+
+    public bool HasOutboxPanelHint => !string.IsNullOrWhiteSpace(OutboxPanelHint);
 
     public bool HasZReport => CurrentZReport is not null;
 
@@ -343,7 +358,7 @@ public partial class PosSession : ObservableObject
             foreach (var category in Categories)
             {
                 if (string.Equals(category.Id, SelectedCategoryId, StringComparison.Ordinal))
-                    return $"القسم: {category.NameAr}";
+                    return $"القسم: {category.DisplayName}";
             }
 
             return "تصفية بقسم";
@@ -367,8 +382,10 @@ public partial class PosSession : ObservableObject
         get
         {
             if (DeadOutbox > 0)
-                return $"صادر {PendingOutbox.ToString(CultureInfo.InvariantCulture)} · تالف {DeadOutbox.ToString(CultureInfo.InvariantCulture)}";
-            return $"صادر {PendingOutbox.ToString(CultureInfo.InvariantCulture)}";
+                return $"رفع معلّق {PendingOutbox.ToString(CultureInfo.InvariantCulture)} · فشل {DeadOutbox.ToString(CultureInfo.InvariantCulture)}";
+            if (PendingOutbox <= 0)
+                return "لا مبيعات بانتظار الرفع";
+            return $"مبيعات بانتظار الرفع: {PendingOutbox.ToString(CultureInfo.InvariantCulture)}";
         }
     }
 
@@ -381,7 +398,7 @@ public partial class PosSession : ObservableObject
     public bool HasSupervisorError => !string.IsNullOrWhiteSpace(SupervisorError);
 
     public bool BlocksScanning =>
-        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin || ShowOnlineOrders;
+        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin || ShowOnlineOrders || ShowOutboxPanel;
 
     public string ReturnModeButtonText => IsReturnMode ? "إنهاء الاسترجاع" : "وضع الاسترجاع";
 
@@ -444,7 +461,7 @@ public partial class PosSession : ObservableObject
             ? $"+{LastPointsEarned.ToString(CultureInfo.InvariantCulture)}"
             : string.Empty;
 
-    public string OnlineText => IsOnline ? "متصل" : "غير متصل";
+    public string OnlineText => IsOnline ? "السيرفر متصل" : "السيرفر غير مربوط";
 
     public string OutboxCaption
     {
@@ -452,8 +469,8 @@ public partial class PosSession : ObservableObject
         {
             var pending = PendingOutbox.ToString(CultureInfo.InvariantCulture);
             if (DeadOutbox > 0)
-                return $"صندوق الصادر: {pending} · تالف: {DeadOutbox.ToString(CultureInfo.InvariantCulture)}";
-            return $"صندوق الصادر: {pending}";
+                return $"بانتظار الرفع: {pending} · فشل: {DeadOutbox.ToString(CultureInfo.InvariantCulture)}";
+            return $"بانتظار الرفع: {pending}";
         }
     }
 
@@ -504,7 +521,10 @@ public partial class PosSession : ObservableObject
 
     public bool CanReprint => !string.IsNullOrWhiteSpace(_lastSaleId) && !IsTendering && !NeedsLogin;
 
-    public string LineCountText => Lines.Count == 0 ? "السلة فارغة" : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} سطور";
+    public string LineCountText =>
+        Lines.Count == 0
+            ? "السلة فارغة"
+            : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} أصناف";
 
     public long SubtotalMinor => Lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
 
@@ -663,7 +683,35 @@ public partial class PosSession : ObservableObject
             existing.Qty++;
         }
 
-        ScanHint = product.NameAr;
+        ScanHint = product.DisplayNameAr;
+        ScanSound.PlaySuccess();
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    /// <summary>Scale label: one cart line priced at the embedded total (qty 1).</summary>
+    public void AddScalePricedProduct(CatalogProduct product, long embeddedTotalMinor, string scaleDigits)
+    {
+        if (BlocksScanning || BlockNewSales || !CanOperate)
+            return;
+        if (embeddedTotalMinor <= 0)
+            return;
+
+        HasSettlement = false;
+        _settlementAt = null;
+        var display = product.DisplayNameAr;
+        var line = new CartLine(
+            product.Id,
+            scaleDigits,
+            display,
+            product.NameZh,
+            embeddedTotalMinor,
+            qty: 1,
+            RefreshCheckout,
+            RemoveLine,
+            HighlightLine);
+        Lines.Add(line);
+        HighlightLine(line);
+        ScanHint = display + " · ميزان";
         ScanSound.PlaySuccess();
         RequestFocus(UiFocusTarget.Barcode);
     }
@@ -730,6 +778,21 @@ public partial class PosSession : ObservableObject
         {
             Barcode = string.Empty;
             LoadReturnFromReceipt(code);
+            return;
+        }
+
+        if (ScaleBarcode.TryParse(code, out var scale))
+        {
+            Barcode = string.Empty;
+            var scaleProduct = _database.FindByBarcode(scale.Plu)
+                ?? _database.FindByBarcode(scale.Plu.TrimStart('0'));
+            if (scaleProduct is null)
+            {
+                OpenNotFound(code);
+                return;
+            }
+
+            AddScalePricedProduct(scaleProduct, scale.EmbeddedTotalMinor, scale.Digits);
             return;
         }
 
@@ -1336,6 +1399,15 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(HasNoOnlineOrders));
     }
 
+    partial void OnShowOutboxPanelChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BlocksScanning));
+        OnPropertyChanged(nameof(HasNoOutboxRows));
+        OnPropertyChanged(nameof(CanToggleReturnMode));
+        OnPropertyChanged(nameof(CanOpenDrawer));
+        OnPropertyChanged(nameof(CanOpenOnlineOrders));
+    }
+
     partial void OnShowHeldCartsChanged(bool value)
     {
         OnPropertyChanged(nameof(BlocksScanning));
@@ -1448,6 +1520,7 @@ public partial class PosSession : ObservableObject
     [RelayCommand]
     private void OpenCashDrawer()
     {
+        ShowMoreActions = false;
         if (!CanOpenDrawer)
             return;
         BeginSupervisorChallenge(SupervisorActionKind.OpenDrawer);
@@ -1551,7 +1624,11 @@ public partial class PosSession : ObservableObject
     }
 
     [RelayCommand]
-    private void ShowCustomerDisplay() => RequestCustomerDisplay?.Invoke();
+    private void ShowCustomerDisplay()
+    {
+        ShowMoreActions = false;
+        RequestCustomerDisplay?.Invoke();
+    }
 
     [RelayCommand]
     private void SubmitPin()
@@ -1641,6 +1718,7 @@ public partial class PosSession : ObservableObject
     [RelayCommand]
     private void BeginCloseShift()
     {
+        ShowMoreActions = false;
         if (!CanOpenCloseShiftPanel || _currentShift is null)
             return;
         if (HasLines || IsTendering)
@@ -1673,9 +1751,66 @@ public partial class PosSession : ObservableObject
     {
         if (!CanOpenOnlineOrders)
             return;
+        ShowMoreActions = false;
         ShowOnlineOrders = true;
         _ = RefreshOnlineOrdersAsync();
     }
+
+    [RelayCommand]
+    private void OpenOutboxPanel()
+    {
+        ShowMoreActions = false;
+        ShowOutboxPanel = true;
+        RefreshOutboxPanel();
+    }
+
+    [RelayCommand]
+    private void CloseOutboxPanel()
+    {
+        ShowOutboxPanel = false;
+        OutboxPanelHint = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void RefreshOutboxPanel()
+    {
+        try
+        {
+            OutboxRows.Clear();
+            foreach (var row in _database.ListOutboxHealth())
+                OutboxRows.Add(row);
+            var snap = _database.ReadOutboxSnapshot();
+            PendingOutbox = snap.Pending + snap.Inflight;
+            DeadOutbox = snap.Dead;
+            LastSyncError = snap.LastError ?? string.Empty;
+            OnPropertyChanged(nameof(HasNoOutboxRows));
+            OnPropertyChanged(nameof(HasSyncError));
+            OnPropertyChanged(nameof(SyncErrorCaption));
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("outbox panel refresh failed", ex);
+            OutboxPanelHint = ArabicUi.FromException(ex, "تعذر فتح قائمة انتظار الرفع.");
+            OnPropertyChanged(nameof(HasOutboxPanelHint));
+        }
+    }
+
+    [RelayCommand]
+    private void RetryOutboxSync()
+    {
+        var dead = _database.RequeueDeadOutbox();
+        var nudged = _database.NudgeAllPendingOutbox();
+        RefreshOutboxPanel();
+        OutboxPanelHint = $"أُعيد طابور {dead.ToString(CultureInfo.InvariantCulture)} تالف · نُبّه {nudged.ToString(CultureInfo.InvariantCulture)} معلّق. ستحاول المزامنة تلقائياً.";
+        OnPropertyChanged(nameof(HasOutboxPanelHint));
+    }
+
+    [RelayCommand]
+    private void ToggleMoreActions() => ShowMoreActions = !ShowMoreActions;
+
+    [RelayCommand]
+    private void CloseMoreActions() => ShowMoreActions = false;
 
     [RelayCommand]
     private void CloseOnlineOrders()

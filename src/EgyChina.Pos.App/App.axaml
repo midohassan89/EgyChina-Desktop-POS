@@ -47,6 +47,7 @@
     </Style>
     <Style Selector="Button.pos-primary:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="{StaticResource PosBrandDarkBrush}" />
+      <Setter Property="Foreground" Value="White" />
     </Style>
     <Style Selector="Button.pos-ghost">
       <Setter Property="Background" Value="#1E293B" />
@@ -58,6 +59,68 @@
     </Style>
     <Style Selector="Button.pos-ghost:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="#334155" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.pos-tender">
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="CornerRadius" Value="14" />
+      <Setter Property="MinHeight" Value="52" />
+      <Setter Property="Padding" Value="12,10" />
+    </Style>
+    <Style Selector="Button.pos-tender:pointerover /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Opacity" Value="0.92" />
+    </Style>
+    <Style Selector="Button.pos-qty">
+      <Setter Property="Background" Value="#ECFDF5" />
+      <Setter Property="Foreground" Value="#047857" />
+      <Setter Property="BorderBrush" Value="#A7F3D0" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="MinWidth" Value="40" />
+      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="Padding" Value="0" />
+      <Setter Property="FontSize" Value="20" />
+      <Setter Property="FontWeight" Value="Bold" />
+    </Style>
+    <Style Selector="Button.pos-qty:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#D1FAE5" />
+      <Setter Property="Foreground" Value="#065F46" />
+    </Style>
+    <Style Selector="Button.pos-qty-del">
+      <Setter Property="Background" Value="#FEF2F2" />
+      <Setter Property="Foreground" Value="#B91C1C" />
+      <Setter Property="BorderBrush" Value="#FECACA" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="MinWidth" Value="56" />
+      <Setter Property="MinHeight" Value="40" />
+      <Setter Property="Padding" Value="10,0" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.pos-qty-del:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#FEE2E2" />
+      <Setter Property="Foreground" Value="#991B1B" />
+    </Style>
+    <Style Selector="Button.pos-chip-return:pointerover /template/ ContentPresenter,
+                     Button.pos-chip-online:pointerover /template/ ContentPresenter,
+                     Button.pos-chip-info:pointerover /template/ ContentPresenter,
+                     Button.pos-chip-danger:pointerover /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Opacity" Value="0.92" />
+    </Style>
+    <Style Selector="Button.pos-chip-drawer:pointerover /template/ ContentPresenter,
+                     Button.pos-chip-warn:pointerover /template/ ContentPresenter">
+      <Setter Property="Foreground" Value="#1C1917" />
+    </Style>
+    <Style Selector="ScrollViewer.pos-cats">
+      <Setter Property="HorizontalScrollBarVisibility" Value="Auto" />
+      <Setter Property="VerticalScrollBarVisibility" Value="Disabled" />
+    </Style>
+    <Style Selector="ScrollViewer.pos-cats /template/ ScrollBar#PART_HorizontalScrollBar">
+      <Setter Property="Height" Value="6" />
+      <Setter Property="Opacity" Value="0.45" />
     </Style>
     <Style Selector="Button.pos-chip-warn">
       <Setter Property="Background" Value="#F59E0B" />

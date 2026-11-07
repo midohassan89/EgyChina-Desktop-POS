@@ -16,7 +16,9 @@ public sealed record CatalogProduct(
 {
     public string PriceEgpText => Money.FormatEgp(PriceEgpMinor);
 
-    public bool HasNameZh => !string.IsNullOrWhiteSpace(NameZh);
+    public string DisplayNameAr => ProductDisplayNames.ForShelf(NameAr, NameZh, Barcode ?? Sku);
+
+    public bool HasNameZh => ProductDisplayNames.ShowSecondaryZh(NameAr, NameZh);
 
     public string FavoriteGlyph => IsFavorite ? "★" : "☆";
 

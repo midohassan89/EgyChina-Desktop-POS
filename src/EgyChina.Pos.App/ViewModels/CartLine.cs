@@ -46,7 +46,7 @@ public partial class CartLine : ObservableObject
     {
     }
 
-    private CartLine(
+    public CartLine(
         string productId,
         string? barcode,
         string nameAr,
@@ -55,7 +55,7 @@ public partial class CartLine : ObservableObject
         int qty,
         Action changed,
         Action<CartLine> remove,
-        Action<CartLine>? touched)
+        Action<CartLine>? touched = null)
     {
         LineId = Guid.NewGuid().ToString("N");
         ProductId = productId;
@@ -79,7 +79,11 @@ public partial class CartLine : ObservableObject
 
     public string? NameZh { get; }
 
+    public string DisplayNameAr => ProductDisplayNames.ForShelf(NameAr, NameZh, Barcode);
+
     public bool HasNameZh => !string.IsNullOrWhiteSpace(NameZh);
+
+    public bool ShowCustomerNameZh => ProductDisplayNames.ShowSecondaryZh(NameAr, NameZh);
 
     public long UnitPriceMinor { get; }
 
@@ -88,6 +92,8 @@ public partial class CartLine : ObservableObject
     public string LineTotalText => Money.FormatEgp(UnitPriceMinor * Qty);
 
     public string QtyText => Qty.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    public string QtyCaption => "× " + QtyText;
 
     public HeldCartLinePayload ToHeldPayload() =>
         new(ProductId, Barcode, NameAr, NameZh, Qty, UnitPriceMinor);
@@ -102,6 +108,7 @@ public partial class CartLine : ObservableObject
     {
         OnPropertyChanged(nameof(LineTotalText));
         OnPropertyChanged(nameof(QtyText));
+        OnPropertyChanged(nameof(QtyCaption));
         _changed();
         _touched?.Invoke(this);
     }

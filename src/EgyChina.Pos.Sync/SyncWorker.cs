@@ -72,7 +72,7 @@ public sealed class SyncWorker : IAsyncDisposable
         if (_http is null || _options.BaseAddress is null)
         {
             _database.WriteCursor(CursorStream, NotConfiguredCursor, null);
-            PublishLocalStatus("المزامنة المحلية تعمل. عنوان الخادم غير مضبوط.", online: false);
+            PublishLocalStatus("البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP (EGYCHINA_POS_API) لرفع المبيعات.", online: false);
             return;
         }
 
@@ -92,7 +92,7 @@ public sealed class SyncWorker : IAsyncDisposable
                 "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
                 "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
                 "auth-missing" => ("auth-missing", "المزامنة تنتظر اعتماد جهاز (Bearer). لا يُرسل بيع."),
-                _ => (NotConfiguredCursor, "المزامنة المحلية تعمل. عنوان الخادم غير مضبوط."),
+                _ => (NotConfiguredCursor, "البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP لرفع المبيعات."),
             };
             _database.WriteCursor(CursorStream, cursor, null);
             PublishLocalStatus(message, online: false);

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
@@ -22,15 +23,23 @@ public partial class CustomerWindow : Window
     private void AttachSession()
     {
         if (_session is not null)
+        {
             _session.PropertyChanged -= OnSessionPropertyChanged;
+            _session.Lines.CollectionChanged -= OnLinesChanged;
+        }
 
         _session = DataContext as PosSession;
         if (_session is null)
             return;
 
         _session.PropertyChanged += OnSessionPropertyChanged;
+        _session.Lines.CollectionChanged += OnLinesChanged;
         ReloadQrImages();
+        ScrollCartToEnd();
     }
+
+    private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        Dispatcher.UIThread.Post(ScrollCartToEnd, DispatcherPriority.Background);
 
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -39,6 +48,27 @@ public partial class CustomerWindow : Window
             or nameof(PosSession.IsCfdPayment))
         {
             Dispatcher.UIThread.Post(ReloadQrImages);
+        }
+
+        if (e.PropertyName is nameof(PosSession.IsCfdShopping)
+            or nameof(PosSession.LineCountText)
+            or nameof(PosSession.TotalText))
+        {
+            Dispatcher.UIThread.Post(ScrollCartToEnd, DispatcherPriority.Background);
+        }
+    }
+
+    private void ScrollCartToEnd()
+    {
+        try
+        {
+            if (CfdCartScroll is null || _session is null || !_session.IsCfdShopping)
+                return;
+            CfdCartScroll.ScrollToEnd();
+        }
+        catch (Exception)
+        {
+            // Layout may not be ready yet.
         }
     }
 

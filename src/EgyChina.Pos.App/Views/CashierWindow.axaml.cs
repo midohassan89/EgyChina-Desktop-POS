@@ -360,6 +360,18 @@ public partial class CashierWindow : Window
         session.SelectCategoryCommand.Execute(category);
     }
 
+    private void OnMoreActionsBackdrop(object? sender, Avalonia.Input.PointerPressedEventArgs e)
+    {
+        if (DataContext is not PosSession session)
+            return;
+        // Close only when clicking the dimmed backdrop, not the menu card.
+        if (e.Source is Border border && ReferenceEquals(border, sender))
+        {
+            session.CloseMoreActionsCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
     private void OnResumeHeldClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;

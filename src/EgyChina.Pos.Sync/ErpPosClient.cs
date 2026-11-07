@@ -75,6 +75,8 @@ public sealed class ErpPosClient : IDisposable
         return builder.Uri;
     }
 
+    public Uri OnlineOrdersUri => Combine("api/pos/online-orders");
+
     public async Task<ErpCallResult> GetProductsAsync(string? updatedSince, CancellationToken cancellationToken)
     {
         try
@@ -151,6 +153,23 @@ public sealed class ErpPosClient : IDisposable
         try
         {
             using var response = await _http.GetAsync(LoyaltySearchUri(phone), cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> GetOnlineOrdersAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(OnlineOrdersUri, cancellationToken).ConfigureAwait(false);
             return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -117,6 +117,9 @@ Interactive till calls (UI-6), same device Bearer as checkout:
 - `GET /api/pos/queue-tickets/{code}` — claim `Q-xxxx` into the cart (PENDING → CLAIMED)
 - `PATCH /api/pos/queue-tickets/{code}` — mark COMPLETED after local sale commit
 - `GET /api/admin/customers/search?phone=` — loyalty lookup for `01…` / `201…` scans
+- `GET /api/pos/online-orders` — read-only online order desk list (UI-7; status changes stay on web admin)
+
+Local Z-report (UI-7) is built from SQLite for the open shift (no ERP call). Expected cash = opening float + net cash sales (returns with `note=return` reduce cash).
 
 Checkout JSON may include `customerId`, `pointsEarned`, and `pointsRedeemed` when a loyalty customer is attached. ERP routes above accept enrolled device Bearer via `resolvePosAccess` (same gate as `/api/checkout`).
 

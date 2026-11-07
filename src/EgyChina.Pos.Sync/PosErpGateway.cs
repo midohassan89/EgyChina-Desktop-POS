@@ -103,10 +103,108 @@ public sealed class PosErpGateway : IPosErpGateway, IDisposable
         }
     }
 
+    public async Task<(IReadOnlyList<OnlineOrderSummary> Orders, string? Error)> ListOnlineOrdersAsync(
+        CancellationToken cancellationToken)
+    {
+        var result = await _client.GetOnlineOrdersAsync(cancellationToken).ConfigureAwait(false);
+        if (!result.ResponseCompleted)
+            return (Array.Empty<OnlineOrderSummary>(), result.Error ?? "تعذر الاتصال بالمنظومة.");
+        if (!result.Accepted)
+            return (Array.Empty<OnlineOrderSummary>(), result.Error ?? "تعذر تحميل طلبات الأونلاين.");
+
+        try
+        {
+            using var doc = JsonDocument.Parse(result.Body ?? "{}");
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("orders", out var ordersNode) || ordersNode.ValueKind != JsonValueKind.Array)
+                return (Array.Empty<OnlineOrderSummary>(), null);
+
+            var list = new List<OnlineOrderSummary>();
+            foreach (var row in ordersNode.EnumerateArray())
+            {
+                if (TryReadOnlineOrder(row, out var order))
+                    list.Add(order);
+            }
+
+            return (list, null);
+        }
+        catch (JsonException)
+        {
+            return (Array.Empty<OnlineOrderSummary>(), "رد غير صالح من المنظومة.");
+        }
+    }
+
     public void Dispose()
     {
         if (_ownsClient)
             _client.Dispose();
+    }
+
+    private static bool TryReadOnlineOrder(JsonElement row, out OnlineOrderSummary order)
+    {
+        order = null!;
+        if (row.ValueKind != JsonValueKind.Object)
+            return false;
+
+        var id = row.TryGetProperty("id", out var idNode) ? idNode.GetString() ?? "" : "";
+        if (string.IsNullOrWhiteSpace(id))
+            return false;
+
+        var number = row.TryGetProperty("orderNumber", out var num) ? num.GetString() ?? id : id;
+        var name = row.TryGetProperty("customerName", out var cn) ? cn.GetString() ?? "" : "";
+        var phone = row.TryGetProperty("phone", out var ph) ? ph.GetString() ?? "" : "";
+        var address = row.TryGetProperty("address", out var ad) && ad.ValueKind == JsonValueKind.String
+            ? ad.GetString()
+            : null;
+        var notes = row.TryGetProperty("notes", out var nt) && nt.ValueKind == JsonValueKind.String
+            ? nt.GetString()
+            : null;
+        var status = row.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";
+        var created = row.TryGetProperty("createdAt", out var ca) ? ca.GetString() ?? "" : "";
+        var driver = row.TryGetProperty("assignedDriverName", out var dn) && dn.ValueKind == JsonValueKind.String
+            ? dn.GetString()
+            : null;
+        decimal total = 0;
+        if (row.TryGetProperty("totalAmount", out var tot))
+        {
+            if (!tot.TryGetDecimal(out total)
+                && tot.ValueKind == JsonValueKind.String
+                && !decimal.TryParse(tot.GetString(), NumberStyles.Number, CultureInfo.InvariantCulture, out total))
+            {
+                total = 0;
+            }
+        }
+
+        var items = new List<OnlineOrderItem>();
+        if (row.TryGetProperty("items", out var itemsNode) && itemsNode.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in itemsNode.EnumerateArray())
+            {
+                var itemId = item.TryGetProperty("id", out var iid) ? iid.GetString() ?? Guid.NewGuid().ToString("N") : Guid.NewGuid().ToString("N");
+                var itemName = item.TryGetProperty("name", out var inm) ? inm.GetString() ?? "صنف" : "صنف";
+                var qty = 1m;
+                if (item.TryGetProperty("quantity", out var qn))
+                    _ = qn.TryGetDecimal(out qty);
+                var price = 0m;
+                if (item.TryGetProperty("price", out var pn))
+                    _ = pn.TryGetDecimal(out price);
+                items.Add(new OnlineOrderItem(itemId, itemName, qty, price));
+            }
+        }
+
+        order = new OnlineOrderSummary(
+            id,
+            number,
+            name,
+            phone,
+            address,
+            notes,
+            total,
+            status,
+            created,
+            driver,
+            items);
+        return true;
     }
 
     public static IPosErpGateway FromOptions(SyncOptions options)

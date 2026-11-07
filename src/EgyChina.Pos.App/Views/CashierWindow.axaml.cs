@@ -62,7 +62,8 @@ public partial class CashierWindow : Window
             or nameof(PosSession.ShowNotFound)
             or nameof(PosSession.ShowPriceCheck)
             or nameof(PosSession.ShowHeldCarts)
-            or nameof(PosSession.ShowSupervisorPin))
+            or nameof(PosSession.ShowSupervisorPin)
+            or nameof(PosSession.ShowOnlineOrders))
         {
             Dispatcher.UIThread.Post(FocusForSession);
         }
@@ -146,6 +147,13 @@ public partial class CashierWindow : Window
             if (session.ShowSupervisorPin)
             {
                 session.CancelSupervisorPinCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (session.ShowOnlineOrders)
+            {
+                session.CloseOnlineOrdersCommand.Execute(null);
                 e.Handled = true;
                 return;
             }
@@ -236,6 +244,13 @@ public partial class CashierWindow : Window
         {
             session.OpenCashDrawerCommand.Execute(null);
             e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F8 && session.CanOpenOnlineOrders)
+        {
+            session.OpenOnlineOrdersCommand.Execute(null);
+            e.Handled = true;
         }
     }
 
@@ -249,6 +264,7 @@ public partial class CashierWindow : Window
             || session.ShowCloseShift
             || session.IsTendering
             || session.ShowSupervisorPin
+            || session.ShowOnlineOrders
             || session.BlocksScanning;
         var searchFocused = SearchBox.IsFocused;
         var barcodeFocused = BarcodeBox.IsFocused;

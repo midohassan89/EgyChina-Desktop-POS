@@ -241,43 +241,42 @@ public sealed class QueueLoyaltyTests : IDisposable
 
 internal static class StubHttp
 {
-    public static async Task<HttpListenerHost> Start(Func<HttpListenerContext, Task> handler)
-    {
-        var host = new HttpListenerHost(handler);
-        await host.StartAsync();
-        return host;
-    }
+    public static Task<HttpListenerHost> Start(Func<HttpListenerContext, Task> handler) =>
+        HttpListenerHost.Start(handler);
 }
 
 internal sealed class HttpListenerHost : IAsyncDisposable
 {
-    private readonly HttpListener _listener = new();
+    private readonly HttpListener _listener;
     private readonly Func<HttpListenerContext, Task> _handler;
     private readonly CancellationTokenSource _cts = new();
-    private Task? _loop;
+    private readonly Task _loop;
 
-    public HttpListenerHost(Func<HttpListenerContext, Task> handler)
+    private HttpListenerHost(HttpListener listener, Func<HttpListenerContext, Task> handler)
     {
+        _listener = listener;
         _handler = handler;
+        BaseAddress = new Uri(listener.Prefixes.First());
+        _loop = Task.Run(ListenLoop);
     }
 
-    public Uri BaseAddress { get; private set; } = null!;
+    public Uri BaseAddress { get; }
 
-    public Task StartAsync()
+    public static Task<HttpListenerHost> Start(Func<HttpListenerContext, Task> handler)
     {
-        for (var port = 18_700; port < 18_900; port++)
+        for (var attempt = 0; attempt < 12; attempt++)
         {
+            var port = Random.Shared.Next(20_000, 45_000);
+            var listener = new HttpListener();
+            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
             try
             {
-                BaseAddress = new Uri($"http://127.0.0.1:{port}/");
-                _listener.Prefixes.Add(BaseAddress.ToString());
-                _listener.Start();
-                _loop = Task.Run(ListenLoop);
-                return Task.CompletedTask;
+                listener.Start();
+                return Task.FromResult(new HttpListenerHost(listener, handler));
             }
             catch (HttpListenerException)
             {
-                _listener.Prefixes.Clear();
+                listener.Close();
             }
         }
 
@@ -286,18 +285,14 @@ internal sealed class HttpListenerHost : IAsyncDisposable
 
     private async Task ListenLoop()
     {
-        while (!_cts.IsCancellationRequested)
+        while (!_cts.IsCancellationRequested && _listener.IsListening)
         {
             HttpListenerContext context;
             try
             {
                 context = await _listener.GetContextAsync().WaitAsync(_cts.Token);
             }
-            catch (Exception) when (_cts.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (HttpListenerException)
+            catch (Exception) when (_cts.IsCancellationRequested || !_listener.IsListening)
             {
                 break;
             }
@@ -319,13 +314,8 @@ internal sealed class HttpListenerHost : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
-        try { _listener.Stop(); } catch { /* ignore */ }
-        _listener.Close();
-        if (_loop is not null)
-        {
-            try { await _loop; } catch { /* ignore */ }
-        }
-
+        try { _listener.Close(); } catch { /* ignore */ }
+        try { await _loop.WaitAsync(TimeSpan.FromSeconds(2)); } catch { /* ignore */ }
         _cts.Dispose();
     }
 }

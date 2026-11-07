@@ -47,6 +47,11 @@
                   Command="{Binding OpenCashDrawerCommand}"
                   IsEnabled="{Binding CanOpenDrawer}"
                   MinWidth="96" />
+          <Button Content="أونلاين"
+                  Classes="pos-ghost"
+                  Command="{Binding OpenOnlineOrdersCommand}"
+                  IsEnabled="{Binding CanOpenOnlineOrders}"
+                  MinWidth="88" />
           <Button Content="شاشة العميل"
                   Classes="pos-ghost"
                   Command="{Binding ShowCustomerDisplayCommand}"
@@ -702,28 +707,133 @@
 
   <Border Background="#CC0F172A" IsVisible="{Binding ShowCloseShift}" ZIndex="22">
     <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
-            Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <StackPanel Spacing="12">
-        <TextBlock Text="إغلاق الوردية" FontSize="24" FontWeight="Bold" Foreground="#0F172A" />
-        <TextBlock Text="نقدية الإغلاق (ج.م)" Foreground="#64748B" />
-        <TextBox x:Name="ClosingCashBox"
-                 Text="{Binding ClosingCashText}"
-                 FontSize="24"
-                 MinHeight="52"
-                 FlowDirection="LeftToRight"
-                 KeyDown="OnClosingCashKeyDown" />
-        <TextBlock Text="{Binding ShiftError}" Foreground="#B91C1C" TextWrapping="Wrap" />
-        <Button Content="تأكيد الإغلاق"
-                Classes="pos-primary"
-                Command="{Binding ConfirmCloseShiftCommand}"
-                HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Center"
-                MinHeight="48" />
-        <Button Content="إلغاء"
-                Command="{Binding CancelCloseShiftCommand}"
-                HorizontalAlignment="Stretch"
-                HorizontalContentAlignment="Center" />
-      </StackPanel>
+            Padding="24" Width="480" MaxHeight="640" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="10">
+          <TextBlock Text="إغلاق الوردية · تقرير Z" FontSize="22" FontWeight="Bold" Foreground="#0F172A" />
+          <Border IsVisible="{Binding HasZReport}"
+                  Background="#F1F5F9"
+                  CornerRadius="10"
+                  Padding="12"
+                  BorderBrush="#CBD5E1"
+                  BorderThickness="1">
+            <StackPanel Spacing="4">
+              <TextBlock Text="{Binding CurrentZReport.CashierName}" FontWeight="SemiBold" Foreground="#0F172A" />
+              <TextBlock Text="{Binding CurrentZReport.TicketCountText, StringFormat=عدد التذاكر: {0}}" Foreground="#475569" />
+              <TextBlock Text="{Binding CurrentZReport.ReturnTicketCountText, StringFormat=استرجاع: {0}}" Foreground="#475569" />
+              <TextBlock Text="{Binding CurrentZReport.CashSalesText, StringFormat=نقد: {0}}" Foreground="#0F172A" />
+              <TextBlock Text="{Binding CurrentZReport.VisaSalesText, StringFormat=فيزا: {0}}" Foreground="#0F172A" />
+              <TextBlock Text="{Binding CurrentZReport.WalletSalesText, StringFormat=محفظة: {0}}" Foreground="#0F172A" />
+              <TextBlock Text="{Binding CurrentZReport.InstaPaySalesText, StringFormat=انستا باي: {0}}" Foreground="#0F172A" />
+              <TextBlock Text="{Binding CurrentZReport.WeChatSalesText, StringFormat=وي شات: {0}}" Foreground="#0F172A" />
+              <TextBlock Text="{Binding CurrentZReport.CashRefundsText, StringFormat=مردود نقدي: {0}}" Foreground="#B45309" />
+              <TextBlock Text="{Binding CurrentZReport.TotalSalesText, StringFormat=إجمالي المبيعات: {0}}" FontWeight="Bold" Foreground="#047857" />
+              <TextBlock Text="{Binding CurrentZReport.ExpectedCashText, StringFormat=النقد المتوقع في الدرج: {0}}" FontWeight="Bold" Foreground="#1D4ED8" />
+            </StackPanel>
+          </Border>
+          <TextBlock Text="نقدية الإغلاق الفعلية (ج.م)" Foreground="#64748B" />
+          <TextBox x:Name="ClosingCashBox"
+                   Text="{Binding ClosingCashText, UpdateSourceTrigger=PropertyChanged}"
+                   FontSize="24"
+                   MinHeight="52"
+                   FlowDirection="LeftToRight"
+                   KeyDown="OnClosingCashKeyDown" />
+          <TextBlock Text="{Binding ZReportVarianceText}"
+                     IsVisible="{Binding HasZReport}"
+                     FontWeight="SemiBold"
+                     Foreground="#0F172A"
+                     TextWrapping="Wrap" />
+          <TextBlock Text="{Binding ShiftError}" Foreground="#B91C1C" TextWrapping="Wrap" />
+          <Button Content="تأكيد الإغلاق"
+                  Classes="pos-primary"
+                  Command="{Binding ConfirmCloseShiftCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center"
+                  MinHeight="48" />
+          <Button Content="إلغاء"
+                  Command="{Binding CancelCloseShiftCommand}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center" />
+        </StackPanel>
+      </ScrollViewer>
+    </Border>
+  </Border>
+
+  <Border Background="#CC0F172A" IsVisible="{Binding ShowOnlineOrders}" ZIndex="38">
+    <Border Background="White" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="0"
+            Width="420" HorizontalAlignment="Left" VerticalAlignment="Stretch">
+      <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#0F172A" Padding="16,12">
+          <Grid ColumnDefinitions="*,Auto,8,Auto">
+            <TextBlock Text="طلبات الأونلاين" FontSize="20" FontWeight="Bold" Foreground="White" VerticalAlignment="Center" />
+            <Button Grid.Column="1"
+                    Content="تحديث"
+                    Command="{Binding RefreshOnlineOrdersCommand}"
+                    Background="#1E293B"
+                    Foreground="White"
+                    MinWidth="72" />
+            <Button Grid.Column="3"
+                    Content="إغلاق"
+                    Command="{Binding CloseOnlineOrdersCommand}"
+                    Background="#334155"
+                    Foreground="White"
+                    MinWidth="72" />
+          </Grid>
+        </Border>
+        <TextBlock DockPanel.Dock="Top"
+                   Text="{Binding OnlineOrdersError}"
+                   IsVisible="{Binding HasOnlineOrdersError}"
+                   Background="#FEF2F2"
+                   Foreground="#B91C1C"
+                   Padding="12,8"
+                   TextWrapping="Wrap"
+                   FontWeight="SemiBold" />
+        <TextBlock DockPanel.Dock="Top"
+                   Text="لا توجد طلبات أونلاين"
+                   IsVisible="{Binding HasNoOnlineOrders}"
+                   HorizontalAlignment="Center"
+                   Margin="0,40,0,0"
+                   Foreground="#94A3B8" />
+        <ScrollViewer>
+          <ItemsControl ItemsSource="{Binding OnlineOrders}" Margin="12">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="core:OnlineOrderSummary">
+                <Border Background="#F8FAFC"
+                        BorderBrush="#E2E8F0"
+                        BorderThickness="1"
+                        CornerRadius="12"
+                        Padding="12"
+                        Margin="0,0,0,10">
+                  <StackPanel Spacing="4">
+                    <Grid ColumnDefinitions="*,Auto">
+                      <TextBlock Text="{Binding OrderNumber}" FontWeight="Bold" FontSize="16" Foreground="#0F172A" />
+                      <TextBlock Grid.Column="1" Text="{Binding TotalText}" FontWeight="Bold" Foreground="#059669" />
+                    </Grid>
+                    <TextBlock Text="{Binding StatusLabelAr}" FontSize="12" FontWeight="SemiBold" Foreground="#0369A1" />
+                    <TextBlock Text="{Binding CustomerName}" Foreground="#334155" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Phone}" Foreground="#64748B" FlowDirection="LeftToRight" />
+                    <TextBlock Text="{Binding Address}"
+                               IsVisible="{Binding HasAddress}"
+                               Foreground="#64748B"
+                               TextWrapping="Wrap"
+                               FontSize="12" />
+                    <TextBlock Text="{Binding ItemsSummary}" Foreground="#475569" TextWrapping="Wrap" FontSize="12" />
+                    <TextBlock Text="{Binding AssignedDriverName, StringFormat=السائق: {0}}"
+                               IsVisible="{Binding HasAssignedDriver}"
+                               Foreground="#78716C"
+                               FontSize="12" />
+                    <TextBlock Text="{Binding Notes}"
+                               IsVisible="{Binding HasNotes}"
+                               Foreground="#A16207"
+                               TextWrapping="Wrap"
+                               FontSize="12" />
+                  </StackPanel>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+      </DockPanel>
     </Border>
   </Border>
   </Grid>

@@ -1401,6 +1401,119 @@ public sealed class PosDatabase
         }
     }
 
+    /// <summary>
+    /// Builds a local Z-report for an open (or just-closed) shift from sale + payment rows.
+    /// Returns are detected via <c>sale.note = 'return'</c>; amounts stay non-negative in SQLite.
+    /// </summary>
+    public ShiftZReport? BuildShiftZReport(string shiftId)
+    {
+        if (string.IsNullOrWhiteSpace(shiftId))
+            return null;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            string cashierId;
+            string openedAt;
+            long openingFloat;
+            using (var shift = connection.CreateCommand())
+            {
+                shift.CommandText = """
+                    SELECT cashier_id, opened_at, opening_float_minor
+                    FROM shift WHERE id = $id
+                    """;
+                shift.Parameters.AddWithValue("$id", shiftId);
+                using var reader = shift.ExecuteReader();
+                if (!reader.Read())
+                    return null;
+                cashierId = reader.GetString(0);
+                openedAt = reader.GetString(1);
+                openingFloat = reader.GetInt64(2);
+            }
+
+            var cashierName = ReadCashier(connection, cashierId)?.DisplayName ?? cashierId;
+            long cash = 0, visa = 0, wallet = 0, instapay = 0, wechat = 0, cashRefunds = 0;
+            var tickets = 0;
+            var returns = 0;
+            var cashTickets = 0;
+            var cardTickets = 0;
+
+            using (var sales = connection.CreateCommand())
+            {
+                sales.CommandText = """
+                    SELECT s.total_minor, IFNULL(s.note, ''), IFNULL(p.method, 'cash_egp')
+                    FROM sale s
+                    LEFT JOIN payment p ON p.sale_id = s.id
+                    WHERE s.shift_id = $shift AND s.status = 'completed'
+                    ORDER BY s.completed_at
+                    """;
+                sales.Parameters.AddWithValue("$shift", shiftId);
+                using var reader = sales.ExecuteReader();
+                while (reader.Read())
+                {
+                    tickets++;
+                    var total = reader.GetInt64(0);
+                    var isReturn = string.Equals(reader.GetString(1), "return", StringComparison.OrdinalIgnoreCase);
+                    var method = reader.GetString(2);
+                    var signed = isReturn ? -total : total;
+                    if (isReturn)
+                        returns++;
+
+                    var isCash = string.Equals(method, "cash_egp", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(method, "cash", StringComparison.OrdinalIgnoreCase);
+                    if (isCash)
+                        cashTickets++;
+                    else
+                        cardTickets++;
+
+                    if (isReturn && isCash)
+                        cashRefunds = checked(cashRefunds + total);
+
+                    switch (method)
+                    {
+                        case "cash_egp":
+                        case "cash":
+                        case "cash_cny":
+                            cash = checked(cash + signed);
+                            break;
+                        case "card":
+                        case "visa":
+                            visa = checked(visa + signed);
+                            break;
+                        case "wallet":
+                            wallet = checked(wallet + signed);
+                            break;
+                        case "instapay":
+                            instapay = checked(instapay + signed);
+                            break;
+                        case "wechat":
+                            wechat = checked(wechat + signed);
+                            break;
+                        default:
+                            cash = checked(cash + signed);
+                            break;
+                    }
+                }
+            }
+
+            return new ShiftZReport(
+                shiftId,
+                cashierName,
+                openedAt,
+                openingFloat,
+                cash,
+                visa,
+                wallet,
+                instapay,
+                wechat,
+                cashRefunds,
+                tickets,
+                returns,
+                cashTickets,
+                cardTickets);
+        }
+    }
+
     public ShiftRecord OpenShift(string cashierId, long openingFloatMinor)
     {
         if (string.IsNullOrWhiteSpace(cashierId))

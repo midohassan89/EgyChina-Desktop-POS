@@ -85,7 +85,7 @@ public partial class PosSession : ObservableObject
     public event Action<UiFocusTarget>? FocusRequested;
 
     public string ShortcutHint { get; } =
-        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  Q-/هاتف ولاء  ·  Esc إلغاء";
+        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
 
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
 
@@ -232,6 +232,35 @@ public partial class PosSession : ObservableObject
     [ObservableProperty]
     private bool _isLookingUpErp;
 
+    [ObservableProperty]
+    private ShiftZReport? _currentZReport;
+
+    [ObservableProperty]
+    private bool _showOnlineOrders;
+
+    [ObservableProperty]
+    private string _onlineOrdersError = string.Empty;
+
+    public ObservableCollection<OnlineOrderSummary> OnlineOrders { get; } = new();
+
+    public bool HasZReport => CurrentZReport is not null;
+
+    public bool HasOnlineOrdersError => !string.IsNullOrWhiteSpace(OnlineOrdersError);
+
+    public bool HasNoOnlineOrders => ShowOnlineOrders && OnlineOrders.Count == 0 && !HasOnlineOrdersError && !IsLookingUpErp;
+
+    public string ZReportVarianceText
+    {
+        get
+        {
+            if (CurrentZReport is null || !Money.TryParseEgp(ClosingCashText, out var actual))
+                return string.Empty;
+            var variance = CurrentZReport.VarianceMinor(actual);
+            var label = variance == 0 ? "مطابق" : variance > 0 ? "زيادة" : "عجز";
+            return $"{label}: {Money.FormatEgp(Math.Abs(variance))}";
+        }
+    }
+
     public bool HasLoyaltyCustomer => _loyaltyCustomer is not null;
 
     public string LoyaltyCaption
@@ -292,7 +321,7 @@ public partial class PosSession : ObservableObject
     public bool HasSupervisorError => !string.IsNullOrWhiteSpace(SupervisorError);
 
     public bool BlocksScanning =>
-        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin;
+        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin || ShowOnlineOrders;
 
     public string ReturnModeButtonText => IsReturnMode ? "إنهاء الاسترجاع" : "وضع الاسترجاع";
 
@@ -382,10 +411,13 @@ public partial class PosSession : ObservableObject
         CanOperate && !IsTendering && !BlocksScanning && !IsReturnMode;
 
     public bool CanToggleReturnMode =>
-        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts;
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders;
 
     public bool CanOpenDrawer =>
-        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts;
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders;
+
+    public bool CanOpenOnlineOrders =>
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders;
 
     public bool HasHeldCarts => HeldCarts.Count > 0;
 
@@ -1163,6 +1195,17 @@ public partial class PosSession : ObservableObject
         RefreshCheckout();
     }
 
+    partial void OnClosingCashTextChanged(string value) => OnPropertyChanged(nameof(ZReportVarianceText));
+
+    partial void OnShowOnlineOrdersChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BlocksScanning));
+        OnPropertyChanged(nameof(CanToggleReturnMode));
+        OnPropertyChanged(nameof(CanOpenDrawer));
+        OnPropertyChanged(nameof(CanOpenOnlineOrders));
+        OnPropertyChanged(nameof(HasNoOnlineOrders));
+    }
+
     partial void OnShowHeldCartsChanged(bool value)
     {
         OnPropertyChanged(nameof(BlocksScanning));
@@ -1451,9 +1494,12 @@ public partial class PosSession : ObservableObject
             return;
         }
 
-        ClosingCashText = Money.FormatAmount(_currentShift.OpeningFloatMinor);
+        CurrentZReport = _database.BuildShiftZReport(_currentShift.Id);
+        ClosingCashText = Money.FormatAmount(CurrentZReport?.ExpectedCashMinor ?? _currentShift.OpeningFloatMinor);
         ShiftError = string.Empty;
         ShowCloseShift = true;
+        OnPropertyChanged(nameof(HasZReport));
+        OnPropertyChanged(nameof(ZReportVarianceText));
         RequestFocus(UiFocusTarget.ClosingCash);
     }
 
@@ -1462,6 +1508,57 @@ public partial class PosSession : ObservableObject
     {
         ShowCloseShift = false;
         ShiftError = string.Empty;
+        CurrentZReport = null;
+        OnPropertyChanged(nameof(HasZReport));
+        OnPropertyChanged(nameof(ZReportVarianceText));
+    }
+
+    [RelayCommand]
+    private void OpenOnlineOrders()
+    {
+        if (!CanOpenOnlineOrders)
+            return;
+        ShowOnlineOrders = true;
+        _ = RefreshOnlineOrdersAsync();
+    }
+
+    [RelayCommand]
+    private void CloseOnlineOrders()
+    {
+        ShowOnlineOrders = false;
+        OnlineOrdersError = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void RefreshOnlineOrders() => _ = RefreshOnlineOrdersAsync();
+
+    private async Task RefreshOnlineOrdersAsync()
+    {
+        OnlineOrdersError = string.Empty;
+        IsLookingUpErp = true;
+        try
+        {
+            var (orders, error) = await _erp.ListOnlineOrdersAsync(CancellationToken.None).ConfigureAwait(true);
+            OnlineOrders.Clear();
+            foreach (var order in orders)
+                OnlineOrders.Add(order);
+            OnlineOrdersError = error ?? string.Empty;
+            OnPropertyChanged(nameof(HasNoOnlineOrders));
+            OnPropertyChanged(nameof(HasOnlineOrdersError));
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("online orders load failed", ex);
+            OnlineOrdersError = ArabicUi.FromException(ex, "تعذر تحميل طلبات الأونلاين.");
+            OnPropertyChanged(nameof(HasOnlineOrdersError));
+            OnPropertyChanged(nameof(HasNoOnlineOrders));
+        }
+        finally
+        {
+            IsLookingUpErp = false;
+            OnPropertyChanged(nameof(HasNoOnlineOrders));
+        }
     }
 
     [RelayCommand]
@@ -1481,8 +1578,10 @@ public partial class PosSession : ObservableObject
             _database.CloseShift(_currentShift.Id, _currentCashier.Id, closing);
             _currentShift = null;
             ShowCloseShift = false;
+            CurrentZReport = null;
             NeedsOpenShift = true;
             SessionCaption = $"{_currentCashier.DisplayName} · لا توجد وردية مفتوحة";
+            OnPropertyChanged(nameof(HasZReport));
             RefreshCheckout();
             RequestFocus(UiFocusTarget.OpeningFloat);
             DatabaseBackup.Create(_database);
@@ -1757,7 +1856,9 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanOpenHeldCarts));
         OnPropertyChanged(nameof(CanToggleReturnMode));
         OnPropertyChanged(nameof(CanOpenDrawer));
+        OnPropertyChanged(nameof(CanOpenOnlineOrders));
         OnPropertyChanged(nameof(CanConfirmCash));
+        OnPropertyChanged(nameof(ZReportVarianceText));
         OnPropertyChanged(nameof(LineCountText));
         OnPropertyChanged(nameof(AmountLabel));
         OnPropertyChanged(nameof(AmountText));

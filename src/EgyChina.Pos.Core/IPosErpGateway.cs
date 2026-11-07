@@ -1,7 +1,7 @@
 namespace EgyChina.Pos.Core;
 
 /// <summary>
-/// Interactive ERP calls for the till (queue tickets + loyalty). Separate from outbox sync.
+/// Interactive ERP calls for the till (queue tickets, loyalty, online desk). Separate from outbox sync.
 /// </summary>
 public interface IPosErpGateway
 {
@@ -13,6 +13,9 @@ public interface IPosErpGateway
 
     Task<(LoyaltyCustomer? Customer, string? Error)> LookupLoyaltyPhoneAsync(
         string phone,
+        CancellationToken cancellationToken);
+
+    Task<(IReadOnlyList<OnlineOrderSummary> Orders, string? Error)> ListOnlineOrdersAsync(
         CancellationToken cancellationToken);
 }
 
@@ -36,4 +39,9 @@ public sealed class NullPosErpGateway : IPosErpGateway
         string phone,
         CancellationToken cancellationToken) =>
         Task.FromResult<(LoyaltyCustomer?, string?)>((null, "مزامنة ERP غير مضبوطة — لا يمكن البحث عن الولاء."));
+
+    public Task<(IReadOnlyList<OnlineOrderSummary> Orders, string? Error)> ListOnlineOrdersAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult<(IReadOnlyList<OnlineOrderSummary>, string?)>(
+            (Array.Empty<OnlineOrderSummary>(), "مزامنة ERP غير مضبوطة — لا يمكن تحميل طلبات الأونلاين."));
 }

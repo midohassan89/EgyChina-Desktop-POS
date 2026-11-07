@@ -61,7 +61,8 @@ public partial class CashierWindow : Window
             or nameof(PosSession.IsTendering)
             or nameof(PosSession.ShowNotFound)
             or nameof(PosSession.ShowPriceCheck)
-            or nameof(PosSession.ShowHeldCarts))
+            or nameof(PosSession.ShowHeldCarts)
+            or nameof(PosSession.ShowSupervisorPin))
         {
             Dispatcher.UIThread.Post(FocusForSession);
         }
@@ -86,6 +87,8 @@ public partial class CashierWindow : Window
             ApplyFocus(UiFocusTarget.OpeningFloat);
         else if (_session.ShowCloseShift)
             ApplyFocus(UiFocusTarget.ClosingCash);
+        else if (_session.ShowSupervisorPin)
+            ApplyFocus(UiFocusTarget.SupervisorPin);
         else if (_session.ShowNotFound)
             ApplyFocus(UiFocusTarget.NotFoundAck);
         else if (_session.ShowPriceCheck)
@@ -123,6 +126,10 @@ public partial class CashierWindow : Window
             case UiFocusTarget.NotFoundAck:
                 NotFoundOkButton.Focus();
                 break;
+            case UiFocusTarget.SupervisorPin:
+                SupervisorPinBox.Focus();
+                SupervisorPinBox.SelectAll();
+                break;
             default:
                 FocusBarcode();
                 break;
@@ -136,6 +143,13 @@ public partial class CashierWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            if (session.ShowSupervisorPin)
+            {
+                session.CancelSupervisorPinCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (session.ShowNotFound)
             {
                 session.DismissNotFoundCommand.Execute(null);
@@ -204,6 +218,24 @@ public partial class CashierWindow : Window
         {
             session.ReprintLastCommand.Execute(null);
             e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F6)
+        {
+            if (session.IsReturnMode || session.CanToggleReturnMode)
+            {
+                session.ToggleReturnModeCommand.Execute(null);
+                e.Handled = true;
+            }
+
+            return;
+        }
+
+        if (e.Key == Key.F7 && session.CanOpenDrawer)
+        {
+            session.OpenCashDrawerCommand.Execute(null);
+            e.Handled = true;
         }
     }
 
@@ -216,6 +248,7 @@ public partial class CashierWindow : Window
             || session.NeedsOpenShift
             || session.ShowCloseShift
             || session.IsTendering
+            || session.ShowSupervisorPin
             || session.BlocksScanning;
         var searchFocused = SearchBox.IsFocused;
         var barcodeFocused = BarcodeBox.IsFocused;
@@ -268,6 +301,14 @@ public partial class CashierWindow : Window
         session.SubmitPriceCheckCommand.Execute(null);
     }
 
+    private void OnSupervisorPinKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not PosSession session)
+            return;
+        e.Handled = true;
+        session.SubmitSupervisorPinCommand.Execute(null);
+    }
+
     private void OnBarcodeKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
@@ -309,6 +350,16 @@ public partial class CashierWindow : Window
         if (sender is not Button { Tag: HeldCartSummary held } || DataContext is not PosSession session)
             return;
         session.DiscardHeldCartCommand.Execute(held);
+    }
+
+    private void OnPaymentMethodClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Button { Tag: string tag } || DataContext is not PosSession session)
+            return;
+        if (!Enum.TryParse<PosPaymentMethod>(tag, ignoreCase: true, out var method))
+            return;
+        session.SelectPaymentCommand.Execute(method);
     }
 
     private void SubmitBarcode()

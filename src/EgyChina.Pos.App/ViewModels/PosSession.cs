@@ -15,21 +15,29 @@ public partial class PosSession : ObservableObject
     private IReadOnlyList<CatalogProduct> _products;
     private readonly SyncStatus _sync;
     private readonly IReceiptPrinter _printer;
+    private readonly IPosErpGateway _erp;
     private string? _lastSaleId;
     private DateTimeOffset? _settlementAt;
     private string? _highlightedLineId;
+    private SupervisorActionKind? _pendingSupervisorAction;
+    private CartLine? _pendingDeleteLine;
+    private bool _lastSaleWasReturn;
+    private string? _activeQueueTicketCode;
+    private LoyaltyCustomer? _loyaltyCustomer;
 
     public PosSession(
         PosDatabase database,
         IReadOnlyList<CatalogProduct> products,
         SyncStatus sync,
         bool demoCatalog,
-        IReceiptPrinter? printer = null)
+        IReceiptPrinter? printer = null,
+        IPosErpGateway? erpGateway = null)
     {
         _database = database;
         _products = products;
         _sync = sync;
         _printer = printer ?? new NullReceiptPrinter();
+        _erp = erpGateway ?? NullPosErpGateway.Instance;
         DatabasePath = database.DatabasePath;
         CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog);
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
@@ -77,7 +85,7 @@ public partial class PosSession : ObservableObject
     public event Action<UiFocusTarget>? FocusRequested;
 
     public string ShortcutHint { get; } =
-        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  Esc إلغاء  ·  تعليق السلة من الزر";
+        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  Q-/هاتف ولاء  ·  Esc إلغاء";
 
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
 
@@ -95,7 +103,41 @@ public partial class PosSession : ObservableObject
 
     public bool IsCfdCompleted => CustomerDisplayMode == CustomerDisplayMode.Completed;
 
-    public string PaymentMethodLabel => "نقدي";
+    public IReadOnlyList<PosPaymentMethod> PaymentOptions => PosPaymentMethods.CheckoutOptions;
+
+    [ObservableProperty]
+    private PosPaymentMethod _selectedPayment = PosPaymentMethod.Cash;
+
+    [ObservableProperty]
+    private string _exchangeRateText = WeChatFx.DefaultEgpPerCny.ToString("0.##", CultureInfo.InvariantCulture);
+
+    public string PaymentMethodLabel => PosPaymentMethods.LabelAr(SelectedPayment);
+
+    public string PaymentMethodLabelZh => PosPaymentMethods.LabelArZh(SelectedPayment);
+
+    public bool IsCashPayment => PosPaymentMethods.IsCash(SelectedPayment);
+
+    public bool IsWeChatPayment => PosPaymentMethods.IsWeChat(SelectedPayment);
+
+    public bool IsInstaPayPayment => PosPaymentMethods.IsInstaPay(SelectedPayment);
+
+    public bool ShowsCustomerQr => PosPaymentMethods.ShowsCustomerQr(SelectedPayment);
+
+    public bool ShowWeChatQr => IsTendering && IsWeChatPayment;
+
+    public bool ShowInstaPayQr => IsTendering && IsInstaPayPayment;
+
+    public string WeChatCnyText
+    {
+        get
+        {
+            if (!IsWeChatPayment || !WeChatFx.TryParseRate(ExchangeRateText, out var rate))
+                return string.Empty;
+            return WeChatFx.FormatCny(WeChatFx.EgpMinorToCnyMajor(TotalMinor, rate));
+        }
+    }
+
+    public string InstaPayPhoneHint => "01028009271";
 
     [ObservableProperty]
     private bool _needsLogin = true;
@@ -166,6 +208,75 @@ public partial class PosSession : ObservableObject
     [ObservableProperty]
     private string _scanHint = "امسح الباركود أو اختر صنفاً.";
 
+    [ObservableProperty]
+    private bool _isReturnMode;
+
+    [ObservableProperty]
+    private bool _showSupervisorPin;
+
+    [ObservableProperty]
+    private string _supervisorPinText = string.Empty;
+
+    [ObservableProperty]
+    private string _supervisorError = string.Empty;
+
+    [ObservableProperty]
+    private string _supervisorTitle = string.Empty;
+
+    [ObservableProperty]
+    private string _supervisorHint = string.Empty;
+
+    [ObservableProperty]
+    private bool _redeemLoyaltyPoints;
+
+    [ObservableProperty]
+    private bool _isLookingUpErp;
+
+    public bool HasLoyaltyCustomer => _loyaltyCustomer is not null;
+
+    public string LoyaltyCaption
+    {
+        get
+        {
+            if (_loyaltyCustomer is null)
+                return string.Empty;
+            var label = string.IsNullOrWhiteSpace(_loyaltyCustomer.Name)
+                ? _loyaltyCustomer.Phone
+                : _loyaltyCustomer.Name!;
+            return $"{label} · {_loyaltyCustomer.PointsBalance.ToString(CultureInfo.InvariantCulture)} نقطة";
+        }
+    }
+
+    public bool CanRedeemLoyalty =>
+        HasLoyaltyCustomer
+        && !IsReturnMode
+        && _loyaltyCustomer!.PointsBalance >= 1000
+        && SubtotalMinor > 0;
+
+    public bool CanToggleRedeemLoyalty => CanRedeemLoyalty || RedeemLoyaltyPoints;
+
+    public string RedeemLoyaltyButtonText =>
+        RedeemLoyaltyPoints ? "إلغاء الاستبدال" : "استبدال نقاط";
+
+    public long LoyaltyDiscountMinor =>
+        RedeemLoyaltyPoints && CanRedeemLoyalty
+            ? LoyaltyScan.DiscountMinorFromPoints(_loyaltyCustomer!.PointsBalance, SubtotalMinor)
+            : 0;
+
+    public string LoyaltyDiscountText =>
+        LoyaltyDiscountMinor > 0
+            ? "خصم النقاط " + Money.FormatEgp(LoyaltyDiscountMinor)
+            : string.Empty;
+
+    public bool ShowLoyaltyDiscount => LoyaltyDiscountMinor > 0;
+
+    public string ActiveQueueCaption =>
+        string.IsNullOrWhiteSpace(_activeQueueTicketCode)
+            ? string.Empty
+            : $"قسيمة {_activeQueueTicketCode}";
+
+    public bool HasActiveQueueTicket => !string.IsNullOrWhiteSpace(_activeQueueTicketCode);
+
     public bool IsCatalogAll => CatalogTab == CatalogTab.All;
 
     public bool IsCatalogFavorites => CatalogTab == CatalogTab.Favorites;
@@ -178,7 +289,19 @@ public partial class PosSession : ObservableObject
 
     public bool HasPriceCheckError => !string.IsNullOrWhiteSpace(PriceCheckError);
 
-    public bool BlocksScanning => ShowNotFound || ShowPriceCheck || ShowHeldCarts;
+    public bool HasSupervisorError => !string.IsNullOrWhiteSpace(SupervisorError);
+
+    public bool BlocksScanning =>
+        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin;
+
+    public string ReturnModeButtonText => IsReturnMode ? "إنهاء الاسترجاع" : "وضع الاسترجاع";
+
+    public string ReturnModeBanner =>
+        IsReturnMode
+            ? "وضع الاسترجاع نشط — امسح POS-رقم الإيصال أو أضف الأصناف ثم أكّد الرد"
+            : string.Empty;
+
+    public bool ShowReturnModeBanner => IsReturnMode;
 
     [ObservableProperty]
     private string _syncMessage = "بدء المزامنة…";
@@ -249,11 +372,20 @@ public partial class PosSession : ObservableObject
 
     public bool HasCashierAlert => !string.IsNullOrWhiteSpace(CashierAlert);
 
-    public bool CanBeginPayment => CanOperate && HasLines && !IsTendering && !BlockNewSales && !BlocksScanning;
+    public bool CanBeginPayment =>
+        CanOperate && HasLines && !IsTendering && !BlockNewSales && !BlocksScanning;
 
-    public bool CanHoldCart => CanOperate && HasLines && !IsTendering && !BlocksScanning;
+    public bool CanHoldCart =>
+        CanOperate && HasLines && !IsTendering && !BlocksScanning && !IsReturnMode;
 
-    public bool CanOpenHeldCarts => CanOperate && !IsTendering && !BlocksScanning;
+    public bool CanOpenHeldCarts =>
+        CanOperate && !IsTendering && !BlocksScanning && !IsReturnMode;
+
+    public bool CanToggleReturnMode =>
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts;
+
+    public bool CanOpenDrawer =>
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts;
 
     public bool HasHeldCarts => HeldCarts.Count > 0;
 
@@ -272,7 +404,9 @@ public partial class PosSession : ObservableObject
 
     public string LineCountText => Lines.Count == 0 ? "السلة فارغة" : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} سطور";
 
-    public long TotalMinor => Lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
+    public long SubtotalMinor => Lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
+
+    public long TotalMinor => Math.Max(0, checked(SubtotalMinor - LoyaltyDiscountMinor));
 
     public string TotalText => Money.FormatEgp(TotalMinor);
 
@@ -283,32 +417,46 @@ public partial class PosSession : ObservableObject
         get
         {
             if (IsTendering)
-                return "المستحق";
+                return IsReturnMode ? "المسترد" : "المستحق";
             if (ShowSettlement)
-                return "الباقي";
-            return "الإجمالي";
+                return IsReturnMode ? "تم الرد" : "الباقي";
+            return IsReturnMode ? "قيمة الاسترجاع" : "الإجمالي";
         }
     }
 
-    public string AmountText => ShowSettlement ? Money.FormatEgp(LastChangeMinor) : TotalText;
+    public string AmountText => ShowSettlement
+        ? Money.FormatEgp(Math.Abs(LastChangeMinor))
+        : TotalText;
 
     public string SettlementText =>
-        $"تم البيع — إيصال {LastReceiptNo.ToString(CultureInfo.InvariantCulture)}";
+        _lastSaleWasReturn
+            ? $"تم الاسترجاع — إيصال {LastReceiptNo.ToString(CultureInfo.InvariantCulture)}"
+            : $"تم البيع — إيصال {LastReceiptNo.ToString(CultureInfo.InvariantCulture)}";
 
     public string IdleCustomerText => IsCfdCompleted ? "شكراً لكم" : IdleGreetingText;
 
-    public bool ShowCustomerChange => IsTendering && CanConfirmCash;
+    public bool ShowCustomerChange =>
+        IsTendering && IsCashPayment && CanConfirmCash && !IsReturnMode;
 
     public string CustomerChangeText => ShowCustomerChange
         ? "الباقي " + Money.FormatEgp(ParsedTender - TotalMinor)
         : string.Empty;
 
-    public bool CanConfirmCash =>
-        CanOperate
-        && IsTendering
-        && HasLines
-        && Money.TryParseEgp(TenderText, out var tender)
-        && tender >= TotalMinor;
+    public bool CanConfirmCash
+    {
+        get
+        {
+            if (!CanOperate || !IsTendering || !HasLines)
+                return false;
+            if (!Money.TryParseEgp(TenderText, out var tender))
+                return false;
+            if (IsWeChatPayment && !WeChatFx.TryParseRate(ExchangeRateText, out _))
+                return false;
+            if (IsReturnMode || !IsCashPayment)
+                return tender == TotalMinor;
+            return tender >= TotalMinor;
+        }
+    }
 
     public string TenderHint
     {
@@ -318,11 +466,36 @@ public partial class PosSession : ObservableObject
                 return SaleError;
             if (!IsTendering)
                 return string.Empty;
+            if (IsWeChatPayment && !WeChatFx.TryParseRate(ExchangeRateText, out _))
+                return "أدخل سعر الصرف (ج.م لكل يوان).";
             if (!Money.TryParseEgp(TenderText, out var tender))
-                return "اكتب المبلغ المستلم، مثل 200 أو 200.50";
-            if (tender < TotalMinor)
-                return "المبلغ أقل من المستحق";
-            return "الباقي " + Money.FormatEgp(tender - TotalMinor);
+            {
+                if (IsReturnMode)
+                    return "الاسترجاع يرد المستحق بالكامل بدون باقي.";
+                return IsCashPayment
+                    ? "اكتب المبلغ المستلم، مثل 200 أو 200.50"
+                    : "المبلغ المستحق يُثبَّت تلقائياً لهذه الطريقة.";
+            }
+
+            if (IsReturnMode)
+            {
+                if (tender != TotalMinor)
+                    return "الاسترجاع يرد المستحق بالكامل بدون باقي.";
+                return "أكد رد المبلغ للعميل.";
+            }
+
+            if (IsCashPayment)
+            {
+                if (tender < TotalMinor)
+                    return "المبلغ أقل من المستحق";
+                return "الباقي " + Money.FormatEgp(tender - TotalMinor);
+            }
+
+            if (tender != TotalMinor)
+                return "هذه الطريقة بدون باقي — استخدم المستحق بالكامل.";
+            if (IsWeChatPayment)
+                return "المبلغ باليوان: " + WeChatCnyText;
+            return "أكد الاستلام بنفس المستحق.";
         }
     }
 
@@ -383,6 +556,13 @@ public partial class PosSession : ObservableObject
 
     private void RemoveLine(CartLine line)
     {
+        if (!CanOperate || IsTendering || ShowSupervisorPin)
+            return;
+        BeginSupervisorChallenge(SupervisorActionKind.DeleteItem, line);
+    }
+
+    private void RemoveLineNow(CartLine line)
+    {
         Lines.Remove(line);
         if (_highlightedLineId == line.LineId)
             ClearHighlight();
@@ -405,7 +585,7 @@ public partial class PosSession : ObservableObject
 
     public void SubmitBarcode()
     {
-        if (BlocksScanning)
+        if (BlocksScanning || IsLookingUpErp)
             return;
 
         if (!CanOperate)
@@ -418,6 +598,27 @@ public partial class PosSession : ObservableObject
         if (code.Length == 0)
             return;
 
+        if (QueueTicketCodes.IsQueueCode(code))
+        {
+            Barcode = string.Empty;
+            _ = ClaimQueueTicketAsync(code);
+            return;
+        }
+
+        if (LoyaltyScan.IsLoyaltyPhone(code))
+        {
+            Barcode = string.Empty;
+            _ = LookupLoyaltyAsync(code);
+            return;
+        }
+
+        if (IsReturnMode && ReceiptCodes.LooksLikeReceiptCode(code))
+        {
+            Barcode = string.Empty;
+            LoadReturnFromReceipt(code);
+            return;
+        }
+
         var product = _database.FindByBarcode(code);
         Barcode = string.Empty;
         if (product is null)
@@ -427,6 +628,253 @@ public partial class PosSession : ObservableObject
         }
 
         AddProduct(product);
+    }
+
+    private async Task ClaimQueueTicketAsync(string code)
+    {
+        if (IsReturnMode)
+        {
+            IsReturnMode = false;
+        }
+
+        IsLookingUpErp = true;
+        ScanHint = "جاري سحب القسيمة…";
+        try
+        {
+            var result = await _erp.ClaimQueueTicketAsync(code, CancellationToken.None).ConfigureAwait(true);
+            if (!result.Ok || result.Ticket is null)
+            {
+                ScanHint = result.ErrorMessage ?? "تعذر سحب القسيمة.";
+                return;
+            }
+
+            var ticket = result.Ticket;
+            var added = 0;
+            var missing = new List<string>();
+            Lines.Clear();
+            ClearHighlight();
+            HasSettlement = false;
+            _settlementAt = null;
+
+            foreach (var item in ticket.Items)
+            {
+                if (!TryAddQueueItem(item, out var miss))
+                {
+                    if (!string.IsNullOrWhiteSpace(miss))
+                        missing.Add(miss!);
+                    continue;
+                }
+
+                added++;
+            }
+
+            if (added == 0)
+            {
+                _activeQueueTicketCode = null;
+                ScanHint = missing.Count > 0
+                    ? $"تعذر تحميل الأصناف: {string.Join("، ", missing.Take(3))}"
+                    : "القسيمة فارغة.";
+                RefreshCheckout();
+                return;
+            }
+
+            _activeQueueTicketCode = ticket.Code;
+            if (!string.IsNullOrWhiteSpace(ticket.CustomerPhone) || !string.IsNullOrWhiteSpace(ticket.CustomerId))
+            {
+                if (!string.IsNullOrWhiteSpace(ticket.CustomerPhone) && LoyaltyScan.IsLoyaltyPhone(ticket.CustomerPhone))
+                    await LookupLoyaltyAsync(ticket.CustomerPhone).ConfigureAwait(true);
+                else if (!string.IsNullOrWhiteSpace(ticket.CustomerId))
+                {
+                    _loyaltyCustomer = new LoyaltyCustomer(
+                        ticket.CustomerId!,
+                        ticket.CustomerName,
+                        ticket.CustomerPhone ?? "",
+                        0);
+                    RedeemLoyaltyPoints = false;
+                    OnPropertyChanged(nameof(HasLoyaltyCustomer));
+                    OnPropertyChanged(nameof(LoyaltyCaption));
+                    OnPropertyChanged(nameof(CanRedeemLoyalty));
+                }
+            }
+
+            ScanHint = missing.Count > 0
+                ? $"تم تحميل {ticket.Code} · ناقص {missing.Count.ToString(CultureInfo.InvariantCulture)} صنف"
+                : $"تم تحميل قسيمة {ticket.Code}";
+            RefreshCheckout();
+            RequestFocus(UiFocusTarget.Barcode);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("claim queue ticket failed", ex);
+            ScanHint = ArabicUi.FromException(ex, "تعذر سحب القسيمة.");
+        }
+        finally
+        {
+            IsLookingUpErp = false;
+        }
+    }
+
+    private bool TryAddQueueItem(QueueTicketItem item, out string? missingLabel)
+    {
+        missingLabel = null;
+        var product = _database.FindProductForQueueItem(item.ProductId, item.Barcode);
+        if (product is null)
+        {
+            missingLabel = string.IsNullOrWhiteSpace(item.Name) ? item.ProductId : item.Name;
+            return false;
+        }
+
+        var qtyAbs = Math.Abs(item.Quantity);
+        var unitMajor = Math.Abs(item.UnitPriceMajor);
+        int qty;
+        long unitMinor;
+        if (item.IsWeighted || qtyAbs != Math.Floor(qtyAbs))
+        {
+            qty = 1;
+            unitMinor = ToMinor(qtyAbs * unitMajor);
+        }
+        else
+        {
+            qty = Math.Max(1, (int)Math.Round(qtyAbs, MidpointRounding.AwayFromZero));
+            unitMinor = ToMinor(unitMajor);
+        }
+
+        if (unitMinor < 0)
+            unitMinor = 0;
+
+        var payload = new HeldCartLinePayload(
+            product.Id,
+            item.Barcode ?? product.Barcode,
+            string.IsNullOrWhiteSpace(item.Name) ? product.NameAr : item.Name,
+            item.NameZh ?? product.NameZh,
+            qty,
+            unitMinor);
+        var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine);
+        Lines.Add(line);
+        HighlightLine(line);
+        return true;
+    }
+
+    private static long ToMinor(decimal majorPounds)
+    {
+        var scaled = Math.Round(majorPounds * 100m, MidpointRounding.AwayFromZero);
+        if (scaled > long.MaxValue)
+            return long.MaxValue;
+        if (scaled < long.MinValue)
+            return long.MinValue;
+        return (long)scaled;
+    }
+
+    private async Task LookupLoyaltyAsync(string phone)
+    {
+        IsLookingUpErp = true;
+        ScanHint = "جاري البحث عن الولاء…";
+        try
+        {
+            var (customer, error) = await _erp.LookupLoyaltyPhoneAsync(phone, CancellationToken.None)
+                .ConfigureAwait(true);
+            if (customer is null)
+            {
+                ClearLoyalty();
+                ScanHint = error ?? "عميل غير موجود";
+                return;
+            }
+
+            _loyaltyCustomer = customer;
+            RedeemLoyaltyPoints = false;
+            OnPropertyChanged(nameof(HasLoyaltyCustomer));
+            OnPropertyChanged(nameof(LoyaltyCaption));
+            OnPropertyChanged(nameof(CanRedeemLoyalty));
+            OnPropertyChanged(nameof(CanToggleRedeemLoyalty));
+            OnPropertyChanged(nameof(RedeemLoyaltyButtonText));
+            ScanHint = LoyaltyCaption;
+            RefreshCheckout();
+            RequestFocus(UiFocusTarget.Barcode);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("loyalty lookup failed", ex);
+            ScanHint = ArabicUi.FromException(ex, "تعذر البحث عن العميل.");
+        }
+        finally
+        {
+            IsLookingUpErp = false;
+        }
+    }
+
+    [RelayCommand]
+    private void ClearLoyalty()
+    {
+        _loyaltyCustomer = null;
+        RedeemLoyaltyPoints = false;
+        OnPropertyChanged(nameof(HasLoyaltyCustomer));
+        OnPropertyChanged(nameof(LoyaltyCaption));
+        OnPropertyChanged(nameof(CanRedeemLoyalty));
+        OnPropertyChanged(nameof(CanToggleRedeemLoyalty));
+        OnPropertyChanged(nameof(RedeemLoyaltyButtonText));
+        OnPropertyChanged(nameof(LoyaltyDiscountMinor));
+        OnPropertyChanged(nameof(LoyaltyDiscountText));
+        OnPropertyChanged(nameof(ShowLoyaltyDiscount));
+        RefreshCheckout();
+    }
+
+    [RelayCommand]
+    private void ToggleRedeemLoyalty()
+    {
+        if (!CanRedeemLoyalty && !RedeemLoyaltyPoints)
+            return;
+        RedeemLoyaltyPoints = !RedeemLoyaltyPoints;
+        if (IsTendering)
+            TenderText = Money.FormatAmount(TotalMinor);
+        RefreshCheckout();
+    }
+
+    partial void OnRedeemLoyaltyPointsChanged(bool value)
+    {
+        OnPropertyChanged(nameof(RedeemLoyaltyButtonText));
+        OnPropertyChanged(nameof(CanToggleRedeemLoyalty));
+        RefreshCheckout();
+    }
+
+    private void LoadReturnFromReceipt(string code)
+    {
+        try
+        {
+            var receiptLines = _database.FindSaleLinesByCode(code);
+            if (receiptLines is null || receiptLines.Count == 0)
+            {
+                ScanHint = "لم يُعثر على إيصال محلي بهذا الرمز (أو أنه استرجاع سابق).";
+                return;
+            }
+
+            Lines.Clear();
+            ClearHighlight();
+            HasSettlement = false;
+            _settlementAt = null;
+            foreach (var item in receiptLines)
+            {
+                var payload = new HeldCartLinePayload(
+                    item.ProductId,
+                    item.Barcode,
+                    item.NameAr,
+                    item.NameZh,
+                    item.Qty,
+                    item.UnitPriceMinor);
+                var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine);
+                Lines.Add(line);
+            }
+
+            if (Lines.Count > 0)
+                HighlightLine(Lines[^1]);
+            ScanHint = $"تم تحميل {Lines.Count.ToString(CultureInfo.InvariantCulture)} أصناف من الإيصال للاسترجاع.";
+            RefreshCheckout();
+            RequestFocus(UiFocusTarget.Barcode);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("load return receipt failed", ex);
+            ScanHint = ArabicUi.FromException(ex, "تعذر تحميل الإيصال.");
+        }
     }
 
     [RelayCommand]
@@ -698,6 +1146,23 @@ public partial class PosSession : ObservableObject
 
     partial void OnShowPriceCheckChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
 
+    partial void OnShowSupervisorPinChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BlocksScanning));
+        OnPropertyChanged(nameof(CanToggleReturnMode));
+        OnPropertyChanged(nameof(CanOpenDrawer));
+    }
+
+    partial void OnIsReturnModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ReturnModeButtonText));
+        OnPropertyChanged(nameof(ReturnModeBanner));
+        OnPropertyChanged(nameof(ShowReturnModeBanner));
+        OnPropertyChanged(nameof(CanHoldCart));
+        OnPropertyChanged(nameof(CanOpenHeldCarts));
+        RefreshCheckout();
+    }
+
     partial void OnShowHeldCartsChanged(bool value)
     {
         OnPropertyChanged(nameof(BlocksScanning));
@@ -740,6 +1205,8 @@ public partial class PosSession : ObservableObject
     [RelayCommand]
     private void ClearCart()
     {
+        if (ShowSupervisorPin)
+            return;
         Lines.Clear();
         ClearHighlight();
         IsTendering = false;
@@ -747,7 +1214,146 @@ public partial class PosSession : ObservableObject
         _settlementAt = null;
         TenderText = string.Empty;
         SaleError = string.Empty;
+        _activeQueueTicketCode = null;
+        OnPropertyChanged(nameof(HasActiveQueueTicket));
+        OnPropertyChanged(nameof(ActiveQueueCaption));
         RefreshCheckout();
+    }
+
+    private async Task CompleteQueueTicketAsync(string code, string saleId)
+    {
+        try
+        {
+            var ok = await _erp.CompleteQueueTicketAsync(code, saleId, CancellationToken.None).ConfigureAwait(true);
+            if (!ok)
+                PosLog.Error($"queue ticket complete failed code={code}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error($"queue ticket complete failed code={code}", ex);
+        }
+    }
+
+    [RelayCommand]
+    private void ToggleReturnMode()
+    {
+        if (!CanToggleReturnMode && !IsReturnMode)
+            return;
+
+        if (IsReturnMode)
+        {
+            IsReturnMode = false;
+            ScanHint = "انتهى وضع الاسترجاع.";
+            RequestFocus(UiFocusTarget.Barcode);
+            return;
+        }
+
+        BeginSupervisorChallenge(SupervisorActionKind.ReturnMode);
+    }
+
+    [RelayCommand]
+    private void OpenCashDrawer()
+    {
+        if (!CanOpenDrawer)
+            return;
+        BeginSupervisorChallenge(SupervisorActionKind.OpenDrawer);
+    }
+
+    [RelayCommand]
+    private void CancelSupervisorPin()
+    {
+        ClearSupervisorChallenge();
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void SubmitSupervisorPin()
+    {
+        SupervisorError = string.Empty;
+        if (_pendingSupervisorAction is null)
+        {
+            ClearSupervisorChallenge();
+            return;
+        }
+
+        var result = _database.TryAuthenticatePin(SupervisorPinText);
+        SupervisorPinText = string.Empty;
+        if (result.Status != PinAuthStatus.Ok || result.Cashier is null)
+        {
+            SupervisorError = result.Message ?? "تعذر التحقق من الرقم السري.";
+            return;
+        }
+
+        if (!SupervisorAuth.IsPrivileged(result.Cashier))
+        {
+            SupervisorError = "يلزم رقم سري لمشرف أو مدير.";
+            return;
+        }
+
+        var action = _pendingSupervisorAction.Value;
+        var deleteLine = _pendingDeleteLine;
+        ClearSupervisorChallenge();
+
+        switch (action)
+        {
+            case SupervisorActionKind.DeleteItem:
+                if (deleteLine is not null && Lines.Contains(deleteLine))
+                    RemoveLineNow(deleteLine);
+                RequestFocus(UiFocusTarget.Barcode);
+                break;
+            case SupervisorActionKind.ReturnMode:
+                IsReturnMode = true;
+                ScanHint = "وضع الاسترجاع — امسح POS-رقم الإيصال أو أضف الأصناف.";
+                RequestFocus(UiFocusTarget.Barcode);
+                break;
+            case SupervisorActionKind.OpenDrawer:
+                _ = KickDrawerAsync();
+                RequestFocus(UiFocusTarget.Barcode);
+                break;
+        }
+    }
+
+    private void BeginSupervisorChallenge(SupervisorActionKind action, CartLine? deleteLine = null)
+    {
+        _pendingSupervisorAction = action;
+        _pendingDeleteLine = deleteLine;
+        SupervisorTitle = SupervisorAuth.TitleAr(action);
+        SupervisorHint = SupervisorAuth.HintAr(action);
+        SupervisorPinText = string.Empty;
+        SupervisorError = string.Empty;
+        ShowSupervisorPin = true;
+        RequestFocus(UiFocusTarget.SupervisorPin);
+    }
+
+    private void ClearSupervisorChallenge()
+    {
+        _pendingSupervisorAction = null;
+        _pendingDeleteLine = null;
+        ShowSupervisorPin = false;
+        SupervisorPinText = string.Empty;
+        SupervisorError = string.Empty;
+        SupervisorTitle = string.Empty;
+        SupervisorHint = string.Empty;
+    }
+
+    private async Task KickDrawerAsync()
+    {
+        try
+        {
+            if (!_printer.IsConfigured)
+            {
+                await SetPrintHintAsync("الطابعة غير مضبوطة — لا يمكن فتح الدرج.").ConfigureAwait(false);
+                return;
+            }
+
+            await _printer.KickDrawerAsync(CancellationToken.None).ConfigureAwait(false);
+            await SetPrintHintAsync("تم إرسال أمر فتح الدرج.").ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("drawer kick failed", ex);
+            await SetPrintHintAsync("تعذر فتح الدرج.").ConfigureAwait(false);
+        }
     }
 
     [RelayCommand]
@@ -789,6 +1395,10 @@ public partial class PosSession : ObservableObject
         TenderText = string.Empty;
         SaleError = string.Empty;
         ShowCloseShift = false;
+        IsReturnMode = false;
+        _activeQueueTicketCode = null;
+        ClearLoyalty();
+        ClearSupervisorChallenge();
         _currentCashier = null;
         CashierName = string.Empty;
         NeedsLogin = true;
@@ -892,10 +1502,26 @@ public partial class PosSession : ObservableObject
 
         HasSettlement = false;
         SaleError = string.Empty;
+        SelectedPayment = PosPaymentMethod.Cash;
+        ExchangeRateText = WeChatFx.DefaultEgpPerCny.ToString("0.##", CultureInfo.InvariantCulture);
         TenderText = Money.FormatAmount(TotalMinor);
         IsTendering = true;
         TenderOpened?.Invoke();
         RequestFocus(UiFocusTarget.Tender);
+    }
+
+    [RelayCommand]
+    private void SelectPayment(PosPaymentMethod method)
+    {
+        if (!IsTendering)
+            return;
+        SelectedPayment = method;
+        SaleError = string.Empty;
+        if (!IsCashPayment)
+            TenderText = Money.FormatAmount(TotalMinor);
+        RefreshCheckout();
+        if (IsCashPayment)
+            RequestFocus(UiFocusTarget.Tender);
     }
 
     [RelayCommand]
@@ -912,6 +1538,7 @@ public partial class PosSession : ObservableObject
         IsTendering = false;
         TenderText = string.Empty;
         SaleError = string.Empty;
+        SelectedPayment = PosPaymentMethod.Cash;
         RequestFocus(UiFocusTarget.Barcode);
     }
 
@@ -937,11 +1564,48 @@ public partial class PosSession : ObservableObject
             return;
         }
 
+        decimal? wechatRate = null;
+        if (IsWeChatPayment)
+        {
+            if (!WeChatFx.TryParseRate(ExchangeRateText, out var rate))
+            {
+                SaleError = "سعر الصرف غير صالح.";
+                return;
+            }
+
+            wechatRate = rate;
+        }
+
         try
         {
-            var sale = _database.CompleteCashSale(lines, tender, _currentCashier.Id, _currentShift.Id);
+            var wasReturn = IsReturnMode;
+            var paymentLabel = PosPaymentMethods.LabelAr(SelectedPayment);
+            var paymentErp = PosPaymentMethods.ToErpId(SelectedPayment);
+            var kickDrawer = IsCashPayment || wasReturn;
+            var applyLoyalty = !wasReturn && _loyaltyCustomer is not null;
+            var discount = applyLoyalty ? LoyaltyDiscountMinor : 0;
+            var pointsRedeemed = applyLoyalty
+                ? LoyaltyScan.PointsRedeemedForDiscount(discount)
+                : 0;
+            var pointsEarned = applyLoyalty
+                ? LoyaltyScan.PointsEarnedForPayable(TotalMinor)
+                : 0;
+            var queueCode = _activeQueueTicketCode;
+            var sale = _database.CompleteSale(
+                lines,
+                tender,
+                _currentCashier.Id,
+                _currentShift.Id,
+                SelectedPayment,
+                wechatRate,
+                isReturn: wasReturn,
+                discountMinor: discount,
+                loyaltyCustomerId: applyLoyalty ? _loyaltyCustomer!.Id : null,
+                pointsEarned: pointsEarned,
+                pointsRedeemed: pointsRedeemed);
             LastReceiptNo = sale.ReceiptNo;
             LastChangeMinor = sale.ChangeMinor;
+            _lastSaleWasReturn = wasReturn;
             TenderText = string.Empty;
             IsTendering = false;
             Lines.Clear();
@@ -950,18 +1614,53 @@ public partial class PosSession : ObservableObject
             _settlementAt = DateTimeOffset.Now;
             PendingOutbox = _database.CountPendingOutbox();
             _lastSaleId = sale.SaleId;
-            ScanHint = $"تم حفظ الإيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)}";
-            PosLog.Info($"cashier confirmed receipt {sale.ReceiptNo}");
+            IsReturnMode = false;
+            _activeQueueTicketCode = null;
+            ClearLoyalty();
+            ScanHint = wasReturn
+                ? $"تم الاسترجاع — إيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)} · {paymentLabel}"
+                : $"تم حفظ الإيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)} · {paymentLabel}";
+            PosLog.Info(
+                $"cashier confirmed {(wasReturn ? "return" : "sale")} receipt {sale.ReceiptNo} method={paymentErp}");
+            SelectedPayment = PosPaymentMethod.Cash;
             OnPropertyChanged(nameof(CanReprint));
+            OnPropertyChanged(nameof(HasActiveQueueTicket));
+            OnPropertyChanged(nameof(ActiveQueueCaption));
             RefreshCheckout();
             RequestFocus(UiFocusTarget.Barcode);
-            _ = PrintSaleAsync(sale.SaleId, isReprint: false, kickDrawer: true);
+            _ = PrintSaleAsync(sale.SaleId, isReprint: false, kickDrawer: kickDrawer);
+            if (!string.IsNullOrWhiteSpace(queueCode) && !wasReturn)
+                _ = CompleteQueueTicketAsync(queueCode!, sale.SaleId);
         }
         catch (Exception ex)
         {
-            PosLog.Error("cash sale failed", ex);
+            PosLog.Error("sale confirm failed", ex);
             SaleError = ArabicUi.FromException(ex, "تعذر حفظ البيع. السلة ما زالت هنا.");
         }
+    }
+
+    partial void OnSelectedPaymentChanged(PosPaymentMethod value)
+    {
+        OnPropertyChanged(nameof(PaymentMethodLabel));
+        OnPropertyChanged(nameof(PaymentMethodLabelZh));
+        OnPropertyChanged(nameof(IsCashPayment));
+        OnPropertyChanged(nameof(IsWeChatPayment));
+        OnPropertyChanged(nameof(IsInstaPayPayment));
+        OnPropertyChanged(nameof(ShowsCustomerQr));
+        OnPropertyChanged(nameof(ShowWeChatQr));
+        OnPropertyChanged(nameof(ShowInstaPayQr));
+        OnPropertyChanged(nameof(WeChatCnyText));
+        OnPropertyChanged(nameof(CanConfirmCash));
+        OnPropertyChanged(nameof(TenderHint));
+        OnPropertyChanged(nameof(ShowCustomerChange));
+        OnPropertyChanged(nameof(CustomerChangeText));
+    }
+
+    partial void OnExchangeRateTextChanged(string value)
+    {
+        OnPropertyChanged(nameof(WeChatCnyText));
+        OnPropertyChanged(nameof(CanConfirmCash));
+        OnPropertyChanged(nameof(TenderHint));
     }
 
     public void ApplyDiskStatus(bool blockSales, string? message)
@@ -1048,6 +1747,7 @@ public partial class PosSession : ObservableObject
 
     private void RefreshCheckout()
     {
+        OnPropertyChanged(nameof(SubtotalMinor));
         OnPropertyChanged(nameof(TotalMinor));
         OnPropertyChanged(nameof(TotalText));
         OnPropertyChanged(nameof(IsCartEmpty));
@@ -1055,6 +1755,8 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanBeginPayment));
         OnPropertyChanged(nameof(CanHoldCart));
         OnPropertyChanged(nameof(CanOpenHeldCarts));
+        OnPropertyChanged(nameof(CanToggleReturnMode));
+        OnPropertyChanged(nameof(CanOpenDrawer));
         OnPropertyChanged(nameof(CanConfirmCash));
         OnPropertyChanged(nameof(LineCountText));
         OnPropertyChanged(nameof(AmountLabel));
@@ -1069,6 +1771,21 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanLock));
         OnPropertyChanged(nameof(CanOpenCloseShiftPanel));
         OnPropertyChanged(nameof(CanReprint));
+        OnPropertyChanged(nameof(PaymentMethodLabel));
+        OnPropertyChanged(nameof(WeChatCnyText));
+        OnPropertyChanged(nameof(ShowWeChatQr));
+        OnPropertyChanged(nameof(ShowInstaPayQr));
+        OnPropertyChanged(nameof(IsCashPayment));
+        OnPropertyChanged(nameof(ReturnModeButtonText));
+        OnPropertyChanged(nameof(ShowReturnModeBanner));
+        OnPropertyChanged(nameof(CanRedeemLoyalty));
+        OnPropertyChanged(nameof(CanToggleRedeemLoyalty));
+        OnPropertyChanged(nameof(RedeemLoyaltyButtonText));
+        OnPropertyChanged(nameof(LoyaltyDiscountMinor));
+        OnPropertyChanged(nameof(LoyaltyDiscountText));
+        OnPropertyChanged(nameof(ShowLoyaltyDiscount));
+        OnPropertyChanged(nameof(HasActiveQueueTicket));
+        OnPropertyChanged(nameof(ActiveQueueCaption));
         RefreshCustomerDisplayMode(DateTimeOffset.Now);
     }
 

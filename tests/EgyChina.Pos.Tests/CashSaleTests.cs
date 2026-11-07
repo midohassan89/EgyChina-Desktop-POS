@@ -108,6 +108,7 @@ public sealed class CashSaleTests : IDisposable
         var root = payload.RootElement;
         Assert.Equal(sale.SaleId, root.GetProperty("saleId").GetString());
         Assert.Equal(21_000, root.GetProperty("totalMinor").GetInt64());
+        Assert.False(root.GetProperty("isReturn").GetBoolean());
         Assert.Equal(JsonValueKind.Null, root.GetProperty("fx").ValueKind);
         Assert.Equal(JsonValueKind.Null, root.GetProperty("shiftId").ValueKind);
         Assert.Equal(sale.ShiftId, root.GetProperty("localShiftId").GetString());

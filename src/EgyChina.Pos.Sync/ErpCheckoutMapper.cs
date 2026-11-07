@@ -60,13 +60,41 @@ public static class ErpCheckoutMapper
         }
 
         var total = Scale(totalMinor, scale);
+        var isReturn = root.TryGetProperty("isReturn", out var returnNode)
+            && returnNode.ValueKind == JsonValueKind.True;
+        if (isReturn && total > 0)
+            total = -total;
         var createdAt = root.TryGetProperty("completedAt", out _)
             ? null
             : DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         // The stored payload has no completedAt. Callers pass the sale timestamp separately when they have it.
         // createdAt stays in the body because the live client always sends it; the worker overwrites this
         // placeholder before posting when the sale row has completed_at.
-        json = Write(saleIdNode.GetString()!, paymentMethod.Trim(), total, createdAt ?? "", lines);
+        string? customerId = null;
+        if (root.TryGetProperty("customerId", out var customerNode)
+            && customerNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(customerNode.GetString()))
+        {
+            customerId = customerNode.GetString();
+        }
+
+        var pointsEarned = 0;
+        if (root.TryGetProperty("pointsEarned", out var earnedNode) && earnedNode.TryGetInt32(out var earned))
+            pointsEarned = Math.Max(0, earned);
+        var pointsRedeemed = 0;
+        if (root.TryGetProperty("pointsRedeemed", out var redeemedNode) && redeemedNode.TryGetInt32(out var redeemed))
+            pointsRedeemed = Math.Max(0, redeemed);
+
+        json = Write(
+            saleIdNode.GetString()!,
+            paymentMethod.Trim(),
+            total,
+            createdAt ?? "",
+            lines,
+            isReturn,
+            customerId,
+            pointsEarned,
+            pointsRedeemed);
         return true;
     }
 
@@ -75,7 +103,11 @@ public static class ErpCheckoutMapper
         string paymentMethod,
         decimal total,
         string createdAt,
-        IReadOnlyList<MappedLine> lines)
+        IReadOnlyList<MappedLine> lines,
+        bool isReturn = false,
+        string? customerId = null,
+        int pointsEarned = 0,
+        int pointsRedeemed = 0)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -84,13 +116,19 @@ public static class ErpCheckoutMapper
             writer.WriteString("paymentMethod", paymentMethod);
             WriteMoney(writer, "amount", decimal.Abs(total));
             WriteMoney(writer, "total", total);
-            writer.WriteBoolean("isReturn", false);
+            writer.WriteBoolean("isReturn", isReturn);
             writer.WriteNull("shiftId");
             writer.WriteString("localId", localId);
             writer.WriteString("createdAt", createdAt);
             writer.WriteNull("customerName");
             writer.WriteNull("employeeId");
             writer.WriteNull("wooOrderId");
+            if (string.IsNullOrWhiteSpace(customerId))
+                writer.WriteNull("customerId");
+            else
+                writer.WriteString("customerId", customerId);
+            writer.WriteNumber("pointsEarned", Math.Max(0, pointsEarned));
+            writer.WriteNumber("pointsRedeemed", Math.Max(0, pointsRedeemed));
             writer.WritePropertyName("lines");
             writer.WriteStartArray();
             foreach (var line in lines)

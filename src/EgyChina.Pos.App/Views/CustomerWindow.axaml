@@ -119,40 +119,131 @@
       </Border>
     </Grid>
 
-    <!-- PAYMENT (cash for UI-1) -->
-    <Grid IsVisible="{Binding IsCfdPayment}">
-      <Border HorizontalAlignment="Center"
-              VerticalAlignment="Center"
-              Background="#0B1210"
-              CornerRadius="24"
-              Padding="36,28"
-              MinWidth="420"
-              MaxWidth="560">
-        <StackPanel Spacing="14">
-          <TextBlock Text="الدفع" FontSize="22" Foreground="#8FA399" HorizontalAlignment="Center" />
-          <TextBlock Text="{Binding PaymentMethodLabel}"
-                     FontSize="32"
-                     FontWeight="Bold"
-                     Foreground="#34D399"
-                     HorizontalAlignment="Center" />
-          <TextBlock Text="المستحق" FontSize="16" Foreground="#8FA399" HorizontalAlignment="Center" />
-          <TextBlock Text="{Binding TotalText}"
-                     FontSize="48"
-                     FontWeight="Bold"
-                     Foreground="#F6F1E4"
-                     HorizontalAlignment="Center" />
-          <TextBlock Text="{Binding CustomerChangeText}"
-                     IsVisible="{Binding ShowCustomerChange}"
-                     FontSize="28"
-                     Foreground="#E3C57A"
-                     HorizontalAlignment="Center" />
-          <TextBlock Text="جارٍ الدفع نقداً"
-                     FontSize="18"
-                     Foreground="#8FA399"
-                     HorizontalAlignment="Center"
-                     Margin="0,8,0,0" />
-        </StackPanel>
-      </Border>
+    <!-- PAYMENT -->
+    <Grid IsVisible="{Binding IsCfdPayment}" Margin="24">
+      <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Border Background="#0B1210"
+                CornerRadius="24"
+                Padding="36,28"
+                MinWidth="380"
+                MaxWidth="520"
+                Margin="0,0,16,0">
+          <StackPanel Spacing="14">
+            <TextBlock Text="الدفع" FontSize="22" Foreground="#8FA399" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding PaymentMethodLabel}"
+                       FontSize="32"
+                       FontWeight="Bold"
+                       Foreground="#34D399"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding PaymentMethodLabelZh}"
+                       FontSize="16"
+                       Foreground="#8FA399"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="المستحق" FontSize="16" Foreground="#8FA399" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding TotalText}"
+                       FontSize="48"
+                       FontWeight="Bold"
+                       Foreground="#F6F1E4"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding WeChatCnyText}"
+                       IsVisible="{Binding IsWeChatPayment}"
+                       FontSize="28"
+                       FontWeight="Bold"
+                       Foreground="#86EFAC"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding CustomerChangeText}"
+                       IsVisible="{Binding ShowCustomerChange}"
+                       FontSize="28"
+                       Foreground="#E3C57A"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="جارٍ الدفع نقداً"
+                       IsVisible="{Binding IsCashPayment}"
+                       FontSize="18"
+                       Foreground="#8FA399"
+                       HorizontalAlignment="Center"
+                       Margin="0,8,0,0" />
+          </StackPanel>
+        </Border>
+
+        <!-- WeChat QR panel -->
+        <Border Grid.Column="1"
+                IsVisible="{Binding ShowWeChatQr}"
+                Background="White"
+                CornerRadius="24"
+                Padding="20"
+                Width="320"
+                VerticalAlignment="Center">
+          <StackPanel Spacing="10" HorizontalAlignment="Center">
+            <TextBlock Text="امسح الكود للدفع / Scan to Pay"
+                       FontSize="14"
+                       FontWeight="Bold"
+                       Foreground="#0F172A"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="请扫码付款"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       Foreground="#047857"
+                       HorizontalAlignment="Center" />
+            <Image x:Name="WeChatQrImage"
+                   Width="240"
+                   Height="240"
+                   Stretch="Uniform"
+                   HorizontalAlignment="Center" />
+            <TextBlock x:Name="WeChatQrFallback"
+                       Text="ضع wechat-qr.jpg في مجلد assets"
+                       FontSize="12"
+                       Foreground="#64748B"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       IsVisible="False" />
+          </StackPanel>
+        </Border>
+
+        <!-- InstaPay QR panel -->
+        <Border Grid.Column="1"
+                IsVisible="{Binding ShowInstaPayQr}"
+                Background="White"
+                CornerRadius="24"
+                Padding="20"
+                Width="320"
+                VerticalAlignment="Center">
+          <StackPanel Spacing="10" HorizontalAlignment="Center">
+            <TextBlock Text="امسح الكود للدفع عبر إنستا باي"
+                       FontSize="14"
+                       FontWeight="Bold"
+                       Foreground="#5B2B8C"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="Scan to Pay · InstaPay"
+                       FontSize="13"
+                       Foreground="#64748B"
+                       HorizontalAlignment="Center" />
+            <Image x:Name="InstaPayQrImage"
+                   Width="240"
+                   Height="240"
+                   Stretch="Uniform"
+                   HorizontalAlignment="Center" />
+            <TextBlock x:Name="InstaPayQrFallback"
+                       Text="ضع instapay-qr.jpeg في مجلد assets"
+                       FontSize="12"
+                       Foreground="#64748B"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap"
+                       IsVisible="False" />
+            <TextBlock Text="أو التحويل على الرقم:"
+                       FontSize="14"
+                       Foreground="#64748B"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding InstaPayPhoneHint}"
+                       FontSize="26"
+                       FontWeight="Bold"
+                       Foreground="#5B2B8C"
+                       HorizontalAlignment="Center"
+                       FlowDirection="LeftToRight" />
+          </StackPanel>
+        </Border>
+      </Grid>
     </Grid>
 
     <!-- COMPLETED -->

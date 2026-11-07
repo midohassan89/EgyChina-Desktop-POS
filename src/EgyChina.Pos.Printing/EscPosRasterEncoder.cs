@@ -57,16 +57,26 @@ public static class EscPosRasterEncoder
         stream.WriteByte(0x00);
 
         if (kickDrawer)
-        {
-            // ESC p m t1 t2 — pin 2 pulse for cash drawer on printer RJ11
-            stream.WriteByte(0x1B);
-            stream.WriteByte(0x70);
-            stream.WriteByte(0x00);
-            stream.WriteByte(0x19);
-            stream.WriteByte(0xFA);
-        }
+            WriteDrawerKick(stream);
 
         return stream.ToArray();
+    }
+
+    public static byte[] DrawerKickOnly()
+    {
+        using var stream = new MemoryStream(8);
+        WriteDrawerKick(stream);
+        return stream.ToArray();
+    }
+
+    private static void WriteDrawerKick(Stream stream)
+    {
+        // ESC p m t1 t2 — pin 2 pulse for cash drawer on printer RJ11
+        stream.WriteByte(0x1B);
+        stream.WriteByte(0x70);
+        stream.WriteByte(0x00);
+        stream.WriteByte(0x19);
+        stream.WriteByte(0xFA);
     }
 
     private static List<byte[]> ToMonoRows(SKBitmap bitmap)

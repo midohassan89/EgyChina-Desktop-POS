@@ -30,4 +30,7 @@ public interface IReceiptPrinter
     bool IsConfigured { get; }
 
     Task PrintAsync(ReceiptDocument document, CancellationToken cancellationToken);
+
+    /// <summary>Pulse the cash drawer without printing a receipt.</summary>
+    Task KickDrawerAsync(CancellationToken cancellationToken);
 }

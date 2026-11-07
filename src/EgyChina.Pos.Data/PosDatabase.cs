@@ -96,6 +96,13 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "005_held_cart.sql");
                 MarkMigration(connection, 5, "held-cart");
+                version = 5;
+            }
+
+            if (version < 6)
+            {
+                ApplyMigrationScript(connection, "006_payment_wallet.sql");
+                MarkMigration(connection, 6, "payment-wallet");
             }
 
             EnsureTerminal(connection);
@@ -131,6 +138,55 @@ public sealed class PosDatabase
             command.Parameters.AddWithValue("$barcode", barcode.Trim());
             using var reader = command.ExecuteReader();
             return reader.Read() ? ReadProduct(reader) : null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves a queue-ticket line against the local catalog (prisma id, numeric wcId, barcode, sku).
+    /// </summary>
+    public CatalogProduct? FindProductForQueueItem(string productId, string? barcode)
+    {
+        if (string.IsNullOrWhiteSpace(productId) && string.IsNullOrWhiteSpace(barcode))
+            return null;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            var id = productId.Trim();
+            if (id.Length > 0)
+            {
+                using (var byPrisma = connection.CreateCommand())
+                {
+                    byPrisma.CommandText = ProductSelect + " AND (p.prisma_id = $id OR p.id = $id)";
+                    byPrisma.Parameters.AddWithValue("$id", id);
+                    using var reader = byPrisma.ExecuteReader();
+                    if (reader.Read())
+                        return ReadProduct(reader);
+                }
+
+                if (long.TryParse(id, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var numeric)
+                    && numeric > 0)
+                {
+                    using var byErp = connection.CreateCommand();
+                    byErp.CommandText = ProductSelect + " AND p.erp_numeric_id = $erp";
+                    byErp.Parameters.AddWithValue("$erp", numeric);
+                    using var reader = byErp.ExecuteReader();
+                    if (reader.Read())
+                        return ReadProduct(reader);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(barcode))
+            {
+                using var byBarcode = connection.CreateCommand();
+                byBarcode.CommandText = ProductSelect + " AND p.barcode = $barcode";
+                byBarcode.Parameters.AddWithValue("$barcode", barcode.Trim());
+                using var reader = byBarcode.ExecuteReader();
+                if (reader.Read())
+                    return ReadProduct(reader);
+            }
+
+            return null;
         }
     }
 
@@ -567,7 +623,7 @@ public sealed class PosDatabase
             {
                 pay.CommandText = """
                     SELECT amount_minor FROM payment
-                    WHERE sale_id = $sale AND method = 'cash_egp'
+                    WHERE sale_id = $sale
                     ORDER BY created_at
                     LIMIT 1
                     """;
@@ -1445,24 +1501,45 @@ public sealed class PosDatabase
 
     /// <summary>
     /// Commits one cash EGP sale under an open local shift. Does not talk to the network.
-    /// ERP checkout still receives <c>shiftId: null</c> until shift push exists (phase later).
     /// </summary>
     public CompletedCashSale CompleteCashSale(
         IReadOnlyList<CashSaleLine> lines,
         long tenderMinor,
         string cashierId,
-        string shiftId)
+        string shiftId) =>
+        CompleteSale(lines, tenderMinor, cashierId, shiftId, PosPaymentMethod.Cash);
+
+    /// <summary>
+    /// Commits a sale under an open local shift. ERP still receives <c>shiftId: null</c> until shift push exists.
+    /// Sync continues to require env gates; the outbox stores the real method for later mapping.
+    /// </summary>
+    public CompletedCashSale CompleteSale(
+        IReadOnlyList<CashSaleLine> lines,
+        long tenderMinor,
+        string cashierId,
+        string shiftId,
+        PosPaymentMethod paymentMethod,
+        decimal? wechatEgpPerCny = null,
+        bool isReturn = false,
+        long discountMinor = 0,
+        string? loyaltyCustomerId = null,
+        int pointsEarned = 0,
+        int pointsRedeemed = 0)
     {
         if (lines is null || lines.Count == 0)
-            throw new ArgumentException("A cash sale needs at least one line.", nameof(lines));
+            throw new ArgumentException("A sale needs at least one line.", nameof(lines));
         if (tenderMinor < 0)
             throw new ArgumentOutOfRangeException(nameof(tenderMinor));
+        if (discountMinor < 0)
+            throw new ArgumentOutOfRangeException(nameof(discountMinor));
         if (string.IsNullOrWhiteSpace(cashierId))
             throw new ArgumentException("Cashier id is required.", nameof(cashierId));
         if (string.IsNullOrWhiteSpace(shiftId))
             throw new ArgumentException("Shift id is required.", nameof(shiftId));
+        if (isReturn && discountMinor > 0)
+            throw new InvalidOperationException("لا يُطبَّق خصم الولاء على الاسترجاع.");
 
-        long total = 0;
+        long subtotal = 0;
         foreach (var line in lines)
         {
             if (string.IsNullOrWhiteSpace(line.ProductId))
@@ -1473,11 +1550,34 @@ public sealed class PosDatabase
                 throw new ArgumentOutOfRangeException(nameof(lines), "Quantity must be at least 1.");
             if (line.UnitPriceMinor < 0)
                 throw new ArgumentOutOfRangeException(nameof(lines), "Unit price cannot be negative.");
-            total = checked(total + line.LineTotalMinor);
+            subtotal = checked(subtotal + line.LineTotalMinor);
         }
 
-        if (tenderMinor < total)
-            throw new InvalidOperationException("Tender is below the sale total.");
+        if (discountMinor > subtotal)
+            throw new InvalidOperationException("خصم الولاء أكبر من الإجمالي.");
+
+        var total = checked(subtotal - discountMinor);
+
+        if (isReturn)
+        {
+            if (tenderMinor != total)
+                throw new InvalidOperationException("الاسترجاع يرد المستحق بالكامل بدون باقي.");
+        }
+        else if (PosPaymentMethods.IsCash(paymentMethod))
+        {
+            if (tenderMinor < total)
+                throw new InvalidOperationException("Tender is below the sale total.");
+        }
+        else if (tenderMinor != total)
+        {
+            throw new InvalidOperationException("هذه الطريقة تتطلب دفع المستحق بالكامل بدون باقي.");
+        }
+
+        var sign = isReturn ? -1 : 1;
+        var signedTotal = checked(total * sign);
+
+        var localMethod = PosPaymentMethods.ToLocalDbMethod(paymentMethod);
+        var erpMethod = PosPaymentMethods.ToErpId(paymentMethod);
 
         lock (_gate)
         {
@@ -1504,24 +1604,28 @@ public sealed class PosDatabase
 
             var saleId = Guid.NewGuid().ToString("D");
             var now = Now();
+            // Local sale/payment rows stay non-negative (SQLite CHECKs). Signed money lives in outbox JSON.
             using (var sale = connection.CreateCommand())
             {
                 sale.CommandText = """
                     INSERT INTO sale (
                       id, server_id, shift_id, cashier_id, receipt_no, status, currency,
                       subtotal_minor, discount_minor, tax_minor, total_minor,
-                      created_at, completed_at, sync_status
+                      note, created_at, completed_at, sync_status
                     ) VALUES (
                       $id, NULL, $shift, $cashier, $receipt, 'completed', 'EGP',
-                      $total, 0, 0, $total,
-                      $now, $now, 'pending'
+                      $subtotal, $discount, 0, $total,
+                      $note, $now, $now, 'pending'
                     );
                     """;
                 sale.Parameters.AddWithValue("$id", saleId);
                 sale.Parameters.AddWithValue("$shift", shiftId);
                 sale.Parameters.AddWithValue("$cashier", cashierId);
                 sale.Parameters.AddWithValue("$receipt", receiptNo);
+                sale.Parameters.AddWithValue("$subtotal", subtotal);
+                sale.Parameters.AddWithValue("$discount", discountMinor);
                 sale.Parameters.AddWithValue("$total", total);
+                sale.Parameters.AddWithValue("$note", isReturn ? (object)"return" : DBNull.Value);
                 sale.Parameters.AddWithValue("$now", now);
                 sale.ExecuteNonQuery();
             }
@@ -1558,18 +1662,36 @@ public sealed class PosDatabase
                     INSERT INTO payment (
                       id, sale_id, method, currency, amount_minor, amount_egp_minor, reference, created_at
                     ) VALUES (
-                      $id, $sale, 'cash_egp', 'EGP', $tender, $tender, NULL, $now
+                      $id, $sale, $method, 'EGP', $tender, $tender, NULL, $now
                     );
                     """;
                 payment.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
                 payment.Parameters.AddWithValue("$sale", saleId);
+                payment.Parameters.AddWithValue("$method", localMethod);
                 payment.Parameters.AddWithValue("$tender", tenderMinor);
                 payment.Parameters.AddWithValue("$now", now);
                 payment.ExecuteNonQuery();
             }
 
             var idempotencyKey = $"{terminalId}:sale:{saleId}";
-            var payload = BuildSalePayload(saleId, shiftId, cashierId, receiptNo, total, tenderMinor, now, lines);
+            var payload = BuildSalePayload(
+                saleId,
+                shiftId,
+                cashierId,
+                receiptNo,
+                checked(subtotal * sign),
+                discountMinor,
+                signedTotal,
+                checked(tenderMinor * sign),
+                now,
+                lines,
+                localMethod,
+                erpMethod,
+                wechatEgpPerCny,
+                isReturn,
+                loyaltyCustomerId,
+                pointsEarned,
+                pointsRedeemed);
             using (var outbox = connection.CreateCommand())
             {
                 outbox.CommandText = """
@@ -1596,12 +1718,95 @@ public sealed class PosDatabase
                 cashierId,
                 shiftId,
                 receiptNo,
-                total,
-                tenderMinor,
-                tenderMinor - total,
+                signedTotal,
+                checked(tenderMinor * sign),
+                isReturn ? 0 : tenderMinor - total,
                 idempotencyKey);
-            PosLog.Info($"cash sale committed receipt={receiptNo} total={total} tender={tenderMinor} cashier={cashierId}");
+            PosLog.Info(
+                $"{(isReturn ? "return" : "sale")} committed receipt={receiptNo} method={erpMethod} total={signedTotal} tender={tenderMinor * sign} cashier={cashierId}");
             return completed;
+        }
+    }
+
+    /// <summary>
+    /// Loads lines from a completed local sale by <c>POS-n</c> or sale GUID.
+    /// Only original (non-return) sales are eligible so a return cannot be returned again.
+    /// </summary>
+    public IReadOnlyList<LocalReceiptLine>? FindSaleLinesByCode(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var code = raw.Trim();
+        string? saleId = null;
+        int? receiptNo = null;
+        if (ReceiptCodes.TryParseReceiptNumber(code, out var parsedReceipt))
+            receiptNo = parsedReceipt;
+        else if (Guid.TryParse(code, out _))
+            saleId = code;
+        else
+            return null;
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using (var sale = connection.CreateCommand())
+            {
+                if (saleId is not null)
+                {
+                    sale.CommandText = """
+                        SELECT id, IFNULL(note, '') FROM sale
+                        WHERE id = $id AND status = 'completed'
+                        """;
+                    sale.Parameters.AddWithValue("$id", saleId);
+                }
+                else
+                {
+                    sale.CommandText = """
+                        SELECT id, IFNULL(note, '') FROM sale
+                        WHERE receipt_no = $receipt AND status = 'completed'
+                        ORDER BY completed_at DESC
+                        LIMIT 1
+                        """;
+                    sale.Parameters.AddWithValue("$receipt", receiptNo!.Value);
+                }
+
+                using var reader = sale.ExecuteReader();
+                if (!reader.Read())
+                    return null;
+                saleId = reader.GetString(0);
+                if (string.Equals(reader.GetString(1), "return", StringComparison.OrdinalIgnoreCase))
+                    return null;
+            }
+
+            var lines = new List<LocalReceiptLine>();
+            using (var lineCmd = connection.CreateCommand())
+            {
+                lineCmd.CommandText = """
+                    SELECT sl.product_id, sl.barcode, sl.name_ar, p.name_zh,
+                           sl.qty_milli, sl.unit_price_minor
+                    FROM sale_line sl
+                    LEFT JOIN product p ON p.id = sl.product_id
+                    WHERE sl.sale_id = $sale
+                    ORDER BY sl.line_no
+                    """;
+                lineCmd.Parameters.AddWithValue("$sale", saleId);
+                using var reader = lineCmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    var qtyMilli = reader.GetInt64(4);
+                    var qty = (int)Math.Max(1, qtyMilli / 1000);
+                    lines.Add(new LocalReceiptLine(
+                        reader.GetString(0),
+                        reader.IsDBNull(1) ? null : reader.GetString(1),
+                        reader.GetString(2),
+                        reader.IsDBNull(3) ? null : reader.GetString(3),
+                        qty,
+                        reader.GetInt64(5)));
+                }
+            }
+
+            return lines.Count == 0 ? null : lines;
         }
     }
 
@@ -1687,12 +1892,24 @@ public sealed class PosDatabase
         string localShiftId,
         string cashierId,
         int receiptNo,
+        long subtotalMinor,
+        long discountMinor,
         long total,
         long tenderMinor,
         string createdAt,
-        IReadOnlyList<CashSaleLine> lines)
+        IReadOnlyList<CashSaleLine> lines,
+        string localPaymentMethod,
+        string erpPaymentMethod,
+        decimal? wechatEgpPerCny,
+        bool isReturn = false,
+        string? loyaltyCustomerId = null,
+        int pointsEarned = 0,
+        int pointsRedeemed = 0)
     {
-        // Local outbox document. ErpCheckoutMapper posts shiftId=null until ERP shift push exists.
+        // Local outbox document. ErpCheckoutMapper still posts env paymentMethod until it reads this field.
+        object? fx = wechatEgpPerCny is { } rate
+            ? new { quote = "CNY", egpPerCny = rate }
+            : null;
         var payload = new
         {
             saleId,
@@ -1701,12 +1918,17 @@ public sealed class PosDatabase
             cashierId,
             receiptNo,
             currency = "EGP",
-            subtotalMinor = total,
-            discountMinor = 0L,
+            paymentMethod = erpPaymentMethod,
+            isReturn,
+            customerId = string.IsNullOrWhiteSpace(loyaltyCustomerId) ? null : loyaltyCustomerId,
+            pointsEarned,
+            pointsRedeemed,
+            subtotalMinor,
+            discountMinor,
             taxMinor = 0L,
             totalMinor = total,
             createdAt,
-            fx = (object?)null,
+            fx,
             lines = lines.Select((line, index) => new
             {
                 lineNo = index + 1,
@@ -1722,7 +1944,7 @@ public sealed class PosDatabase
             {
                 new
                 {
-                    method = "cash_egp",
+                    method = localPaymentMethod,
                     currency = "EGP",
                     amountMinor = tenderMinor,
                     amountEgpMinor = tenderMinor,

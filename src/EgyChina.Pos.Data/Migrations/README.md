@@ -10,8 +10,9 @@ Never run these against the ERP Prisma database.
 | 3 | `003_cashier_lockout.sql` | Cashier auth lockout support |
 | 4 | `004_product_favorite.sql` | Local till favorites (`product_favorite`) |
 | 5 | `005_held_cart.sql` | Suspended baskets (`held_cart`) |
+| 6 | `006_payment_wallet.sql` | Payment methods include `wallet` |
 
-Current schema version on a fresh init: **5**.
+Current schema version on a fresh init: **6**.
 
 Adding a migration:
 

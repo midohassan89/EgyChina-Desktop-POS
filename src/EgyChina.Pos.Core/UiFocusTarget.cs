@@ -9,4 +9,5 @@ public enum UiFocusTarget
     ClosingCash,
     PriceCheck,
     NotFoundAck,
+    SupervisorPin,
 }

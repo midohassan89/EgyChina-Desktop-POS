@@ -62,6 +62,19 @@ public sealed class ErpPosClient : IDisposable
         return builder.Uri;
     }
 
+    public Uri QueueTicketUri(string code) =>
+        Combine("api/pos/queue-tickets/" + Uri.EscapeDataString(code.Trim()));
+
+    public Uri LoyaltySearchUri(string phone)
+    {
+        var uri = Combine("api/admin/customers/search");
+        var builder = new UriBuilder(uri)
+        {
+            Query = "phone=" + Uri.EscapeDataString(phone.Trim()),
+        };
+        return builder.Uri;
+    }
+
     public async Task<ErpCallResult> GetProductsAsync(string? updatedSince, CancellationToken cancellationToken)
     {
         try
@@ -85,6 +98,59 @@ public sealed class ErpPosClient : IDisposable
         {
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var response = await _http.PostAsync(CheckoutUri, content, cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> GetQueueTicketAsync(string code, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(QueueTicketUri(code), cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> PatchQueueTicketAsync(string code, string json, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Patch, QueueTicketUri(code)) { Content = content };
+            using var response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> GetLoyaltyCustomerAsync(string phone, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(LoyaltySearchUri(phone), cancellationToken).ConfigureAwait(false);
             return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

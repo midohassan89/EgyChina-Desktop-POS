@@ -112,6 +112,14 @@ Transmission starts only when all of these are set:
 
 Optional: `EGYCHINA_POS_CATALOG_PULL=1` also calls `GET /api/products` (full, then `?updatedSince=` from the catalog cursor) and **applies** shelf prices, barcodes, and names. After a successful apply, `catalog.source=erp` and unused DEMO seed rows are removed. Committed `sale_line` name/price snapshots are never rewritten.
 
+Interactive till calls (UI-6), same device Bearer as checkout:
+
+- `GET /api/pos/queue-tickets/{code}` — claim `Q-xxxx` into the cart (PENDING → CLAIMED)
+- `PATCH /api/pos/queue-tickets/{code}` — mark COMPLETED after local sale commit
+- `GET /api/admin/customers/search?phone=` — loyalty lookup for `01…` / `201…` scans
+
+Checkout JSON may include `customerId`, `pointsEarned`, and `pointsRedeemed` when a loyalty customer is attached. ERP routes above accept enrolled device Bearer via `resolvePosAccess` (same gate as `/api/checkout`).
+
 A row is marked `done` and the sale `synced` only after the response body has been read and the status is 2xx. A dropped response, a 401, or a 5xx leaves the row pending. The next tick sends the same `localId`. Receipt numbers and minor-unit totals in SQLite are not rewritten.
 
 Unlinked SKUs stay outbox-blocked (`product-id-not-numeric`) until a pull matches them. The worker does not invent a checkout `wcId`.

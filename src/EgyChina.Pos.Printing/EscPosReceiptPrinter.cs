@@ -26,6 +26,9 @@ public sealed class EscPosReceiptPrinter : IReceiptPrinter
         await _transport.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
     }
 
+    public Task KickDrawerAsync(CancellationToken cancellationToken) =>
+        _transport.WriteAsync(EscPosRasterEncoder.DrawerKickOnly(), cancellationToken);
+
     public static IReceiptPrinter Create(PrinterOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);

@@ -22,4 +22,10 @@ public static class PosPaths
     public static string LogDirectory() => Path.Combine(Root(), "logs");
 
     public static string BackupDirectory() => Path.Combine(Root(), "backups");
+
+    public static string AssetsDirectory() => Path.Combine(Root(), "assets");
+
+    public static string WeChatQrFile() => Path.Combine(AssetsDirectory(), "wechat-qr.jpg");
+
+    public static string InstaPayQrFile() => Path.Combine(AssetsDirectory(), "instapay-qr.jpeg");
 }

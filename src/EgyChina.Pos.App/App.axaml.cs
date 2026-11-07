@@ -97,7 +97,9 @@ public partial class App : Application
             printer = new NullReceiptPrinter();
         }
 
-        _session = new PosSession(_database, products, status, demo, printer);
+        var syncOptions = SyncOptions.FromEnvironment();
+        var erpGateway = PosErpGateway.FromOptions(syncOptions);
+        _session = new PosSession(_database, products, status, demo, printer, erpGateway);
         _session.RequestCustomerDisplay = ShowCustomer;
         var disk = DiskSpaceGuard.Check(_database.DatabasePath);
         if (disk.HasWarning)
@@ -106,7 +108,7 @@ public partial class App : Application
             PosLog.Info($"disk free={disk.FreeBytes} blockSales={disk.BlockSales}");
         }
 
-        _worker = new SyncWorker(_database, status, SyncOptions.FromEnvironment());
+        _worker = new SyncWorker(_database, status, syncOptions);
         _worker.Start();
 
         var cashier = new CashierWindow { DataContext = _session };

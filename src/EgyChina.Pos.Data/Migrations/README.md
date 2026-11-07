@@ -8,8 +8,9 @@ Never run these against the ERP Prisma database.
 | 1 | `001_init.sql` | Core terminal tables (catalog, sales, outbox, settings, receipt counter) |
 | 2 | `002_erp_product_link.sql` | ERP product link columns (`erp_numeric_id`, `erp_prisma_id`, …) |
 | 3 | `003_cashier_lockout.sql` | Cashier auth lockout support |
+| 4 | `004_product_favorite.sql` | Local till favorites (`product_favorite`) |
 
-Current schema version on a fresh init: **3**.
+Current schema version on a fresh init: **4**.
 
 Adding a migration:
 

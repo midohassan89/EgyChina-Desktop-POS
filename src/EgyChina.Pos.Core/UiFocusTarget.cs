@@ -7,4 +7,6 @@ public enum UiFocusTarget
     Pin,
     OpeningFloat,
     ClosingCash,
+    PriceCheck,
+    NotFoundAck,
 }

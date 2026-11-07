@@ -16,6 +16,8 @@ public partial class PosSession : ObservableObject
     private readonly SyncStatus _sync;
     private readonly IReceiptPrinter _printer;
     private string? _lastSaleId;
+    private DateTimeOffset? _settlementAt;
+    private string? _highlightedLineId;
 
     public PosSession(
         PosDatabase database,
@@ -74,7 +76,23 @@ public partial class PosSession : ObservableObject
     public event Action<UiFocusTarget>? FocusRequested;
 
     public string ShortcutHint { get; } =
-        "F2 قفل  ·  F4 إعادة طباعة  ·  F3 شاشة العميل  ·  Esc إلغاء  ·  الماسح يعمل حتى أثناء البحث";
+        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  Esc إلغاء  ·  الماسح يعمل حتى أثناء البحث";
+
+    [ObservableProperty]
+    private CustomerDisplayMode _customerDisplayMode = CustomerDisplayMode.Idle;
+
+    [ObservableProperty]
+    private string _idleGreetingText = CustomerDisplayProjector.IdleGreeting(DateTimeOffset.Now);
+
+    public bool IsCfdIdle => CustomerDisplayMode == CustomerDisplayMode.Idle;
+
+    public bool IsCfdShopping => CustomerDisplayMode == CustomerDisplayMode.Shopping;
+
+    public bool IsCfdPayment => CustomerDisplayMode == CustomerDisplayMode.Payment;
+
+    public bool IsCfdCompleted => CustomerDisplayMode == CustomerDisplayMode.Completed;
+
+    public string PaymentMethodLabel => "نقدي";
 
     [ObservableProperty]
     private bool _needsLogin = true;
@@ -116,7 +134,42 @@ public partial class PosSession : ObservableObject
     private string _search = string.Empty;
 
     [ObservableProperty]
+    private CatalogTab _catalogTab = CatalogTab.All;
+
+    [ObservableProperty]
+    private bool _showNotFound;
+
+    [ObservableProperty]
+    private string _notFoundBarcode = string.Empty;
+
+    [ObservableProperty]
+    private bool _showPriceCheck;
+
+    [ObservableProperty]
+    private string _priceCheckQuery = string.Empty;
+
+    [ObservableProperty]
+    private PriceCheckResult? _priceCheckResult;
+
+    [ObservableProperty]
+    private string _priceCheckError = string.Empty;
+
+    [ObservableProperty]
     private string _scanHint = "امسح الباركود أو اختر صنفاً.";
+
+    public bool IsCatalogAll => CatalogTab == CatalogTab.All;
+
+    public bool IsCatalogFavorites => CatalogTab == CatalogTab.Favorites;
+
+    public double CatalogAllEmphasis => IsCatalogAll ? 1.0 : 0.45;
+
+    public double CatalogFavoritesEmphasis => IsCatalogFavorites ? 1.0 : 0.45;
+
+    public bool HasPriceCheckResult => PriceCheckResult is not null;
+
+    public bool HasPriceCheckError => !string.IsNullOrWhiteSpace(PriceCheckError);
+
+    public bool BlocksScanning => ShowNotFound || ShowPriceCheck;
 
     [ObservableProperty]
     private string _syncMessage = "بدء المزامنة…";
@@ -220,7 +273,7 @@ public partial class PosSession : ObservableObject
     public string SettlementText =>
         $"تم البيع — إيصال {LastReceiptNo.ToString(CultureInfo.InvariantCulture)}";
 
-    public string IdleCustomerText => ShowSettlement ? "شكراً لكم" : "في انتظار المسح";
+    public string IdleCustomerText => IsCfdCompleted ? "شكراً لكم" : IdleGreetingText;
 
     public bool ShowCustomerChange => IsTendering && CanConfirmCash;
 
@@ -255,18 +308,27 @@ public partial class PosSession : ObservableObject
     {
         get
         {
+            IEnumerable<CatalogProduct> source = CatalogTab == CatalogTab.Favorites
+                ? _products.Where(product => product.IsFavorite)
+                : _products;
+
             var term = Search.Trim();
             if (term.Length == 0)
-                return _products;
+                return source.ToArray();
 
-            return _products.Where(product => Matches(product, term)).ToArray();
+            return source.Where(product => Matches(product, term)).ToArray();
         }
     }
 
     public bool HasNoSearchResults => VisibleProducts.Count == 0;
 
+    public bool HasNoFavorites => CatalogTab == CatalogTab.Favorites && _products.All(p => !p.IsFavorite);
+
     public void AddProduct(CatalogProduct product)
     {
+        if (BlocksScanning)
+            return;
+
         if (BlockNewSales)
         {
             ScanHint = CashierAlert.Length > 0 ? CashierAlert : "القرص ممتلئ. لا يمكن إضافة أصناف الآن.";
@@ -280,17 +342,50 @@ public partial class PosSession : ObservableObject
         }
 
         HasSettlement = false;
+        _settlementAt = null;
         var existing = Lines.FirstOrDefault(line => line.ProductId == product.Id);
         if (existing is null)
-            Lines.Add(new CartLine(product, RefreshCheckout, line => Lines.Remove(line)));
+        {
+            var line = new CartLine(product, RefreshCheckout, RemoveLine, HighlightLine);
+            Lines.Add(line);
+            HighlightLine(line);
+        }
         else
+        {
             existing.Qty++;
+        }
 
         ScanHint = product.NameAr;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    private void RemoveLine(CartLine line)
+    {
+        Lines.Remove(line);
+        if (_highlightedLineId == line.LineId)
+            ClearHighlight();
+        RefreshCheckout();
+    }
+
+    private void HighlightLine(CartLine line)
+    {
+        _highlightedLineId = line.LineId;
+        foreach (var item in Lines)
+            item.IsHighlighted = item.LineId == line.LineId;
+    }
+
+    private void ClearHighlight()
+    {
+        _highlightedLineId = null;
+        foreach (var item in Lines)
+            item.IsHighlighted = false;
     }
 
     public void SubmitBarcode()
     {
+        if (BlocksScanning)
+            return;
+
         if (!CanOperate)
         {
             ScanHint = NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع";
@@ -302,26 +397,159 @@ public partial class PosSession : ObservableObject
             return;
 
         var product = _database.FindByBarcode(code);
+        Barcode = string.Empty;
         if (product is null)
         {
-            ScanHint = "الباركود غير موجود في النسخة المحلية";
+            OpenNotFound(code);
             return;
         }
 
         AddProduct(product);
-        Barcode = string.Empty;
+    }
+
+    [RelayCommand]
+    private void ShowAllCatalog()
+    {
+        CatalogTab = CatalogTab.All;
+        OnPropertyChanged(nameof(VisibleProducts));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
+        OnPropertyChanged(nameof(IsCatalogAll));
+        OnPropertyChanged(nameof(IsCatalogFavorites));
+    }
+
+    [RelayCommand]
+    private void ShowFavoritesCatalog()
+    {
+        CatalogTab = CatalogTab.Favorites;
+        OnPropertyChanged(nameof(VisibleProducts));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
+        OnPropertyChanged(nameof(IsCatalogAll));
+        OnPropertyChanged(nameof(IsCatalogFavorites));
+    }
+
+    [RelayCommand]
+    private void ToggleFavorite(CatalogProduct? product)
+    {
+        if (product is null)
+            return;
+
+        var nowFavorite = _database.ToggleFavorite(product.Id);
+        _products = _database.ListActiveProducts();
+        OnPropertyChanged(nameof(VisibleProducts));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
+        ScanHint = nowFavorite
+            ? $"أُضيف للمفضلة: {product.NameAr}"
+            : $"أُزيل من المفضلة: {product.NameAr}";
+    }
+
+    [RelayCommand]
+    private void OpenPriceCheck()
+    {
+        if (NeedsLogin || ShowNotFound || IsTendering || ShowCloseShift)
+            return;
+
+        ShowPriceCheck = true;
+        PriceCheckQuery = string.Empty;
+        PriceCheckResult = null;
+        PriceCheckError = string.Empty;
+        RequestFocus(UiFocusTarget.PriceCheck);
+    }
+
+    [RelayCommand]
+    private void ClosePriceCheck()
+    {
+        ShowPriceCheck = false;
+        PriceCheckQuery = string.Empty;
+        PriceCheckResult = null;
+        PriceCheckError = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void SubmitPriceCheck()
+    {
+        var code = PriceCheckQuery.Trim();
+        if (code.Length == 0)
+            return;
+
+        var product = _database.FindByBarcode(code);
+        PriceCheckQuery = string.Empty;
+        if (product is null)
+        {
+            PriceCheckResult = null;
+            PriceCheckError = $"غير موجود: {code}";
+            RequestFocus(UiFocusTarget.PriceCheck);
+            return;
+        }
+
+        PriceCheckError = string.Empty;
+        PriceCheckResult = new PriceCheckResult(
+            product.Barcode ?? code,
+            product.NameAr,
+            product.NameZh,
+            product.Sku,
+            product.PriceEgpMinor);
+        RequestFocus(UiFocusTarget.PriceCheck);
+    }
+
+    [RelayCommand]
+    private void DismissNotFound()
+    {
+        ShowNotFound = false;
+        NotFoundBarcode = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    private void OpenNotFound(string barcode)
+    {
+        NotFoundBarcode = barcode;
+        ShowNotFound = true;
+        ScanHint = "صنف غير موجود — أكّد قبل المتابعة";
+        RequestFocus(UiFocusTarget.NotFoundAck);
     }
 
     public void SetClock(DateTime now)
     {
         ClockText = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        var stamp = new DateTimeOffset(now);
+        IdleGreetingText = CustomerDisplayProjector.IdleGreeting(stamp);
+        if (HasSettlement && CustomerDisplayProjector.IsCompletedExpired(_settlementAt, stamp))
+        {
+            HasSettlement = false;
+            _settlementAt = null;
+        }
+
+        RefreshCustomerDisplayMode(stamp);
     }
 
     partial void OnSearchChanged(string value)
     {
         OnPropertyChanged(nameof(VisibleProducts));
         OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
     }
+
+    partial void OnCatalogTabChanged(CatalogTab value)
+    {
+        OnPropertyChanged(nameof(IsCatalogAll));
+        OnPropertyChanged(nameof(IsCatalogFavorites));
+        OnPropertyChanged(nameof(CatalogAllEmphasis));
+        OnPropertyChanged(nameof(CatalogFavoritesEmphasis));
+        OnPropertyChanged(nameof(VisibleProducts));
+        OnPropertyChanged(nameof(HasNoSearchResults));
+        OnPropertyChanged(nameof(HasNoFavorites));
+    }
+
+    partial void OnShowNotFoundChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
+
+    partial void OnShowPriceCheckChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
+
+    partial void OnPriceCheckResultChanged(PriceCheckResult? value) => OnPropertyChanged(nameof(HasPriceCheckResult));
+
+    partial void OnPriceCheckErrorChanged(string value) => OnPropertyChanged(nameof(HasPriceCheckError));
 
     partial void OnIsOnlineChanged(bool value) => OnPropertyChanged(nameof(OnlineText));
 
@@ -355,10 +583,13 @@ public partial class PosSession : ObservableObject
     private void ClearCart()
     {
         Lines.Clear();
+        ClearHighlight();
         IsTendering = false;
         HasSettlement = false;
+        _settlementAt = null;
         TenderText = string.Empty;
         SaleError = string.Empty;
+        RefreshCheckout();
     }
 
     [RelayCommand]
@@ -393,8 +624,10 @@ public partial class PosSession : ObservableObject
             return;
 
         Lines.Clear();
+        ClearHighlight();
         IsTendering = false;
         HasSettlement = false;
+        _settlementAt = null;
         TenderText = string.Empty;
         SaleError = string.Empty;
         ShowCloseShift = false;
@@ -553,13 +786,16 @@ public partial class PosSession : ObservableObject
             LastChangeMinor = sale.ChangeMinor;
             TenderText = string.Empty;
             IsTendering = false;
-            HasSettlement = true;
             Lines.Clear();
+            ClearHighlight();
+            HasSettlement = true;
+            _settlementAt = DateTimeOffset.Now;
             PendingOutbox = _database.CountPendingOutbox();
             _lastSaleId = sale.SaleId;
             ScanHint = $"تم حفظ الإيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)}";
             PosLog.Info($"cashier confirmed receipt {sale.ReceiptNo}");
             OnPropertyChanged(nameof(CanReprint));
+            RefreshCheckout();
             RequestFocus(UiFocusTarget.Barcode);
             _ = PrintSaleAsync(sale.SaleId, isReprint: false, kickDrawer: true);
         }
@@ -673,6 +909,34 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanLock));
         OnPropertyChanged(nameof(CanOpenCloseShiftPanel));
         OnPropertyChanged(nameof(CanReprint));
+        RefreshCustomerDisplayMode(DateTimeOffset.Now);
+    }
+
+    private void RefreshCustomerDisplayMode(DateTimeOffset now)
+    {
+        var next = CustomerDisplayProjector.Resolve(
+            HasLines,
+            IsTendering,
+            HasSettlement,
+            _settlementAt,
+            now);
+        if (CustomerDisplayMode != next)
+            CustomerDisplayMode = next;
+
+        OnPropertyChanged(nameof(IsCfdIdle));
+        OnPropertyChanged(nameof(IsCfdShopping));
+        OnPropertyChanged(nameof(IsCfdPayment));
+        OnPropertyChanged(nameof(IsCfdCompleted));
+        OnPropertyChanged(nameof(IdleCustomerText));
+    }
+
+    partial void OnCustomerDisplayModeChanged(CustomerDisplayMode value)
+    {
+        OnPropertyChanged(nameof(IsCfdIdle));
+        OnPropertyChanged(nameof(IsCfdShopping));
+        OnPropertyChanged(nameof(IsCfdPayment));
+        OnPropertyChanged(nameof(IsCfdCompleted));
+        OnPropertyChanged(nameof(IdleCustomerText));
     }
 
     partial void OnNeedsLoginChanged(bool value) => RefreshCheckout();

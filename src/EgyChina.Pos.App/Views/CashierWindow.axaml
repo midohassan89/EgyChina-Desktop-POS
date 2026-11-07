@@ -8,144 +8,165 @@
         Title="ايجي شاينا — نقطة البيع"
         FlowDirection="RightToLeft"
         WindowStartupLocation="Manual"
-        Background="#F3F0E8"
-        MinWidth="880"
-        MinHeight="640">
+        Background="#E2E8F0"
+        MinWidth="960"
+        MinHeight="680">
 
   <Grid>
-  <Grid RowDefinitions="Auto,*,Auto">
-    <Border Grid.Row="0" Background="#12382F" Padding="18,12">
+  <Grid RowDefinitions="Auto,*">
+    <!-- Compact ops header (web POS toolbar structure) -->
+    <Border Grid.Row="0" Background="#0F172A" Padding="14,10">
       <Grid ColumnDefinitions="*,Auto">
-        <StackPanel Spacing="2">
-          <TextBlock Text="ايجي شاينا ماركت" FontSize="22" FontWeight="Bold" Foreground="#F6F1E4" />
-          <TextBlock Text="سوق العبور  ·  نقطة البيع" FontSize="13" Foreground="#D5C7A4" />
-          <TextBlock Text="{Binding SessionCaption}" FontSize="13" Foreground="#E3C57A" TextWrapping="Wrap" />
-        </StackPanel>
-        <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Left" MaxWidth="460">
-          <TextBlock Text="{Binding ClockText}" FontSize="20" FontWeight="SemiBold" Foreground="#F6F1E4"
-                     FlowDirection="LeftToRight" HorizontalAlignment="Left" />
-          <TextBlock Text="{Binding OnlineText}" Foreground="#E3C57A" FontSize="13" />
-          <TextBlock Text="{Binding SyncMessage}" Foreground="#F6F1E4" FontSize="13" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding OutboxCaption}" Foreground="#D5C7A4" FontSize="12" />
-          <TextBlock Text="{Binding SyncErrorCaption}" IsVisible="{Binding HasSyncError}"
-                     Foreground="#E8A0A0" FontSize="12" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding ScreenModeText}" Foreground="#D5C7A4" FontSize="12" TextWrapping="Wrap" />
-          <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
-            <Button Content="قفل"
-                    Command="{Binding LockSessionCommand}"
-                    IsEnabled="{Binding CanLock}"
-                    MinWidth="88" />
-            <Button Content="إعادة طباعة"
-                    Command="{Binding ReprintLastCommand}"
-                    IsEnabled="{Binding CanReprint}"
-                    MinWidth="110" />
-            <Button Content="إغلاق وردية"
-                    Command="{Binding BeginCloseShiftCommand}"
-                    IsEnabled="{Binding CanOpenCloseShiftPanel}"
-                    MinWidth="120" />
+        <StackPanel Spacing="2" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="ايجي شاينا ماركت" FontSize="20" FontWeight="Bold" Foreground="#F8FAFC" VerticalAlignment="Center" />
+            <Border Background="#059669" CornerRadius="8" Padding="8,2" VerticalAlignment="Center">
+              <TextBlock Text="POS" FontSize="12" FontWeight="Bold" Foreground="White" />
+            </Border>
           </StackPanel>
+          <TextBlock Text="{Binding SessionCaption}" FontSize="13" Foreground="#94A3B8" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding SyncMessage}" FontSize="12" Foreground="#CBD5E1" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding OutboxCaption}" FontSize="12" Foreground="#64748B" />
+          <TextBlock Text="{Binding SyncErrorCaption}" IsVisible="{Binding HasSyncError}"
+                     FontSize="12" Foreground="#FCA5A5" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <StackPanel Spacing="0" Margin="0,0,8,0" VerticalAlignment="Center">
+            <TextBlock Text="{Binding ClockText}" FontSize="18" FontWeight="SemiBold" Foreground="#F8FAFC"
+                       FlowDirection="LeftToRight" HorizontalAlignment="Left" />
+            <TextBlock Text="{Binding OnlineText}" FontSize="12" Foreground="#34D399" HorizontalAlignment="Left" />
+          </StackPanel>
+          <Button Content="شاشة العميل"
+                  Classes="pos-ghost"
+                  Command="{Binding ShowCustomerDisplayCommand}"
+                  MinWidth="110" />
+          <Button Content="قفل"
+                  Classes="pos-ghost"
+                  Command="{Binding LockSessionCommand}"
+                  IsEnabled="{Binding CanLock}"
+                  MinWidth="72" />
+          <Button Content="إعادة طباعة"
+                  Classes="pos-ghost"
+                  Command="{Binding ReprintLastCommand}"
+                  IsEnabled="{Binding CanReprint}"
+                  MinWidth="100" />
+          <Button Content="إغلاق وردية"
+                  Classes="pos-ghost"
+                  Command="{Binding BeginCloseShiftCommand}"
+                  IsEnabled="{Binding CanOpenCloseShiftPanel}"
+                  MinWidth="110" />
         </StackPanel>
       </Grid>
     </Border>
 
-    <Grid Grid.Row="1" Margin="12" ColumnDefinitions="1.45*,12,*">
-      <DockPanel Grid.Column="0">
-        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
-          <TextBox x:Name="BarcodeBox"
-                   Grid.Column="0"
-                   Text="{Binding Barcode}"
-                   PlaceholderText="امسح الباركود ثم Enter"
-                   FontSize="20"
-                   MinHeight="48"
-                   KeyDown="OnBarcodeKeyDown" />
-          <Button Grid.Column="2"
-                  Content="إدخال"
-                  MinWidth="96"
-                  Click="OnBarcodeSubmit" />
-        </Grid>
-        <TextBlock DockPanel.Dock="Top" Text="{Binding ScanHint}" Margin="0,0,0,8" Foreground="#3E4A3A" TextWrapping="Wrap" />
-        <Border DockPanel.Dock="Top"
-                Background="#FDECEC"
-                BorderBrush="#E8A0A0"
-                BorderThickness="1"
-                CornerRadius="8"
-                Padding="10,8"
-                Margin="0,0,0,8"
-                IsVisible="{Binding HasCashierAlert}">
-          <TextBlock Text="{Binding CashierAlert}" Foreground="#8A1C1C" TextWrapping="Wrap" FontWeight="SemiBold" />
-        </Border>
-        <TextBox x:Name="SearchBox"
-                 DockPanel.Dock="Top"
-                 Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
-                 PlaceholderText="بحث بالاسم أو الباركود"
-                 MinHeight="44"
-                 Margin="0,0,0,8" />
-        <TextBlock DockPanel.Dock="Top"
-                   Text="لا توجد أصناف مطابقة"
-                   IsVisible="{Binding HasNoSearchResults}"
-                   Margin="0,12,0,0"
-                   Foreground="#6E675C" />
-        <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-          <ItemsControl ItemsSource="{Binding VisibleProducts}">
-            <ItemsControl.ItemsPanel>
-              <ItemsPanelTemplate>
-                <WrapPanel />
-              </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            <ItemsControl.ItemTemplate>
-              <DataTemplate x:DataType="core:CatalogProduct">
-                <Border Width="230"
-                        Margin="0,0,8,8"
-                        Padding="12,10"
-                        Background="#FFFcfaf4"
-                        BorderBrush="#DDD6C8"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        Cursor="Hand"
-                        Tapped="OnProductTapped">
-                  <StackPanel Spacing="4">
-                    <TextBlock Text="{Binding NameAr}" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#1C1A16" />
-                    <TextBlock Text="{Binding NameZh}" FontSize="13" Foreground="#6E675C" FlowDirection="LeftToRight"
-                               IsVisible="{Binding HasNameZh}" />
-                    <TextBlock Text="{Binding PriceEgpText}" FontSize="16" FontWeight="Bold" Foreground="#12382F" />
-                    <TextBlock Text="{Binding Barcode}" FontSize="12" Foreground="#8A8172" FlowDirection="LeftToRight" />
-                  </StackPanel>
-                </Border>
-              </DataTemplate>
-            </ItemsControl.ItemTemplate>
-          </ItemsControl>
-        </ScrollViewer>
-      </DockPanel>
-
-      <Border Grid.Column="2" Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="12" Padding="12">
+    <!-- Main stage: cart (first in RTL = right) | catalog -->
+    <Grid Grid.Row="1" Margin="10" ColumnDefinitions="Auto,10,*">
+      <!-- Cart column -->
+      <Border Grid.Column="0"
+              Width="360"
+              Background="#F8FAFC"
+              BorderBrush="#CBD5E1"
+              BorderThickness="1"
+              CornerRadius="14"
+              Padding="12">
         <DockPanel>
           <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-            <TextBlock Text="السلة" FontSize="20" FontWeight="Bold" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding LineCountText}" VerticalAlignment="Center" Foreground="#6E675C" />
+            <TextBlock Text="السلة" FontSize="22" FontWeight="Bold" Foreground="#0F172A" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="{Binding LineCountText}" VerticalAlignment="Center" Foreground="#64748B" />
           </Grid>
-          <Button DockPanel.Dock="Bottom"
-                  Content="تفريغ السلة"
-                  Command="{Binding ClearCartCommand}"
-                  HorizontalAlignment="Stretch"
-                  HorizontalContentAlignment="Center"
-                  Margin="0,8,0,0" />
+
+          <Border DockPanel.Dock="Bottom" Margin="0,10,0,0">
+            <StackPanel Spacing="8">
+              <Border Background="#ECFDF5" CornerRadius="10" Padding="12,10"
+                      IsVisible="{Binding !IsTendering}">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="{Binding AmountLabel}" Foreground="#047857" FontSize="14" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1" Text="{Binding AmountText}" FontSize="28" FontWeight="Bold" Foreground="#047857" />
+                </Grid>
+              </Border>
+
+              <StackPanel Spacing="8" IsVisible="{Binding IsTendering}">
+                <TextBlock Text="المبلغ المستلم" Foreground="#64748B" FontSize="13" />
+                <Grid ColumnDefinitions="*,8,Auto">
+                  <TextBox x:Name="TenderBox"
+                           Grid.Column="0"
+                           Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
+                           PlaceholderText="0.00"
+                           FontSize="22"
+                           MinHeight="48"
+                           FlowDirection="LeftToRight"
+                           KeyDown="OnTenderKeyDown" />
+                  <Button Grid.Column="2"
+                          Content="بالضبط"
+                          Command="{Binding SetExactTenderCommand}" />
+                </Grid>
+                <TextBlock Text="{Binding TenderHint}" Foreground="#0F172A" TextWrapping="Wrap" />
+                <Grid ColumnDefinitions="*,8,*">
+                  <Button Grid.Column="0"
+                          Content="تأكيد النقد"
+                          Classes="pos-primary"
+                          Command="{Binding ConfirmCashCommand}"
+                          IsEnabled="{Binding CanConfirmCash}"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center" />
+                  <Button Grid.Column="2"
+                          Content="إلغاء"
+                          Command="{Binding CancelTenderCommand}"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center" />
+                </Grid>
+              </StackPanel>
+
+              <Button Content="إتمام الدفع"
+                      Classes="pos-primary"
+                      Command="{Binding BeginCashPaymentCommand}"
+                      IsEnabled="{Binding CanBeginPayment}"
+                      IsVisible="{Binding !IsTendering}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      MinHeight="56"
+                      FontSize="20" />
+
+              <Button Content="تفريغ السلة"
+                      Command="{Binding ClearCartCommand}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center" />
+
+              <TextBlock Text="{Binding SettlementText}"
+                         IsVisible="{Binding ShowSettlement}"
+                         FontSize="15"
+                         FontWeight="SemiBold"
+                         Foreground="#047857"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
           <TextBlock DockPanel.Dock="Top"
-                     Text="السلة فارغة"
+                     Text="السلة فارغة — امسح باركود أو اختر صنفاً"
                      IsVisible="{Binding IsCartEmpty}"
-                     Margin="0,24,0,0"
+                     Margin="0,28,0,0"
                      HorizontalAlignment="Center"
-                     Foreground="#8A8172" />
+                     TextAlignment="Center"
+                     Foreground="#94A3B8"
+                     TextWrapping="Wrap" />
+
           <ScrollViewer HorizontalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding Lines}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:CartLine">
-                  <Border BorderBrush="#E6E0D4" BorderThickness="0,0,0,1" Padding="0,8">
+                  <Border Margin="0,0,0,6"
+                          Padding="10,8"
+                          CornerRadius="10"
+                          BorderThickness="1"
+                          BorderBrush="#E2E8F0"
+                          Background="#FFFFFF">
                     <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-                      <TextBlock Text="{Binding NameAr}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                      <TextBlock Grid.Column="1" Text="{Binding LineTotalText}" FontWeight="SemiBold" />
-                      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,6,0,0" FlowDirection="LeftToRight">
+                      <TextBlock Text="{Binding NameAr}" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#0F172A" />
+                      <TextBlock Grid.Column="1" Text="{Binding LineTotalText}" FontWeight="Bold" Foreground="#059669" />
+                      <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,8,0,0" FlowDirection="LeftToRight">
                         <Button Content="-" Command="{Binding DecrementCommand}" MinWidth="44" Padding="0" />
-                        <TextBlock Text="{Binding QtyText}" VerticalAlignment="Center" MinWidth="36" HorizontalAlignment="Center" />
+                        <TextBlock Text="{Binding QtyText}" VerticalAlignment="Center" MinWidth="40" HorizontalAlignment="Center" />
                         <Button Content="+" Command="{Binding IncrementCommand}" MinWidth="44" Padding="0" />
                       </StackPanel>
                     </Grid>
@@ -156,82 +177,232 @@
           </ScrollViewer>
         </DockPanel>
       </Border>
-    </Grid>
 
-    <Border Grid.Row="2" Background="#E7E1D4" Padding="16,10">
-      <StackPanel Spacing="8">
-        <Grid ColumnDefinitions="*,12,Auto" IsVisible="{Binding IsTendering}">
-          <StackPanel Spacing="4">
-            <TextBlock Text="المبلغ المستلم" Foreground="#6E675C" FontSize="13" />
-            <Grid ColumnDefinitions="*,8,Auto">
-              <TextBox x:Name="TenderBox"
-                       Grid.Column="0"
-                       Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
-                       PlaceholderText="0.00"
-                       FontSize="22"
-                       MinHeight="48"
-                       FlowDirection="LeftToRight"
-                       KeyDown="OnTenderKeyDown" />
-              <Button Grid.Column="2"
-                      Content="المبلغ بالضبط"
-                      Command="{Binding SetExactTenderCommand}" />
-            </Grid>
-            <TextBlock Text="{Binding TenderHint}" Foreground="#12382F" TextWrapping="Wrap" />
-          </StackPanel>
-          <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Center">
-            <Button Content="تأكيد النقد"
-                    Command="{Binding ConfirmCashCommand}"
-                    IsEnabled="{Binding CanConfirmCash}"
-                    MinWidth="140"
-                    Background="#12382F"
-                    Foreground="#F6F1E4" />
-            <Button Content="إلغاء"
-                    Command="{Binding CancelTenderCommand}"
-                    MinWidth="140" />
-          </StackPanel>
-        </Grid>
+      <!-- Catalog column -->
+      <DockPanel Grid.Column="2">
+        <Border DockPanel.Dock="Top"
+                Background="#FDECEC"
+                BorderBrush="#FECACA"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="10,8"
+                Margin="0,0,0,8"
+                IsVisible="{Binding HasCashierAlert}">
+          <TextBlock Text="{Binding CashierAlert}" Foreground="#B91C1C" TextWrapping="Wrap" FontWeight="SemiBold" />
+        </Border>
 
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto">
-          <StackPanel Spacing="2" VerticalAlignment="Center">
-            <TextBlock Text="{Binding AmountLabel}" Foreground="#6E675C" FontSize="13" />
-            <TextBlock Text="{Binding AmountText}" FontSize="32" FontWeight="Bold" Foreground="#12382F" />
-          </StackPanel>
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,Auto" Margin="0,0,0,8">
+          <TextBox x:Name="BarcodeBox"
+                   Grid.Column="0"
+                   Text="{Binding Barcode}"
+                   PlaceholderText="امسح الباركود ثم Enter"
+                   FontSize="20"
+                   MinHeight="50"
+                   KeyDown="OnBarcodeKeyDown" />
           <Button Grid.Column="2"
-                  Content="شاشة العميل"
-                  Command="{Binding ShowCustomerDisplayCommand}"
-                  Margin="0,0,8,0" />
-          <Button Grid.Column="3"
-                  Content="إتمام الدفع"
-                  Command="{Binding BeginCashPaymentCommand}"
-                  IsEnabled="{Binding CanBeginPayment}"
-                  MinWidth="160"
-                  Background="#12382F"
-                  Foreground="#F6F1E4" />
+                  Content="إدخال"
+                  Classes="pos-primary"
+                  MinWidth="100"
+                  Click="OnBarcodeSubmit" />
         </Grid>
 
-        <TextBlock Text="{Binding SettlementText}"
-                   IsVisible="{Binding ShowSettlement}"
-                   FontSize="16"
-                   FontWeight="SemiBold"
-                   Foreground="#12382F" />
+        <TextBlock DockPanel.Dock="Top" Text="{Binding ScanHint}" Margin="0,0,0,8" Foreground="#334155" TextWrapping="Wrap" />
 
-        <StackPanel Spacing="2">
-          <TextBlock Text="{Binding ShortcutHint}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding ShellNotice}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding PrinterCaption}" FontSize="12" Foreground="#6E675C" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#6E675C" />
-          <TextBlock Text="{Binding DatabasePath}" FontSize="11" Foreground="#8A8172" FlowDirection="LeftToRight" TextWrapping="Wrap" />
+        <TextBox x:Name="SearchBox"
+                 DockPanel.Dock="Top"
+                 Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+                 PlaceholderText="بحث بالاسم أو الباركود"
+                 MinHeight="44"
+                 Margin="0,0,0,8" />
+
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="*,8,*,8,Auto" Margin="0,0,0,8">
+          <Button Content="الكل"
+                  Command="{Binding ShowAllCatalogCommand}"
+                  Background="#059669"
+                  Foreground="White"
+                  Opacity="{Binding CatalogAllEmphasis}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center" />
+          <Button Grid.Column="2"
+                  Content="المفضلة ★"
+                  Command="{Binding ShowFavoritesCatalogCommand}"
+                  Background="#059669"
+                  Foreground="White"
+                  Opacity="{Binding CatalogFavoritesEmphasis}"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center" />
+          <Button Grid.Column="4"
+                  Content="فحص سعر F4"
+                  Command="{Binding OpenPriceCheckCommand}"
+                  Background="#0284C7"
+                  Foreground="White"
+                  MinWidth="130" />
+        </Grid>
+
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0" Spacing="2">
+          <TextBlock Text="{Binding ShortcutHint}" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding PrinterCaption}" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#64748B" />
         </StackPanel>
-      </StackPanel>
-    </Border>
+
+        <TextBlock DockPanel.Dock="Top"
+                   Text="لا توجد أصناف مطابقة"
+                   IsVisible="{Binding HasNoSearchResults}"
+                   Margin="0,8,0,0"
+                   Foreground="#64748B" />
+        <TextBlock DockPanel.Dock="Top"
+                   Text="لا مفضلات بعد — اضغط ★ على البطاقة"
+                   IsVisible="{Binding HasNoFavorites}"
+                   Margin="0,4,0,8"
+                   Foreground="#64748B" />
+
+        <Border Background="#F8FAFC" CornerRadius="12" Padding="8" BorderBrush="#CBD5E1" BorderThickness="1">
+          <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+            <ItemsControl ItemsSource="{Binding VisibleProducts}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <WrapPanel />
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="core:CatalogProduct">
+                  <Border Width="220"
+                          Margin="0,0,8,8"
+                          Padding="12,10"
+                          Background="White"
+                          BorderBrush="#E2E8F0"
+                          BorderThickness="1"
+                          CornerRadius="12"
+                          Cursor="Hand"
+                          Tapped="OnProductTapped">
+                    <DockPanel>
+                      <Button DockPanel.Dock="Top"
+                              Content="{Binding FavoriteGlyph}"
+                              HorizontalAlignment="Left"
+                              MinHeight="36"
+                              MinWidth="44"
+                              Padding="8,4"
+                              Background="#FEF3C7"
+                              Foreground="#92400E"
+                              FontSize="18"
+                              Click="OnFavoriteClick"
+                              Tag="{Binding}" />
+                      <StackPanel Spacing="4" Margin="0,6,0,0">
+                        <TextBlock Text="{Binding NameAr}" FontSize="17" FontWeight="SemiBold" TextWrapping="Wrap" Foreground="#0F172A" />
+                        <TextBlock Text="{Binding NameZh}" FontSize="13" Foreground="#64748B" FlowDirection="LeftToRight"
+                                   IsVisible="{Binding HasNameZh}" />
+                        <TextBlock Text="{Binding PriceEgpText}" FontSize="18" FontWeight="Bold" Foreground="#059669" />
+                        <TextBlock Text="{Binding Barcode}" FontSize="12" Foreground="#94A3B8" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </DockPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Border>
+      </DockPanel>
+    </Grid>
   </Grid>
 
-  <Border Background="#CC0F1C18" IsVisible="{Binding NeedsLogin}" ZIndex="20">
-    <Border Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="14"
+  <Border Background="#CC7F1D1D" IsVisible="{Binding ShowNotFound}" ZIndex="40">
+    <Border Background="White" BorderBrush="#EF4444" BorderThickness="4" CornerRadius="16"
+            Padding="0" Width="480" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#DC2626" Padding="20,16">
+          <StackPanel Spacing="4">
+            <TextBlock Text="المنتج غير متوفر" FontSize="24" FontWeight="Bold" Foreground="White" />
+            <TextBlock Text="Product not found — أكّد قبل المتابعة" FontSize="14" Foreground="#FECACA" />
+          </StackPanel>
+        </Border>
+        <StackPanel Margin="24" Spacing="14">
+          <TextBlock Text="{Binding NotFoundBarcode, StringFormat=الباركود: {0}}"
+                     FontSize="18"
+                     FontWeight="Bold"
+                     Foreground="#0F172A"
+                     FlowDirection="LeftToRight"
+                     TextWrapping="Wrap" />
+          <TextBlock Text="يجب تأكيد الخطأ قبل مسح الصنف التالي." Foreground="#64748B" TextWrapping="Wrap" />
+          <Button x:Name="NotFoundOkButton"
+                  Content="OK · موافق"
+                  Command="{Binding DismissNotFoundCommand}"
+                  Background="#DC2626"
+                  Foreground="White"
+                  FontSize="20"
+                  FontWeight="Bold"
+                  MinHeight="56"
+                  HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Center" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+  </Border>
+
+  <Border Background="#CC0F172A" IsVisible="{Binding ShowPriceCheck}" ZIndex="39">
+    <Border Background="White" BorderBrush="#0284C7" BorderThickness="3" CornerRadius="16"
+            Padding="0" Width="520" HorizontalAlignment="Center" VerticalAlignment="Center">
+      <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#0284C7" Padding="20,16">
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Spacing="2">
+              <TextBlock Text="فحص السعر" FontSize="24" FontWeight="Bold" Foreground="White" />
+              <TextBlock Text="استعلام فقط — لا يُضاف للسلة" FontSize="13" Foreground="#E0F2FE" />
+            </StackPanel>
+            <Button Grid.Column="1"
+                    Content="إغلاق"
+                    Command="{Binding ClosePriceCheckCommand}"
+                    Background="#0369A1"
+                    Foreground="White"
+                    MinWidth="88" />
+          </Grid>
+        </Border>
+        <StackPanel Margin="24" Spacing="12">
+          <Grid ColumnDefinitions="*,8,Auto">
+            <TextBox x:Name="PriceCheckBox"
+                     Grid.Column="0"
+                     Text="{Binding PriceCheckQuery}"
+                     PlaceholderText="امسح أو اكتب الباركود"
+                     FontSize="20"
+                     MinHeight="50"
+                     FlowDirection="LeftToRight"
+                     KeyDown="OnPriceCheckKeyDown" />
+            <Button Grid.Column="2"
+                    Content="بحث"
+                    Command="{Binding SubmitPriceCheckCommand}"
+                    Background="#0284C7"
+                    Foreground="White"
+                    MinWidth="88" />
+          </Grid>
+          <Border IsVisible="{Binding HasPriceCheckResult}"
+                  Background="#F0F9FF"
+                  BorderBrush="#BAE6FD"
+                  BorderThickness="1"
+                  CornerRadius="12"
+                  Padding="16">
+            <StackPanel Spacing="6">
+              <TextBlock Text="{Binding PriceCheckResult.NameAr}" FontSize="22" FontWeight="Bold" Foreground="#0F172A" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding PriceCheckResult.NameZh}" FontSize="14" Foreground="#64748B"
+                         IsVisible="{Binding PriceCheckResult.HasNameZh}" FlowDirection="LeftToRight" />
+              <TextBlock Text="{Binding PriceCheckResult.PriceEgpText}" FontSize="28" FontWeight="Bold" Foreground="#0284C7" />
+              <TextBlock Text="{Binding PriceCheckResult.Barcode}" FontSize="13" Foreground="#64748B" FlowDirection="LeftToRight" />
+            </StackPanel>
+          </Border>
+          <TextBlock Text="{Binding PriceCheckError}"
+                     IsVisible="{Binding HasPriceCheckError}"
+                     Foreground="#B91C1C"
+                     FontWeight="SemiBold"
+                     TextWrapping="Wrap" />
+        </StackPanel>
+      </DockPanel>
+    </Border>
+  </Border>
+
+  <Border Background="#CC0F172A" IsVisible="{Binding NeedsLogin}" ZIndex="20">
+    <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
             Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
       <StackPanel Spacing="12">
-        <TextBlock Text="دخول الكاشير" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
-        <TextBlock Text="{Binding SessionCaption}" TextWrapping="Wrap" Foreground="#6E675C" />
+        <TextBlock Text="دخول الكاشير" FontSize="24" FontWeight="Bold" Foreground="#0F172A" />
+        <TextBlock Text="{Binding SessionCaption}" TextWrapping="Wrap" Foreground="#64748B" />
         <TextBox x:Name="PinBox"
                  Text="{Binding PinText}"
                  PlaceholderText="الرقم السري"
@@ -240,38 +411,36 @@
                  MinHeight="52"
                  FlowDirection="LeftToRight"
                  KeyDown="OnPinKeyDown" />
-        <TextBlock Text="{Binding AuthError}" Foreground="#B42318" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding AuthError}" Foreground="#B91C1C" TextWrapping="Wrap" />
         <Button Content="دخول"
+                Classes="pos-primary"
                 Command="{Binding SubmitPinCommand}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center"
-                Background="#12382F"
-                Foreground="#F6F1E4"
                 MinHeight="48" />
       </StackPanel>
     </Border>
   </Border>
 
-  <Border Background="#CC0F1C18" IsVisible="{Binding NeedsOpenShift}" ZIndex="21">
-    <Border Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="14"
+  <Border Background="#CC0F172A" IsVisible="{Binding NeedsOpenShift}" ZIndex="21">
+    <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
             Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
       <StackPanel Spacing="12">
-        <TextBlock Text="فتح وردية" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
-        <TextBlock Text="{Binding CashierName}" Foreground="#6E675C" />
-        <TextBlock Text="نقدية الافتتاح (ج.م)" Foreground="#6E675C" />
+        <TextBlock Text="فتح وردية" FontSize="24" FontWeight="Bold" Foreground="#0F172A" />
+        <TextBlock Text="{Binding CashierName}" Foreground="#64748B" />
+        <TextBlock Text="نقدية الافتتاح (ج.م)" Foreground="#64748B" />
         <TextBox x:Name="OpeningFloatBox"
                  Text="{Binding OpeningFloatText}"
                  FontSize="24"
                  MinHeight="52"
                  FlowDirection="LeftToRight"
                  KeyDown="OnOpeningFloatKeyDown" />
-        <TextBlock Text="{Binding ShiftError}" Foreground="#B42318" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding ShiftError}" Foreground="#B91C1C" TextWrapping="Wrap" />
         <Button Content="فتح الوردية"
+                Classes="pos-primary"
                 Command="{Binding OpenShiftCommand}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center"
-                Background="#12382F"
-                Foreground="#F6F1E4"
                 MinHeight="48" />
         <Button Content="قفل الجهاز"
                 Command="{Binding LockSessionCommand}"
@@ -281,25 +450,24 @@
     </Border>
   </Border>
 
-  <Border Background="#CC0F1C18" IsVisible="{Binding ShowCloseShift}" ZIndex="22">
-    <Border Background="#FFFcfaf4" BorderBrush="#DDD6C8" BorderThickness="1" CornerRadius="14"
+  <Border Background="#CC0F172A" IsVisible="{Binding ShowCloseShift}" ZIndex="22">
+    <Border Background="#F8FAFC" BorderBrush="#CBD5E1" BorderThickness="1" CornerRadius="14"
             Padding="28" Width="420" HorizontalAlignment="Center" VerticalAlignment="Center">
       <StackPanel Spacing="12">
-        <TextBlock Text="إغلاق الوردية" FontSize="24" FontWeight="Bold" Foreground="#12382F" />
-        <TextBlock Text="نقدية الإغلاق (ج.م)" Foreground="#6E675C" />
+        <TextBlock Text="إغلاق الوردية" FontSize="24" FontWeight="Bold" Foreground="#0F172A" />
+        <TextBlock Text="نقدية الإغلاق (ج.م)" Foreground="#64748B" />
         <TextBox x:Name="ClosingCashBox"
                  Text="{Binding ClosingCashText}"
                  FontSize="24"
                  MinHeight="52"
                  FlowDirection="LeftToRight"
                  KeyDown="OnClosingCashKeyDown" />
-        <TextBlock Text="{Binding ShiftError}" Foreground="#B42318" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding ShiftError}" Foreground="#B91C1C" TextWrapping="Wrap" />
         <Button Content="تأكيد الإغلاق"
+                Classes="pos-primary"
                 Command="{Binding ConfirmCloseShiftCommand}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center"
-                Background="#12382F"
-                Foreground="#F6F1E4"
                 MinHeight="48" />
         <Button Content="إلغاء"
                 Command="{Binding CancelCloseShiftCommand}"

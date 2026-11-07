@@ -8,9 +8,15 @@ public partial class CartLine : ObservableObject
 {
     private readonly Action _changed;
     private readonly Action<CartLine> _remove;
+    private readonly Action<CartLine>? _touched;
 
-    public CartLine(CatalogProduct product, Action changed, Action<CartLine> remove)
+    public CartLine(
+        CatalogProduct product,
+        Action changed,
+        Action<CartLine> remove,
+        Action<CartLine>? touched = null)
     {
+        LineId = Guid.NewGuid().ToString("N");
         ProductId = product.Id;
         Barcode = product.Barcode;
         NameAr = product.NameAr;
@@ -18,8 +24,11 @@ public partial class CartLine : ObservableObject
         UnitPriceMinor = product.PriceEgpMinor;
         _changed = changed;
         _remove = remove;
-        Qty = 1;
+        _touched = touched;
+        _qty = 1;
     }
+
+    public string LineId { get; }
 
     public string ProductId { get; }
 
@@ -42,11 +51,15 @@ public partial class CartLine : ObservableObject
     [ObservableProperty]
     private int _qty;
 
+    [ObservableProperty]
+    private bool _isHighlighted;
+
     partial void OnQtyChanged(int value)
     {
         OnPropertyChanged(nameof(LineTotalText));
         OnPropertyChanged(nameof(QtyText));
         _changed();
+        _touched?.Invoke(this);
     }
 
     [RelayCommand]

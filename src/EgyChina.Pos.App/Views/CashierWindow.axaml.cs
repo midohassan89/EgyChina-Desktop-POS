@@ -58,7 +58,9 @@ public partial class CashierWindow : Window
         if (e.PropertyName is nameof(PosSession.NeedsLogin)
             or nameof(PosSession.NeedsOpenShift)
             or nameof(PosSession.ShowCloseShift)
-            or nameof(PosSession.IsTendering))
+            or nameof(PosSession.IsTendering)
+            or nameof(PosSession.ShowNotFound)
+            or nameof(PosSession.ShowPriceCheck))
         {
             Dispatcher.UIThread.Post(FocusForSession);
         }
@@ -83,6 +85,10 @@ public partial class CashierWindow : Window
             ApplyFocus(UiFocusTarget.OpeningFloat);
         else if (_session.ShowCloseShift)
             ApplyFocus(UiFocusTarget.ClosingCash);
+        else if (_session.ShowNotFound)
+            ApplyFocus(UiFocusTarget.NotFoundAck);
+        else if (_session.ShowPriceCheck)
+            ApplyFocus(UiFocusTarget.PriceCheck);
         else if (_session.IsTendering)
             ApplyFocus(UiFocusTarget.Tender);
         else
@@ -109,6 +115,13 @@ public partial class CashierWindow : Window
                 TenderBox.Focus();
                 TenderBox.SelectAll();
                 break;
+            case UiFocusTarget.PriceCheck:
+                PriceCheckBox.Focus();
+                PriceCheckBox.SelectAll();
+                break;
+            case UiFocusTarget.NotFoundAck:
+                NotFoundOkButton.Focus();
+                break;
             default:
                 FocusBarcode();
                 break;
@@ -122,6 +135,20 @@ public partial class CashierWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            if (session.ShowNotFound)
+            {
+                session.DismissNotFoundCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (session.ShowPriceCheck)
+            {
+                session.ClosePriceCheckCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
             if (session.ShowCloseShift)
             {
                 session.CancelCloseShiftCommand.Execute(null);
@@ -135,6 +162,13 @@ public partial class CashierWindow : Window
                 e.Handled = true;
                 return;
             }
+        }
+
+        if (session.ShowNotFound && (e.Key == Key.Enter || e.Key == Key.Return))
+        {
+            session.DismissNotFoundCommand.Execute(null);
+            e.Handled = true;
+            return;
         }
 
         if (e.Key == Key.F2 && session.CanLock)
@@ -151,7 +185,14 @@ public partial class CashierWindow : Window
             return;
         }
 
-        if (e.Key == Key.F4 && session.CanReprint)
+        if (e.Key == Key.F4)
+        {
+            session.OpenPriceCheckCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.F5 && session.CanReprint)
         {
             session.ReprintLastCommand.Execute(null);
             e.Handled = true;
@@ -163,13 +204,16 @@ public partial class CashierWindow : Window
         if (DataContext is not PosSession session || e.Handled)
             return;
 
-        var overlayOpen = session.NeedsLogin || session.NeedsOpenShift || session.ShowCloseShift || session.IsTendering;
+        var overlayOpen = session.NeedsLogin
+            || session.NeedsOpenShift
+            || session.ShowCloseShift
+            || session.IsTendering
+            || session.BlocksScanning;
         var searchFocused = SearchBox.IsFocused;
         var barcodeFocused = BarcodeBox.IsFocused;
         if (!ScannerInput.ShouldStealFromSearch(searchFocused, barcodeFocused, overlayOpen, e.Text))
             return;
 
-        // Steal wedge input away from Arabic product search.
         session.Barcode += e.Text;
         FocusBarcode();
         e.Handled = true;
@@ -208,6 +252,14 @@ public partial class CashierWindow : Window
         session.ConfirmCloseShiftCommand.Execute(null);
     }
 
+    private void OnPriceCheckKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || DataContext is not PosSession session)
+            return;
+        e.Handled = true;
+        session.SubmitPriceCheckCommand.Execute(null);
+    }
+
     private void OnBarcodeKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter)
@@ -227,13 +279,22 @@ public partial class CashierWindow : Window
         FocusBarcode();
     }
 
+    private void OnFavoriteClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Button { Tag: CatalogProduct product } || DataContext is not PosSession session)
+            return;
+        session.ToggleFavoriteCommand.Execute(product);
+    }
+
     private void SubmitBarcode()
     {
         if (DataContext is not PosSession session)
             return;
 
         session.SubmitBarcode();
-        FocusBarcode();
+        if (!session.ShowNotFound)
+            FocusBarcode();
     }
 
     private void FocusBarcode()

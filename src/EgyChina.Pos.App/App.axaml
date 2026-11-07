@@ -2,6 +2,20 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="EgyChina.Pos.App.App"
              RequestedThemeVariant="Light">
+  <Application.Resources>
+    <SolidColorBrush x:Key="PosBrandBrush" Color="#059669" />
+    <SolidColorBrush x:Key="PosBrandDarkBrush" Color="#047857" />
+    <SolidColorBrush x:Key="PosSlate900Brush" Color="#0F172A" />
+    <SolidColorBrush x:Key="PosSlate800Brush" Color="#1E293B" />
+    <SolidColorBrush x:Key="PosSlate200Brush" Color="#E2E8F0" />
+    <SolidColorBrush x:Key="PosSurfaceBrush" Color="#F8FAFC" />
+    <SolidColorBrush x:Key="PosDangerBrush" Color="#B91C1C" />
+    <SolidColorBrush x:Key="PosGoldBrush" Color="#E3C57A" />
+    <SolidColorBrush x:Key="PosCfdBgBrush" Color="#052E1F" />
+    <SolidColorBrush x:Key="PosCfdPanelBrush" Color="#0B1210" />
+    <SolidColorBrush x:Key="PosCfdMutedBrush" Color="#8FA399" />
+    <SolidColorBrush x:Key="PosCfdTextBrush" Color="#F6F1E4" />
+  </Application.Resources>
   <Application.Styles>
     <FluentTheme />
     <Style Selector="Window">
@@ -11,6 +25,18 @@
     <Style Selector="Button">
       <Setter Property="MinHeight" Value="44" />
       <Setter Property="Padding" Value="14,8" />
+    </Style>
+    <Style Selector="Button.pos-primary">
+      <Setter Property="Background" Value="{StaticResource PosBrandBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.pos-primary:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{StaticResource PosBrandDarkBrush}" />
+    </Style>
+    <Style Selector="Button.pos-ghost">
+      <Setter Property="Background" Value="#334155" />
+      <Setter Property="Foreground" Value="#F8FAFC" />
     </Style>
     <Style Selector="TextBox">
       <Setter Property="MinHeight" Value="44" />

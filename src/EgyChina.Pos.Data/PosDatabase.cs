@@ -19,9 +19,11 @@ public sealed class PosDatabase
     public static readonly TimeSpan PinLockoutDuration = TimeSpan.FromMinutes(5);
 
     private const string ProductSelect = """
-        SELECT p.id, p.sku, p.barcode, p.name_ar, p.name_en, p.name_zh, pr.amount_minor
+        SELECT p.id, p.sku, p.barcode, p.name_ar, p.name_en, p.name_zh, pr.amount_minor,
+               CASE WHEN f.product_id IS NULL THEN 0 ELSE 1 END AS is_favorite
         FROM product p
         INNER JOIN product_price pr ON pr.product_id = p.id AND pr.currency = 'EGP'
+        LEFT JOIN product_favorite f ON f.product_id = p.id
         WHERE p.is_active = 1
         """;
 
@@ -80,6 +82,13 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "003_cashier_lockout.sql");
                 MarkMigration(connection, 3, "cashier-lockout");
+                version = 3;
+            }
+
+            if (version < 4)
+            {
+                ApplyMigrationScript(connection, "004_product_favorite.sql");
+                MarkMigration(connection, 4, "product-favorite");
             }
 
             EnsureTerminal(connection);
@@ -1956,6 +1965,39 @@ public sealed class PosDatabase
         price.ExecuteNonQuery();
     }
 
+    public bool ToggleFavorite(string productId)
+    {
+        if (string.IsNullOrWhiteSpace(productId))
+            throw new ArgumentException("Product id is required.", nameof(productId));
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var exists = connection.CreateCommand();
+            exists.CommandText = "SELECT 1 FROM product_favorite WHERE product_id = $id";
+            exists.Parameters.AddWithValue("$id", productId);
+            var pinned = exists.ExecuteScalar() is not null;
+            if (pinned)
+            {
+                using var remove = connection.CreateCommand();
+                remove.CommandText = "DELETE FROM product_favorite WHERE product_id = $id";
+                remove.Parameters.AddWithValue("$id", productId);
+                remove.ExecuteNonQuery();
+                return false;
+            }
+
+            using var insert = connection.CreateCommand();
+            insert.CommandText = """
+                INSERT INTO product_favorite (product_id, pinned_at)
+                VALUES ($id, $at);
+                """;
+            insert.Parameters.AddWithValue("$id", productId);
+            insert.Parameters.AddWithValue("$at", Now());
+            insert.ExecuteNonQuery();
+            return true;
+        }
+    }
+
     private static CatalogProduct ReadProduct(SqliteDataReader reader)
     {
         return new CatalogProduct(
@@ -1965,7 +2007,8 @@ public sealed class PosDatabase
             reader.GetString(3),
             reader.IsDBNull(4) ? null : reader.GetString(4),
             reader.IsDBNull(5) ? null : reader.GetString(5),
-            reader.GetInt64(6));
+            reader.GetInt64(6),
+            reader.FieldCount > 7 && !reader.IsDBNull(7) && reader.GetInt64(7) != 0);
     }
 
     private static string? ReadSetting(SqliteConnection connection, string key)

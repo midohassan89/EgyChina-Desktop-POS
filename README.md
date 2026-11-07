@@ -103,7 +103,7 @@ The ERP changes (device token, catalog cursor, idempotent sale push) are a separ
 
 ```text
 src/EgyChina.Pos.App     Avalonia cashier and customer windows
-src/EgyChina.Pos.Core    Money, catalog row, install paths, heartbeat
+src/EgyChina.Pos.Core    Money, catalog row, CFD modes, install paths, heartbeat
 src/EgyChina.Pos.Data    SQLite migration, backup/restore
 src/EgyChina.Pos.Sync    Outbox worker
 src/EgyChina.Pos.Tools   restore / heartbeat-check CLI
@@ -111,3 +111,6 @@ scripts/                 publish, install, launch, update, rollback, restore
 tests/EgyChina.Pos.Tests
 docs/
 ```
+
+Cashier + customer-display shell (UI-1) follows the web POS stage split and CFD modes
+`Idle` / `Shopping` / `Payment` / `Completed` (cash only until later payment phases).

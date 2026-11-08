@@ -31,7 +31,8 @@ public sealed class PrintingTests : IDisposable
     {
         using var bitmap = ReceiptBitmapRenderer.Render(SampleDocument());
         Assert.Equal(EscPosRasterEncoder.PageWidthDots, bitmap.Width);
-        Assert.True(bitmap.Height > 80);
+        // Professional receipt includes bilingual header + QR — taller than a stub ticket.
+        Assert.True(bitmap.Height > 280);
 
         var bytes = EscPosRasterEncoder.Encode(bitmap, kickDrawer: true);
         Assert.True(bytes.Length > 100);
@@ -40,6 +41,13 @@ public sealed class PrintingTests : IDisposable
         Assert.Contains((byte)0x1D, bytes); // GS
         Assert.Equal(0x1B, bytes[^5]);
         Assert.Equal(0x70, bytes[^4]); // drawer kick
+    }
+
+    [Fact]
+    public void Receipt_document_defaults_return_qr_to_pos_prefix()
+    {
+        var doc = SampleDocument();
+        Assert.Equal("POS-12", doc.ReturnQrPayload);
     }
 
     [Fact]
@@ -147,8 +155,8 @@ public sealed class PrintingTests : IDisposable
 
     private static ReceiptDocument SampleDocument() =>
         new(
-            StoreNameAr: "ايجي شاينا ماركت",
-            StoreNameZh: "埃及中国商场",
+            StoreNameAr: "إيجي شاينا هايبر ماركت",
+            StoreNameZh: "埃及中国超市 E-CHINA",
             ReceiptNo: 12,
             CompletedAt: DateTimeOffset.Parse("2026-11-07T10:00:00Z"),
             CashierName: "كاشير محلي",
@@ -159,7 +167,10 @@ public sealed class PrintingTests : IDisposable
             TotalMinor: 8_500,
             TenderMinor: 10_000,
             ChangeMinor: 1_500,
-            FooterAr: "سوق العبور");
+            FooterAr: "سوق العبور",
+            QrPayload: "POS-12",
+            PaymentLabelAr: "كاش",
+            PaymentLabelZh: "现金");
 
     private static ZReportDocument SampleZReport() =>
         new(

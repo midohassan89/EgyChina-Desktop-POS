@@ -22,7 +22,20 @@ public sealed record ReceiptDocument(
     long ChangeMinor,
     string FooterAr,
     bool IsReprint = false,
-    bool KickDrawer = false);
+    bool KickDrawer = false,
+    /// <summary>Payload embedded in the return QR — usually <c>POS-{ReceiptNo}</c>.</summary>
+    string? QrPayload = null,
+    /// <summary>Optional path to brand logo (PNG) drawn above the header.</summary>
+    string? LogoPath = null,
+    string PaymentLabelAr = "",
+    string PaymentLabelZh = "",
+    long DiscountMinor = 0)
+{
+    public string ReturnQrPayload =>
+        !string.IsNullOrWhiteSpace(QrPayload)
+            ? QrPayload.Trim()
+            : $"POS-{ReceiptNo.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+}
 
 /// <summary>Z-report payload for thermal print at shift close.</summary>
 public sealed record ZReportDocument(

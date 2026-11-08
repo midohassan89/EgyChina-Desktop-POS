@@ -531,8 +531,9 @@ public sealed class PosDatabase
             using var errorCmd = connection.CreateCommand();
             errorCmd.CommandText = """
                 SELECT last_error FROM outbox
-                WHERE last_error IS NOT NULL AND last_error <> ''
-                ORDER BY CASE status WHEN 'inflight' THEN 0 WHEN 'pending' THEN 1 WHEN 'dead' THEN 2 ELSE 3 END,
+                WHERE status IN ('pending', 'inflight', 'dead')
+                  AND last_error IS NOT NULL AND last_error <> ''
+                ORDER BY CASE status WHEN 'inflight' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
                          created_at DESC
                 LIMIT 1
                 """;
@@ -856,11 +857,12 @@ public sealed class PosDatabase
             int receiptNo;
             string completedAtRaw;
             long totalMinor;
+            long discountMinor;
             string cashierId;
             using (var sale = connection.CreateCommand())
             {
                 sale.CommandText = """
-                    SELECT receipt_no, completed_at, total_minor, cashier_id
+                    SELECT receipt_no, completed_at, total_minor, cashier_id, discount_minor
                     FROM sale
                     WHERE id = $id AND status = 'completed'
                     """;
@@ -872,6 +874,7 @@ public sealed class PosDatabase
                 completedAtRaw = reader.GetString(1);
                 totalMinor = reader.GetInt64(2);
                 cashierId = reader.GetString(3);
+                discountMinor = reader.IsDBNull(4) ? 0L : reader.GetInt64(4);
             }
 
             if (!DateTimeOffset.TryParse(completedAtRaw, null, System.Globalization.DateTimeStyles.RoundtripKind, out var completedAt))
@@ -882,10 +885,11 @@ public sealed class PosDatabase
             using (var lineCmd = connection.CreateCommand())
             {
                 lineCmd.CommandText = """
-                    SELECT name_ar, qty_milli, unit_price_minor, line_total_minor
-                    FROM sale_line
-                    WHERE sale_id = $sale
-                    ORDER BY line_no
+                    SELECT sl.name_ar, p.name_zh, sl.qty_milli, sl.unit_price_minor, sl.line_total_minor
+                    FROM sale_line sl
+                    LEFT JOIN product p ON p.id = sl.product_id
+                    WHERE sl.sale_id = $sale
+                    ORDER BY sl.line_no
                     """;
                 lineCmd.Parameters.AddWithValue("$sale", saleId);
                 using var reader = lineCmd.ExecuteReader();
@@ -893,10 +897,10 @@ public sealed class PosDatabase
                 {
                     lines.Add(new ReceiptLine(
                         reader.GetString(0),
-                        null,
-                        reader.GetInt64(1),
+                        reader.IsDBNull(1) ? null : reader.GetString(1),
                         reader.GetInt64(2),
-                        reader.GetInt64(3)));
+                        reader.GetInt64(3),
+                        reader.GetInt64(4)));
                 }
             }
 
@@ -904,23 +908,45 @@ public sealed class PosDatabase
                 return null;
 
             long tenderMinor = totalMinor;
+            var paymentMethod = "cash_egp";
             using (var pay = connection.CreateCommand())
             {
                 pay.CommandText = """
-                    SELECT amount_minor FROM payment
+                    SELECT amount_minor, method FROM payment
                     WHERE sale_id = $sale
                     ORDER BY created_at
                     LIMIT 1
                     """;
                 pay.Parameters.AddWithValue("$sale", saleId);
-                var value = pay.ExecuteScalar();
-                if (value is not null and not DBNull)
-                    tenderMinor = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+                using var reader = pay.ExecuteReader();
+                if (reader.Read())
+                {
+                    if (!reader.IsDBNull(0))
+                        tenderMinor = reader.GetInt64(0);
+                    if (!reader.IsDBNull(1))
+                        paymentMethod = reader.GetString(1);
+                }
             }
 
+            var erpPay = PosPaymentMethods.TryNormalizeErpId(paymentMethod) ?? "cash";
+            var (payAr, payZh) = erpPay switch
+            {
+                "visa" => (PosPaymentMethods.LabelAr(PosPaymentMethod.Visa), PosPaymentMethods.LabelZh(PosPaymentMethod.Visa)),
+                "wallet" => (PosPaymentMethods.LabelAr(PosPaymentMethod.Wallet), PosPaymentMethods.LabelZh(PosPaymentMethod.Wallet)),
+                "instapay" => (PosPaymentMethods.LabelAr(PosPaymentMethod.InstaPay), PosPaymentMethods.LabelZh(PosPaymentMethod.InstaPay)),
+                "wechat" => (PosPaymentMethods.LabelAr(PosPaymentMethod.WeChat), PosPaymentMethods.LabelZh(PosPaymentMethod.WeChat)),
+                _ => (PosPaymentMethods.LabelAr(PosPaymentMethod.Cash), PosPaymentMethods.LabelZh(PosPaymentMethod.Cash)),
+            };
+
+            var logoPath = PosPaths.LogoArFile();
+            if (!File.Exists(logoPath) || new FileInfo(logoPath).Length == 0)
+                logoPath = null;
+
+            var qrPayload = $"POS-{receiptNo.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+
             return new ReceiptDocument(
-                StoreNameAr: "ايجي شاينا ماركت",
-                StoreNameZh: "埃及中国商场",
+                StoreNameAr: "إيجي شاينا هايبر ماركت",
+                StoreNameZh: "埃及中国超市 E-CHINA",
                 ReceiptNo: receiptNo,
                 CompletedAt: completedAt,
                 CashierName: cashierName,
@@ -928,9 +954,14 @@ public sealed class PosDatabase
                 TotalMinor: totalMinor,
                 TenderMinor: tenderMinor,
                 ChangeMinor: tenderMinor - totalMinor,
-                FooterAr: "سوق العبور",
+                FooterAr: "سوق العبور · Souq El Obour",
                 IsReprint: isReprint,
-                KickDrawer: kickDrawer && !isReprint);
+                KickDrawer: kickDrawer && !isReprint,
+                QrPayload: qrPayload,
+                LogoPath: logoPath,
+                PaymentLabelAr: payAr,
+                PaymentLabelZh: payZh,
+                DiscountMinor: discountMinor);
         }
     }
 

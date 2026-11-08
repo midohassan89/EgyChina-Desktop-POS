@@ -1,0 +1,82 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="EgyChina.Pos.App.Controls.TouchKeyboard"
+             Focusable="False"
+             FlowDirection="LeftToRight">
+  <UserControl.Styles>
+    <Style Selector="Button.osk-key">
+      <Setter Property="MinHeight" Value="54" />
+      <Setter Property="FontSize" Value="20" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="Background" Value="#1E293B" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="BorderBrush" Value="#475569" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Padding" Value="4,8" />
+      <Setter Property="HorizontalContentAlignment" Value="Center" />
+      <Setter Property="VerticalContentAlignment" Value="Center" />
+      <Setter Property="Focusable" Value="False" />
+    </Style>
+    <Style Selector="Button.osk-key:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="#334155" />
+    </Style>
+    <Style Selector="Button.osk-key.accent">
+      <Setter Property="Background" Value="#334155" />
+      <Setter Property="FontSize" Value="16" />
+    </Style>
+    <Style Selector="Button.osk-enter">
+      <Setter Property="Background" Value="#059669" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="FontWeight" Value="Bold" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Padding" Value="16,8" />
+    </Style>
+    <Style Selector="Button.osk-action">
+      <Setter Property="Background" Value="#1E293B" />
+      <Setter Property="Foreground" Value="#E2E8F0" />
+      <Setter Property="CornerRadius" Value="12" />
+      <Setter Property="MinHeight" Value="44" />
+      <Setter Property="BorderBrush" Value="#475569" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="Focusable" Value="False" />
+      <Setter Property="Padding" Value="14,8" />
+    </Style>
+  </UserControl.Styles>
+
+  <Border Background="#0F172A"
+          BorderBrush="#334155"
+          BorderThickness="0,1,0,0"
+          Padding="10,10,10,14"
+          BoxShadow="0 -8 28 0 #66000000">
+    <DockPanel>
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,8">
+        <TextBlock x:Name="TitleBlock"
+                   FontSize="14"
+                   FontWeight="SemiBold"
+                   Foreground="#94A3B8"
+                   VerticalAlignment="Center" />
+        <Button x:Name="LanguageButton"
+                Grid.Column="1"
+                Classes="osk-action"
+                MinWidth="72"
+                Click="OnToggleLanguage"
+                Margin="0,0,8,0" />
+        <Button Grid.Column="2"
+                Content="إخفاء"
+                Classes="osk-action"
+                MinWidth="88"
+                Click="OnHide"
+                Margin="0,0,8,0" />
+        <Button Grid.Column="3"
+                Content="Enter ↵"
+                Classes="osk-enter"
+                MinWidth="110"
+                Click="OnEnter" />
+      </Grid>
+      <StackPanel x:Name="RowsHost" Spacing="8" />
+    </DockPanel>
+  </Border>
+</UserControl>

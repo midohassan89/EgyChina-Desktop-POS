@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using EgyChina.Pos.App.Controls;
 using EgyChina.Pos.App.ViewModels;
 using EgyChina.Pos.Core;
 
@@ -13,6 +14,7 @@ public partial class CashierWindow : Window
 {
     private readonly DispatcherTimer _clock;
     private PosSession? _session;
+    private TextBox? _oskTarget;
 
     public CashierWindow()
     {
@@ -26,12 +28,111 @@ public partial class CashierWindow : Window
         Opened += (_, _) =>
         {
             _clock.Start();
+            WireOnScreenKeyboard();
             FocusForSession();
         };
         Closed += (_, _) => _clock.Stop();
         DataContextChanged += (_, _) => AttachSession();
         KeyDown += OnWindowKeyDown;
         AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
+    }
+
+    private void WireOnScreenKeyboard()
+    {
+        OnScreenKeyboard.TextTyped -= OnOskTextTyped;
+        OnScreenKeyboard.BackspacePressed -= OnOskBackspace;
+        OnScreenKeyboard.EnterPressed -= OnOskEnter;
+        OnScreenKeyboard.HideRequested -= OnOskHide;
+        OnScreenKeyboard.TextTyped += OnOskTextTyped;
+        OnScreenKeyboard.BackspacePressed += OnOskBackspace;
+        OnScreenKeyboard.EnterPressed += OnOskEnter;
+        OnScreenKeyboard.HideRequested += OnOskHide;
+    }
+
+    private void OnTouchInputGotFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBox box)
+            return;
+        _oskTarget = box;
+        var numeric = ReferenceEquals(box, PinBox)
+            || ReferenceEquals(box, SupervisorPinBox)
+            || ReferenceEquals(box, TenderBox)
+            || ReferenceEquals(box, OpeningFloatBox)
+            || ReferenceEquals(box, ClosingCashBox)
+            || ReferenceEquals(box, ExchangeRateBox);
+        OnScreenKeyboard.SetMode(numeric ? TouchKeyboardMode.Numeric : TouchKeyboardMode.Text);
+        if (!numeric)
+            OnScreenKeyboard.PreferLanguage(TouchKeyboardLanguage.Arabic);
+        OnScreenKeyboard.IsVisible = true;
+    }
+
+    private void OnOskTextTyped(string text)
+    {
+        if (_oskTarget is null)
+            return;
+        var start = Math.Clamp(_oskTarget.SelectionStart, 0, _oskTarget.Text?.Length ?? 0);
+        var length = Math.Max(0, _oskTarget.SelectionEnd - _oskTarget.SelectionStart);
+        var current = _oskTarget.Text ?? string.Empty;
+        if (length > 0)
+            current = current.Remove(start, length);
+        current = current.Insert(start, text);
+        _oskTarget.Text = current;
+        var caret = start + text.Length;
+        _oskTarget.CaretIndex = caret;
+        _oskTarget.SelectionStart = caret;
+        _oskTarget.SelectionEnd = caret;
+        _oskTarget.Focus();
+    }
+
+    private void OnOskBackspace()
+    {
+        if (_oskTarget is null)
+            return;
+        var current = _oskTarget.Text ?? string.Empty;
+        var start = Math.Clamp(_oskTarget.SelectionStart, 0, current.Length);
+        var end = Math.Clamp(_oskTarget.SelectionEnd, 0, current.Length);
+        if (end > start)
+        {
+            current = current.Remove(start, end - start);
+            _oskTarget.Text = current;
+            _oskTarget.CaretIndex = start;
+        }
+        else if (start > 0)
+        {
+            current = current.Remove(start - 1, 1);
+            _oskTarget.Text = current;
+            _oskTarget.CaretIndex = start - 1;
+        }
+
+        _oskTarget.SelectionStart = _oskTarget.CaretIndex;
+        _oskTarget.SelectionEnd = _oskTarget.CaretIndex;
+        _oskTarget.Focus();
+    }
+
+    private void OnOskEnter()
+    {
+        if (_oskTarget is null)
+            return;
+        if (ReferenceEquals(_oskTarget, BarcodeBox))
+            SubmitBarcode();
+        else if (ReferenceEquals(_oskTarget, PinBox) && _session is not null)
+            _session.SubmitPinCommand.Execute(null);
+        else if (ReferenceEquals(_oskTarget, SupervisorPinBox) && _session is not null)
+            _session.SubmitSupervisorPinCommand.Execute(null);
+        else if (ReferenceEquals(_oskTarget, TenderBox) && _session is { CanConfirmCash: true })
+            _session.ConfirmCashCommand.Execute(null);
+        else if (ReferenceEquals(_oskTarget, OpeningFloatBox) && _session is not null)
+            _session.OpenShiftCommand.Execute(null);
+        else if (ReferenceEquals(_oskTarget, ClosingCashBox) && _session is not null)
+            _session.ConfirmCloseShiftCommand.Execute(null);
+        else if (ReferenceEquals(_oskTarget, PriceCheckBox) && _session is not null)
+            _session.SubmitPriceCheckCommand.Execute(null);
+    }
+
+    private void OnOskHide()
+    {
+        OnScreenKeyboard.IsVisible = false;
+        _oskTarget = null;
     }
 
     private void AttachSession()
@@ -266,9 +367,9 @@ public partial class CashierWindow : Window
             || session.ShowSupervisorPin
             || session.ShowOnlineOrders
             || session.BlocksScanning;
-        var searchFocused = SearchBox.IsFocused;
         var barcodeFocused = BarcodeBox.IsFocused;
-        if (!ScannerInput.ShouldStealFromSearch(searchFocused, barcodeFocused, overlayOpen, e.Text))
+        // Single search/scan field — steal scanner bursts only when that field is not focused.
+        if (!ScannerInput.ShouldStealFromSearch(searchFocused: false, barcodeFocused, overlayOpen, e.Text))
             return;
 
         session.Barcode += e.Text;

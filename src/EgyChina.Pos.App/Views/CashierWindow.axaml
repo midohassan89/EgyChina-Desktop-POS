@@ -3,6 +3,7 @@
         xmlns:vm="using:EgyChina.Pos.App.ViewModels"
         xmlns:core="using:EgyChina.Pos.Core"
         xmlns:data="using:EgyChina.Pos.Data"
+        xmlns:controls="using:EgyChina.Pos.App.Controls"
         x:Class="EgyChina.Pos.App.Views.CashierWindow"
         x:DataType="vm:PosSession"
         x:Name="CashierRoot"
@@ -13,8 +14,8 @@
         MinWidth="960"
         MinHeight="680">
 
-  <Grid>
-  <Grid RowDefinitions="Auto,*">
+  <Grid RowDefinitions="*,Auto">
+  <Grid Grid.Row="0" RowDefinitions="Auto,*">
     <!-- Ops header: brand + cashier + status chips + actions -->
     <Border Grid.Row="0" Background="#0B1220" Padding="16,12">
       <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
@@ -272,16 +273,19 @@
 
                   <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
                     <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
-                    <TextBox Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
+                    <TextBox x:Name="ExchangeRateBox"
+                             Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
                              FontSize="18"
                              FlowDirection="LeftToRight"
-                             MinHeight="44" />
+                             MinHeight="44"
+                             GotFocus="OnTouchInputGotFocus" />
                     <TextBlock Text="{Binding WeChatCnyText}" FontSize="20" FontWeight="Bold" Foreground="#86EFAC" />
                   </StackPanel>
 
                   <TextBlock Text="المبلغ المستلم" Foreground="#94A3B8" FontSize="13" IsVisible="{Binding IsCashPayment}" />
                   <Grid ColumnDefinitions="*,8,Auto" IsVisible="{Binding IsCashPayment}">
                     <TextBox x:Name="TenderBox"
+                             GotFocus="OnTouchInputGotFocus"
                              Grid.Column="0"
                              Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
                              PlaceholderText="0.00"
@@ -450,13 +454,14 @@
           <Grid ColumnDefinitions="*,10,Auto">
             <TextBox x:Name="BarcodeBox"
                      Grid.Column="0"
-                     Text="{Binding Barcode}"
+                     Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}"
                      PlaceholderText="ابحث بالاسم أو امسح الباركود..."
                      FontSize="18"
                      MinHeight="48"
                      BorderThickness="0"
                      Background="Transparent"
-                     KeyDown="OnBarcodeKeyDown" />
+                     KeyDown="OnBarcodeKeyDown"
+                     GotFocus="OnTouchInputGotFocus" />
             <Button Grid.Column="2"
                     Content="إدخال"
                     Classes="pos-primary"
@@ -467,13 +472,6 @@
         </Border>
 
         <TextBlock DockPanel.Dock="Top" Text="{Binding ScanHint}" Margin="0,0,0,8" Foreground="#64748B" TextWrapping="Wrap" FontSize="13" />
-
-        <TextBox x:Name="SearchBox"
-                 DockPanel.Dock="Top"
-                 Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
-                 PlaceholderText="تصفية سريعة بالاسم أو الباركود"
-                 MinHeight="44"
-                 Margin="0,0,0,10" />
 
         <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
           <Button DockPanel.Dock="Left"
@@ -722,6 +720,7 @@
         <StackPanel Margin="24" Spacing="12">
           <TextBlock Text="{Binding SupervisorHint}" Foreground="#64748B" TextWrapping="Wrap" />
           <TextBox x:Name="SupervisorPinBox"
+                   GotFocus="OnTouchInputGotFocus"
                    Text="{Binding SupervisorPinText}"
                    PlaceholderText="الرقم السري"
                    PasswordChar="•"
@@ -811,6 +810,7 @@
         <StackPanel Margin="24" Spacing="12">
           <Grid ColumnDefinitions="*,8,Auto">
             <TextBox x:Name="PriceCheckBox"
+                     GotFocus="OnTouchInputGotFocus"
                      Grid.Column="0"
                      Text="{Binding PriceCheckQuery}"
                      PlaceholderText="امسح أو اكتب الباركود"
@@ -856,6 +856,7 @@
         <TextBlock Text="دخول الكاشير" FontSize="24" FontWeight="Bold" Foreground="#0F172A" />
         <TextBlock Text="{Binding SessionCaption}" TextWrapping="Wrap" Foreground="#64748B" />
         <TextBox x:Name="PinBox"
+                 GotFocus="OnTouchInputGotFocus"
                  Text="{Binding PinText}"
                  PlaceholderText="PIN الموظف"
                  PasswordChar="•"
@@ -882,6 +883,7 @@
         <TextBlock Text="{Binding CashierName}" Foreground="#64748B" />
         <TextBlock Text="نقدية الافتتاح (ج.م)" Foreground="#64748B" />
         <TextBox x:Name="OpeningFloatBox"
+                 GotFocus="OnTouchInputGotFocus"
                  Text="{Binding OpeningFloatText}"
                  FontSize="24"
                  MinHeight="52"
@@ -930,6 +932,7 @@
           </Border>
           <TextBlock Text="نقدية الإغلاق الفعلية (ج.م)" Foreground="#64748B" />
           <TextBox x:Name="ClosingCashBox"
+                   GotFocus="OnTouchInputGotFocus"
                    Text="{Binding ClosingCashText, UpdateSourceTrigger=PropertyChanged}"
                    FontSize="24"
                    MinHeight="52"
@@ -1125,5 +1128,10 @@
       </DockPanel>
     </Border>
   </Border>
+
+  <controls:TouchKeyboard x:Name="OnScreenKeyboard"
+                          Grid.Row="1"
+                          IsVisible="False"
+                          ZIndex="80" />
   </Grid>
 </Window>

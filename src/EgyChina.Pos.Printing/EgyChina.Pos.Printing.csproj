@@ -7,6 +7,8 @@
 
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="3.119.1" />
+    <PackageReference Include="SkiaSharp.HarfBuzz" Version="3.119.1" />
+    <PackageReference Include="QRCoder" Version="1.6.0" />
     <PackageReference Include="System.IO.Ports" Version="8.0.0" />
   </ItemGroup>
 

@@ -1365,6 +1365,13 @@ public partial class PosSession : ObservableObject
         RefreshCustomerDisplayMode(stamp);
     }
 
+    partial void OnBarcodeChanged(string value)
+    {
+        // Single search/scan bar: typing filters the grid; Enter submits barcode.
+        if (!string.Equals(Search, value, StringComparison.Ordinal))
+            Search = value;
+    }
+
     partial void OnSearchChanged(string value)
     {
         OnPropertyChanged(nameof(VisibleProducts));

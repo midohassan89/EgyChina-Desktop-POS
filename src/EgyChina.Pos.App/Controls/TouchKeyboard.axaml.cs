@@ -183,7 +183,7 @@ public sealed partial class TouchKeyboard : UserControl
         {
             Content = label,
             Classes = { "osk-key" },
-            Margin = new Avalonia.Thickness(3, 0),
+            Margin = new Avalonia.Thickness(2, 0),
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         if (accent)

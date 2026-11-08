@@ -20,6 +20,7 @@ public partial class PosSession : ObservableObject
     private readonly IPosErpGateway _erp;
     private readonly SyncOptions _syncOptions;
     private string? _lastSaleId;
+    private long _lastSaleTotalMinor;
     private DateTimeOffset? _settlementAt;
     private string? _highlightedLineId;
     private SupervisorActionKind? _pendingSupervisorAction;
@@ -63,7 +64,12 @@ public partial class PosSession : ObservableObject
         PendingOutbox = snap.PendingOutbox;
         DeadOutbox = snap.DeadOutbox;
         LastSyncError = snap.LastError ?? string.Empty;
-        _lastSaleId = _database.GetLastCompletedSaleId();
+        if (_database.TryGetLastCompletedSaleSummary() is { } lastSale)
+        {
+            _lastSaleId = lastSale.SaleId;
+            _lastSaleTotalMinor = lastSale.TotalMinor;
+        }
+
         RefreshShiftState();
         ReloadHeldCarts();
         ReloadCategories();
@@ -106,10 +112,14 @@ public partial class PosSession : ObservableObject
 
     public event Action<UiFocusTarget>? FocusRequested;
 
-    public string ShortcutHint { get; } =
-        "المسح يعمل في أي مكان بالشاشة  ·  ضغطتين على الشريط العلوي = ملء الشاشة/نافذة  ·  F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
-
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
+
+    public string LastSaleButtonText =>
+        string.IsNullOrWhiteSpace(_lastSaleId)
+            ? "آخر إيصال"
+            : $"آخر · {Money.FormatEgp(Math.Abs(_lastSaleTotalMinor))}";
+
+    public bool HasLastSale => !string.IsNullOrWhiteSpace(_lastSaleId);
 
     public ObservableCollection<CatalogCategory> Categories { get; } = new();
 
@@ -275,6 +285,9 @@ public partial class PosSession : ObservableObject
 
     [ObservableProperty]
     private bool _showMoreActions;
+
+    [ObservableProperty]
+    private bool _showStatusInfo;
 
     [ObservableProperty]
     private string _onlineOrdersError = string.Empty;
@@ -574,11 +587,31 @@ public partial class PosSession : ObservableObject
     public string IdleCustomerText => IsCfdCompleted ? "شكراً لكم" : IdleGreetingText;
 
     public bool ShowCustomerChange =>
-        IsTendering && IsCashPayment && CanConfirmCash && !IsReturnMode;
+        IsTendering && IsCashPayment && Money.TryParseEgp(TenderText, out _) && !IsReturnMode;
 
-    public string CustomerChangeText => ShowCustomerChange
-        ? "الباقي " + Money.FormatEgp(ParsedTender - TotalMinor)
-        : string.Empty;
+    public bool CustomerChangeIsShortfall =>
+        ShowCustomerChange && ParsedTender < TotalMinor;
+
+    public bool ShowCustomerChangeDue =>
+        ShowCustomerChange && !CustomerChangeIsShortfall;
+
+    public string CustomerChangeText
+    {
+        get
+        {
+            if (!ShowCustomerChange)
+                return string.Empty;
+            var diff = ParsedTender - TotalMinor;
+            return diff >= 0
+                ? "الباقي " + Money.FormatEgp(diff)
+                : "المتبقي " + Money.FormatEgp(-diff);
+        }
+    }
+
+    public bool ShowQuickCashOptions =>
+        IsTendering && IsCashPayment && !IsReturnMode && QuickCashOptions.Count > 0;
+
+    public ObservableCollection<QuickCashOption> QuickCashOptions { get; } = new();
 
     public bool CanConfirmCash
     {
@@ -592,7 +625,8 @@ public partial class PosSession : ObservableObject
                 return false;
             if (IsReturnMode || !IsCashPayment)
                 return tender == TotalMinor;
-            return tender >= TotalMinor;
+            // Cash may be a nearby note denomination (including slight underpayment).
+            return tender > 0;
         }
     }
 
@@ -611,7 +645,7 @@ public partial class PosSession : ObservableObject
                 if (IsReturnMode)
                     return "الاسترجاع يرد المستحق بالكامل بدون باقي.";
                 return IsCashPayment
-                    ? "اكتب المبلغ المستلم، مثل 200 أو 200.50"
+                    ? "اختر فئة نقدية سريعة أو اكتب المبلغ المستلم."
                     : "المبلغ المستحق يُثبَّت تلقائياً لهذه الطريقة.";
             }
 
@@ -624,9 +658,12 @@ public partial class PosSession : ObservableObject
 
             if (IsCashPayment)
             {
-                if (tender < TotalMinor)
-                    return "المبلغ أقل من المستحق";
-                return "الباقي " + Money.FormatEgp(tender - TotalMinor);
+                var diff = tender - TotalMinor;
+                if (diff < 0)
+                    return "متبقي للتحصيل " + Money.FormatEgp(-diff);
+                if (diff == 0)
+                    return "المبلغ مطابق للمستحق.";
+                return "الباقي للعميل " + Money.FormatEgp(diff);
             }
 
             if (tender != TotalMinor)
@@ -1786,6 +1823,7 @@ public partial class PosSession : ObservableObject
     private void BeginCloseShift()
     {
         ShowMoreActions = false;
+        ShowStatusInfo = false;
         if (!CanOpenCloseShiftPanel || _currentShift is null)
             return;
         if (HasLines || IsTendering)
@@ -1819,6 +1857,7 @@ public partial class PosSession : ObservableObject
         if (!CanOpenOnlineOrders)
             return;
         ShowMoreActions = false;
+        ShowStatusInfo = false;
         ShowOnlineOrders = true;
         _ = RefreshOnlineOrdersAsync();
     }
@@ -1827,6 +1866,7 @@ public partial class PosSession : ObservableObject
     private void OpenOutboxPanel()
     {
         ShowMoreActions = false;
+        ShowStatusInfo = false;
         ShowOutboxPanel = true;
         RefreshOutboxPanel();
     }
@@ -1874,7 +1914,11 @@ public partial class PosSession : ObservableObject
     }
 
     [RelayCommand]
-    private void ToggleMoreActions() => ShowMoreActions = !ShowMoreActions;
+    private void ToggleMoreActions()
+    {
+        ShowStatusInfo = false;
+        ShowMoreActions = !ShowMoreActions;
+    }
 
     [RelayCommand]
     private void CloseMoreActions() => ShowMoreActions = false;
@@ -1971,8 +2015,9 @@ public partial class PosSession : ObservableObject
         SaleError = string.Empty;
         SelectedPayment = PosPaymentMethod.Cash;
         ExchangeRateText = WeChatFx.DefaultEgpPerCny.ToString("0.##", CultureInfo.InvariantCulture);
-        TenderText = Money.FormatAmount(TotalMinor);
+        TenderText = Money.FormatAmount(CashSuggestions.DefaultAmount(TotalMinor));
         IsTendering = true;
+        RebuildQuickCashOptions();
         TenderOpened?.Invoke();
         RequestFocus(UiFocusTarget.Tender);
     }
@@ -1984,8 +2029,11 @@ public partial class PosSession : ObservableObject
             return;
         SelectedPayment = method;
         SaleError = string.Empty;
-        if (!IsCashPayment)
+        if (IsCashPayment)
+            TenderText = Money.FormatAmount(CashSuggestions.DefaultAmount(TotalMinor));
+        else
             TenderText = Money.FormatAmount(TotalMinor);
+        RebuildQuickCashOptions();
         RefreshCheckout();
         if (IsCashPayment)
             RequestFocus(UiFocusTarget.Tender);
@@ -1997,6 +2045,40 @@ public partial class PosSession : ObservableObject
         if (!HasLines)
             return;
         TenderText = Money.FormatAmount(TotalMinor);
+    }
+
+    [RelayCommand]
+    private void SelectQuickCash(long amountMinor)
+    {
+        if (!IsTendering || !IsCashPayment || amountMinor <= 0)
+            return;
+        SaleError = string.Empty;
+        TenderText = Money.FormatAmount(amountMinor);
+        RebuildQuickCashOptions();
+    }
+
+    private void RebuildQuickCashOptions()
+    {
+        QuickCashOptions.Clear();
+        if (!IsTendering || !IsCashPayment || IsReturnMode || !HasLines)
+        {
+            OnPropertyChanged(nameof(ShowQuickCashOptions));
+            return;
+        }
+
+        var suggested = CashSuggestions.Suggest(TotalMinor);
+        var defaultAmount = CashSuggestions.DefaultAmount(TotalMinor);
+        var hasParsed = Money.TryParseEgp(TenderText, out var selected);
+        foreach (var amount in suggested)
+        {
+            var selectedNow = hasParsed ? amount == selected : amount == defaultAmount;
+            QuickCashOptions.Add(new QuickCashOption(
+                amount,
+                Money.FormatAmount(amount),
+                selectedNow));
+        }
+
+        OnPropertyChanged(nameof(ShowQuickCashOptions));
     }
 
     [RelayCommand]
@@ -2082,6 +2164,7 @@ public partial class PosSession : ObservableObject
             _settlementAt = DateTimeOffset.Now;
             PendingOutbox = _database.CountPendingOutbox();
             _lastSaleId = sale.SaleId;
+            _lastSaleTotalMinor = sale.TotalMinor;
             IsReturnMode = false;
             _activeQueueTicketCode = null;
             ClearLoyalty();
@@ -2092,6 +2175,8 @@ public partial class PosSession : ObservableObject
                 $"cashier confirmed {(wasReturn ? "return" : "sale")} receipt {sale.ReceiptNo} method={paymentErp}");
             SelectedPayment = PosPaymentMethod.Cash;
             OnPropertyChanged(nameof(CanReprint));
+            OnPropertyChanged(nameof(HasLastSale));
+            OnPropertyChanged(nameof(LastSaleButtonText));
             OnPropertyChanged(nameof(HasActiveQueueTicket));
             OnPropertyChanged(nameof(ActiveQueueCaption));
             RefreshCheckout();
@@ -2146,10 +2231,26 @@ public partial class PosSession : ObservableObject
     [RelayCommand]
     private void ReprintLast()
     {
+        ShowMoreActions = false;
+        ShowStatusInfo = false;
         if (!CanReprint || string.IsNullOrWhiteSpace(_lastSaleId))
+        {
+            ScanHint = "لا يوجد إيصال سابق لإعادة الطباعة.";
             return;
+        }
+
         _ = PrintSaleAsync(_lastSaleId, isReprint: true, kickDrawer: false);
     }
+
+    [RelayCommand]
+    private void ToggleStatusInfo()
+    {
+        ShowMoreActions = false;
+        ShowStatusInfo = !ShowStatusInfo;
+    }
+
+    [RelayCommand]
+    private void CloseStatusInfo() => ShowStatusInfo = false;
 
     private async Task PrintSaleAsync(string saleId, bool isReprint, bool kickDrawer)
     {
@@ -2255,6 +2356,8 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(TenderHint));
         OnPropertyChanged(nameof(ShowCustomerChange));
         OnPropertyChanged(nameof(CustomerChangeText));
+        OnPropertyChanged(nameof(CustomerChangeIsShortfall));
+        OnPropertyChanged(nameof(ShowCustomerChangeDue));
         OnPropertyChanged(nameof(ShowSettlement));
         OnPropertyChanged(nameof(SettlementText));
         OnPropertyChanged(nameof(IdleCustomerText));
@@ -2262,11 +2365,14 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanLock));
         OnPropertyChanged(nameof(CanOpenCloseShiftPanel));
         OnPropertyChanged(nameof(CanReprint));
+        OnPropertyChanged(nameof(LastSaleButtonText));
+        OnPropertyChanged(nameof(HasLastSale));
         OnPropertyChanged(nameof(PaymentMethodLabel));
         OnPropertyChanged(nameof(WeChatCnyText));
         OnPropertyChanged(nameof(ShowWeChatQr));
         OnPropertyChanged(nameof(ShowInstaPayQr));
         OnPropertyChanged(nameof(IsCashPayment));
+        OnPropertyChanged(nameof(ShowQuickCashOptions));
         OnPropertyChanged(nameof(ReturnModeButtonText));
         OnPropertyChanged(nameof(ShowReturnModeBanner));
         OnPropertyChanged(nameof(CanRedeemLoyalty));
@@ -2277,6 +2383,8 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(ShowLoyaltyDiscount));
         OnPropertyChanged(nameof(HasActiveQueueTicket));
         OnPropertyChanged(nameof(ActiveQueueCaption));
+        if (IsTendering)
+            RebuildQuickCashOptions();
         RefreshCustomerDisplayMode(DateTimeOffset.Now);
     }
 

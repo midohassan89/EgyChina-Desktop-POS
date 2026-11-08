@@ -123,24 +123,20 @@ public sealed class CashSaleTests : IDisposable
     }
 
     [Fact]
-    public void Short_tender_writes_nothing()
+    public void Short_tender_is_allowed_with_negative_change()
     {
         var database = NewDatabase();
         var shift = TestShift.Open(database);
-        Assert.Throws<InvalidOperationException>(() => database.CompleteCashSale(
+        var sale = database.CompleteCashSale(
             [new CashSaleLine("demo-rice", PosDatabase.DemoRiceBarcode, "أرز مصري ٥ كجم", 1, 8500)],
             1000,
             PosDatabase.LocalCashierId,
-            shift.Id));
+            shift.Id);
 
-        Assert.Equal(0, database.CountPendingOutbox());
-        using var connection = Open(database.DatabasePath);
-        using var sales = connection.CreateCommand();
-        sales.CommandText = "SELECT COUNT(*) FROM sale";
-        Assert.Equal(0L, (long)sales.ExecuteScalar()!);
-        using var counter = connection.CreateCommand();
-        counter.CommandText = "SELECT next_no FROM receipt_counter WHERE id = 1";
-        Assert.Equal(1L, (long)counter.ExecuteScalar()!);
+        Assert.Equal(8500, sale.TotalMinor);
+        Assert.Equal(1000, sale.TenderMinor);
+        Assert.Equal(-7500, sale.ChangeMinor);
+        Assert.Equal(1, database.CountPendingOutbox());
     }
 
     [Fact]

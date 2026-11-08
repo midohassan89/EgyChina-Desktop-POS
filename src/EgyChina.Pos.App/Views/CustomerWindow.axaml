@@ -234,9 +234,16 @@
                        Foreground="#86EFAC"
                        HorizontalAlignment="Center" />
             <TextBlock Text="{Binding CustomerChangeText}"
-                       IsVisible="{Binding ShowCustomerChange}"
+                       IsVisible="{Binding ShowCustomerChangeDue}"
                        FontSize="26"
+                       FontWeight="Bold"
                        Foreground="#FBBF24"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding CustomerChangeText}"
+                       IsVisible="{Binding CustomerChangeIsShortfall}"
+                       FontSize="26"
+                       FontWeight="Bold"
+                       Foreground="#FCA5A5"
                        HorizontalAlignment="Center" />
             <TextBlock Text="جارٍ الدفع نقداً"
                        IsVisible="{Binding IsCashPayment}"

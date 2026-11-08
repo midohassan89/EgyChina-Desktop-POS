@@ -843,6 +843,26 @@ public sealed class PosDatabase
         }
     }
 
+    /// <summary>Most recent completed sale id + signed total (negative for returns).</summary>
+    public (string SaleId, long TotalMinor)? TryGetLastCompletedSaleSummary()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id, total_minor FROM sale
+                WHERE status = 'completed'
+                ORDER BY completed_at DESC, receipt_no DESC
+                LIMIT 1
+                """;
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+                return null;
+            return (reader.GetString(0), reader.GetInt64(1));
+        }
+    }
+
     /// <summary>
     /// Builds a printable receipt from committed sale rows. Never mutates the sale.
     /// </summary>
@@ -2211,8 +2231,10 @@ public sealed class PosDatabase
         }
         else if (PosPaymentMethods.IsCash(paymentMethod))
         {
-            if (tenderMinor < total)
-                throw new InvalidOperationException("Tender is below the sale total.");
+            // Cash may be under the total (shortfall / negative change) when the customer
+            // hands a nearby note denomination such as 605 for a 606 bill.
+            if (tenderMinor < 0)
+                throw new ArgumentOutOfRangeException(nameof(tenderMinor));
         }
         else if (tenderMinor != total)
         {

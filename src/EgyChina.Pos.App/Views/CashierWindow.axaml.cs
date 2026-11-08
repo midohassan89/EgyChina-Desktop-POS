@@ -1,10 +1,15 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Globalization;
+using System.Linq;
 using System.Text;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using EgyChina.Pos.App.Controls;
 using EgyChina.Pos.App.ViewModels;
 using EgyChina.Pos.Core;
@@ -31,14 +36,30 @@ public partial class CashierWindow : Window
         {
             _clock.Start();
             WireOnScreenKeyboard();
+            ApplyOskLayout();
             FocusForSession();
         };
         Closed += (_, _) => _clock.Stop();
         DataContextChanged += (_, _) => AttachSession();
+        SizeChanged += (_, _) => ApplyOskLayout();
         KeyDown += OnWindowKeyDown;
         // Tunnel first: USB wedge types into whichever control has focus — steal codes globally.
         AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
         AddHandler(InputElement.KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
+        // Dismiss OSK when tapping empty / product / cart chrome (not the keyboard or a TextBox).
+        AddHandler(InputElement.PointerPressedEvent, OnRootPointerPressed, RoutingStrategies.Tunnel);
+    }
+
+    private IEnumerable<TextBox> EnumerateTouchBoxes()
+    {
+        yield return BarcodeBox;
+        yield return TenderBox;
+        yield return ExchangeRateBox;
+        yield return PinBox;
+        yield return OpeningFloatBox;
+        yield return ClosingCashBox;
+        yield return PriceCheckBox;
+        yield return SupervisorPinBox;
     }
 
     private void WireOnScreenKeyboard()
@@ -51,29 +72,125 @@ public partial class CashierWindow : Window
         OnScreenKeyboard.BackspacePressed += OnOskBackspace;
         OnScreenKeyboard.EnterPressed += OnOskEnter;
         OnScreenKeyboard.HideRequested += OnOskHide;
+
+        foreach (var box in EnumerateTouchBoxes())
+        {
+            box.RemoveHandler(InputElement.PointerPressedEvent, OnTouchInputPointerPressed);
+            box.AddHandler(InputElement.PointerPressedEvent, OnTouchInputPointerPressed, RoutingStrategies.Tunnel);
+        }
+    }
+
+    private const double CartColumnReserve = 422;
+
+    private void ApplyOskLayout()
+    {
+        // LTR host forces Left = physical left (catalog). Cart (~400px) stays free on the right.
+        var width = Math.Max(360, Bounds.Width - CartColumnReserve - 20);
+        // Cap height; TouchKeyboard scrolls internally so bottom keys never clip away.
+        var heightCap = Math.Clamp(Bounds.Height * 0.42, 180, 380);
+        OnScreenKeyboard.Width = width;
+        OnScreenKeyboard.MaxWidth = width;
+        OnScreenKeyboard.Height = double.NaN;
+        OnScreenKeyboard.MaxHeight = heightCap;
+        OnScreenKeyboard.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+        OnScreenKeyboard.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
+    }
+
+    private bool IsNumericTouchField(TextBox box) =>
+        ReferenceEquals(box, PinBox)
+        || ReferenceEquals(box, SupervisorPinBox)
+        || ReferenceEquals(box, TenderBox)
+        || ReferenceEquals(box, OpeningFloatBox)
+        || ReferenceEquals(box, ClosingCashBox)
+        || ReferenceEquals(box, ExchangeRateBox);
+
+    /// <summary>PIN / cash / dialogs — show pad when field is focused for typing. Barcode stays scan-first.</summary>
+    private bool IsModalTypingField(TextBox box) =>
+        !ReferenceEquals(box, BarcodeBox);
+
+    private void PrepareOskFor(TextBox box)
+    {
+        _oskTarget = box;
+        var numeric = IsNumericTouchField(box);
+        OnScreenKeyboard.SetMode(numeric ? TouchKeyboardMode.Numeric : TouchKeyboardMode.Text);
+        if (!numeric)
+            OnScreenKeyboard.PreferLanguage(TouchKeyboardLanguage.Arabic);
+        ApplyOskLayout();
+    }
+
+    private void ShowOnScreenKeyboard()
+    {
+        ApplyOskLayout();
+        OnScreenKeyboard.IsVisible = true;
+    }
+
+    private void HideOnScreenKeyboard()
+    {
+        OnScreenKeyboard.IsVisible = false;
     }
 
     private void OnTouchInputGotFocus(object? sender, RoutedEventArgs e)
     {
         if (sender is not TextBox box)
             return;
-        _oskTarget = box;
-        var numeric = ReferenceEquals(box, PinBox)
-            || ReferenceEquals(box, SupervisorPinBox)
-            || ReferenceEquals(box, TenderBox)
-            || ReferenceEquals(box, OpeningFloatBox)
-            || ReferenceEquals(box, ClosingCashBox)
-            || ReferenceEquals(box, ExchangeRateBox);
-        OnScreenKeyboard.SetMode(numeric ? TouchKeyboardMode.Numeric : TouchKeyboardMode.Text);
-        if (!numeric)
-            OnScreenKeyboard.PreferLanguage(TouchKeyboardLanguage.Arabic);
-        OnScreenKeyboard.IsVisible = true;
+
+        PrepareOskFor(box);
+        // Programmatic FocusBarcode after every scan must NOT pop the keyboard.
+        // Modal amount/PIN fields may show immediately so the cashier can type.
+        if (IsModalTypingField(box))
+            ShowOnScreenKeyboard();
+    }
+
+    private void OnTouchInputPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        var box = sender as TextBox
+                  ?? (e.Source as Control)?.FindAncestorOfType<TextBox>()
+                  ?? e.Source as TextBox;
+        if (box is null || !EnumerateTouchBoxes().Contains(box))
+            return;
+
+        PrepareOskFor(box);
+        ShowOnScreenKeyboard();
+    }
+
+    private static bool IsDialogTypingOpen(PosSession session) =>
+        session.NeedsLogin
+        || session.NeedsOpenShift
+        || session.ShowCloseShift
+        || session.IsTendering
+        || session.ShowSupervisorPin
+        || session.ShowPriceCheck;
+
+    private void OnRootPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!OnScreenKeyboard.IsVisible)
+            return;
+
+        if (e.Source is not Visual visual)
+            return;
+
+        // Keep keyboard while using it or retargeting another input.
+        if (OnScreenKeyboard.IsVisualAncestorOf(visual) || ReferenceEquals(visual, OnScreenKeyboard))
+            return;
+        if (visual is TextBox || visual.FindAncestorOfType<TextBox>() is not null)
+            return;
+
+        // During PIN / tender dialogs the dim overlay would otherwise dismiss the pad.
+        if (DataContext is PosSession session && IsDialogTypingOpen(session))
+            return;
+
+        HideOnScreenKeyboard();
     }
 
     private void OnOskTextTyped(string text)
     {
         if (_oskTarget is null)
             return;
+
+        // Ensure the bound TextBox stays the active target (dialogs can steal focus).
+        if (!_oskTarget.IsFocused)
+            _oskTarget.Focus();
+
         var start = Math.Clamp(_oskTarget.SelectionStart, 0, _oskTarget.Text?.Length ?? 0);
         var length = Math.Max(0, _oskTarget.SelectionEnd - _oskTarget.SelectionStart);
         var current = _oskTarget.Text ?? string.Empty;
@@ -85,7 +202,6 @@ public partial class CashierWindow : Window
         _oskTarget.CaretIndex = caret;
         _oskTarget.SelectionStart = caret;
         _oskTarget.SelectionEnd = caret;
-        _oskTarget.Focus();
     }
 
     private void OnOskBackspace()
@@ -118,7 +234,10 @@ public partial class CashierWindow : Window
         if (_oskTarget is null)
             return;
         if (ReferenceEquals(_oskTarget, BarcodeBox))
+        {
             SubmitBarcode();
+            HideOnScreenKeyboard();
+        }
         else if (ReferenceEquals(_oskTarget, PinBox) && _session is not null)
             _session.SubmitPinCommand.Execute(null);
         else if (ReferenceEquals(_oskTarget, SupervisorPinBox) && _session is not null)
@@ -135,7 +254,7 @@ public partial class CashierWindow : Window
 
     private void OnOskHide()
     {
-        OnScreenKeyboard.IsVisible = false;
+        HideOnScreenKeyboard();
         _oskTarget = null;
     }
 
@@ -250,6 +369,7 @@ public partial class CashierWindow : Window
         || session.ShowSupervisorPin
         || session.ShowOnlineOrders
         || session.ShowMoreActions
+        || session.ShowStatusInfo
         || session.BlocksScanning;
 
     private void ClearWedgeBuffer() => _wedgeBuffer.Clear();
@@ -529,6 +649,17 @@ public partial class CashierWindow : Window
         }
     }
 
+    private void OnStatusInfoBackdrop(object? sender, Avalonia.Input.PointerPressedEventArgs e)
+    {
+        if (DataContext is not PosSession session)
+            return;
+        if (e.Source is Border border && ReferenceEquals(border, sender))
+        {
+            session.CloseStatusInfoCommand.Execute(null);
+            e.Handled = true;
+        }
+    }
+
     private void OnResumeHeldClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;
@@ -553,6 +684,23 @@ public partial class CashierWindow : Window
         if (!Enum.TryParse<PosPaymentMethod>(tag, ignoreCase: true, out var method))
             return;
         session.SelectPaymentCommand.Execute(method);
+    }
+
+    private void OnQuickCashClick(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (DataContext is not PosSession session)
+            return;
+        long amountMinor = 0;
+        if (sender is Button { Tag: long longTag })
+            amountMinor = longTag;
+        else if (sender is Button { Tag: int intTag })
+            amountMinor = intTag;
+        else if (sender is Button { Tag: string textTag })
+            long.TryParse(textTag, NumberStyles.Integer, CultureInfo.InvariantCulture, out amountMinor);
+        if (amountMinor <= 0)
+            return;
+        session.SelectQuickCashCommand.Execute(amountMinor);
     }
 
     private void SubmitBarcode()

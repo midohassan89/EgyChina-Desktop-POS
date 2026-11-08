@@ -1,5 +1,6 @@
 using System;
 using System.ComponentModel;
+using System.Text;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -13,6 +14,7 @@ namespace EgyChina.Pos.App.Views;
 public partial class CashierWindow : Window
 {
     private readonly DispatcherTimer _clock;
+    private readonly StringBuilder _wedgeBuffer = new();
     private PosSession? _session;
     private TextBox? _oskTarget;
 
@@ -34,7 +36,9 @@ public partial class CashierWindow : Window
         Closed += (_, _) => _clock.Stop();
         DataContextChanged += (_, _) => AttachSession();
         KeyDown += OnWindowKeyDown;
+        // Tunnel first: USB wedge types into whichever control has focus — steal codes globally.
         AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
+        AddHandler(InputElement.KeyDownEvent, OnPreviewKeyDown, RoutingStrategies.Tunnel);
     }
 
     private void WireOnScreenKeyboard()
@@ -238,6 +242,57 @@ public partial class CashierWindow : Window
         }
     }
 
+    private bool IsScanLaneBlocked(PosSession session) =>
+        session.NeedsLogin
+        || session.NeedsOpenShift
+        || session.ShowCloseShift
+        || session.IsTendering
+        || session.ShowSupervisorPin
+        || session.ShowOnlineOrders
+        || session.ShowMoreActions
+        || session.BlocksScanning;
+
+    private void ClearWedgeBuffer() => _wedgeBuffer.Clear();
+
+    private bool TryCommitWedgeScan(PosSession session)
+    {
+        if (_wedgeBuffer.Length == 0)
+            return false;
+
+        var code = _wedgeBuffer.ToString().Trim();
+        ClearWedgeBuffer();
+        if (code.Length == 0 || IsScanLaneBlocked(session))
+            return false;
+
+        session.Barcode = code;
+        SubmitBarcode();
+        return true;
+    }
+
+    private void OnPreviewKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (DataContext is not PosSession session || e.Handled)
+            return;
+
+        if (e.Key is not (Key.Enter or Key.Return))
+            return;
+
+        if (TryCommitWedgeScan(session))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        // Idle Enter with focus away from the search box: submit whatever is already in Barcode.
+        if (!IsScanLaneBlocked(session)
+            && !BarcodeBox.IsFocused
+            && !string.IsNullOrWhiteSpace(session.Barcode))
+        {
+            SubmitBarcode();
+            e.Handled = true;
+        }
+    }
+
     private void OnWindowKeyDown(object? sender, KeyEventArgs e)
     {
         if (DataContext is not PosSession session)
@@ -245,6 +300,7 @@ public partial class CashierWindow : Window
 
         if (e.Key == Key.Escape)
         {
+            ClearWedgeBuffer();
             if (session.ShowSupervisorPin)
             {
                 session.CancelSupervisorPinCommand.Execute(null);
@@ -360,20 +416,12 @@ public partial class CashierWindow : Window
         if (DataContext is not PosSession session || e.Handled)
             return;
 
-        var overlayOpen = session.NeedsLogin
-            || session.NeedsOpenShift
-            || session.ShowCloseShift
-            || session.IsTendering
-            || session.ShowSupervisorPin
-            || session.ShowOnlineOrders
-            || session.BlocksScanning;
-        var barcodeFocused = BarcodeBox.IsFocused;
-        // Single search/scan field — steal scanner bursts only when that field is not focused.
-        if (!ScannerInput.ShouldStealFromSearch(searchFocused: false, barcodeFocused, overlayOpen, e.Text))
+        // Global wedge capture: product scan works even when focus is on tiles / cart / header.
+        // On-screen keyboard writes TextBox.Text directly and never hits this path.
+        if (!ScannerInput.ShouldCaptureGlobally(IsScanLaneBlocked(session), e.Text))
             return;
 
-        session.Barcode += e.Text;
-        FocusBarcode();
+        _wedgeBuffer.Append(e.Text);
         e.Handled = true;
     }
 

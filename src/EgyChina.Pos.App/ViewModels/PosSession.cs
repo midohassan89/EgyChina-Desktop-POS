@@ -107,7 +107,7 @@ public partial class PosSession : ObservableObject
     public event Action<UiFocusTarget>? FocusRequested;
 
     public string ShortcutHint { get; } =
-        "ضغطتين على الشريط العلوي = ملء الشاشة/نافذة  ·  F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
+        "المسح يعمل في أي مكان بالشاشة  ·  ضغطتين على الشريط العلوي = ملء الشاشة/نافذة  ·  F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
 
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
 

@@ -17,6 +17,15 @@ public sealed class ScannerInputTests
         Assert.Equal(expected, ScannerInput.LooksLikeScannerGlyph(text));
 
     [Fact]
+    public void Captures_globally_when_lane_is_idle()
+    {
+        Assert.True(ScannerInput.ShouldCaptureGlobally(overlayOpen: false, text: "4"));
+        Assert.True(ScannerInput.ShouldCaptureGlobally(overlayOpen: false, text: "Q"));
+        Assert.False(ScannerInput.ShouldCaptureGlobally(overlayOpen: true, text: "4"));
+        Assert.False(ScannerInput.ShouldCaptureGlobally(overlayOpen: false, text: "ش"));
+    }
+
+    [Fact]
     public void Steals_only_from_search_when_lane_is_idle()
     {
         Assert.True(ScannerInput.ShouldStealFromSearch(

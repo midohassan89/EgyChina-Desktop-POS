@@ -567,28 +567,29 @@
             <!-- Virtualized grid: all 3000+ products without loading every bitmap at once -->
             <ItemsRepeater ItemsSource="{Binding VisibleProducts}">
               <ItemsRepeater.Layout>
-                <UniformGridLayout MinItemWidth="188"
-                                   MinItemHeight="210"
-                                   MinColumnSpacing="12"
-                                   MinRowSpacing="12"
+                <!-- Compact till tiles: ~4–5 columns on typical 1366–1920 cashier screens -->
+                <UniformGridLayout MinItemWidth="132"
+                                   MinItemHeight="152"
+                                   MinColumnSpacing="8"
+                                   MinRowSpacing="8"
                                    ItemsStretch="Fill"
                                    ItemsJustification="Start" />
               </ItemsRepeater.Layout>
               <ItemsRepeater.ItemTemplate>
                 <DataTemplate x:DataType="core:CatalogProduct">
-                  <Border MinHeight="200"
+                  <Border MinHeight="144"
                           Padding="0"
                           Background="#FFFFFF"
                           BorderBrush="#E2E8F0"
                           BorderThickness="1"
-                          CornerRadius="16"
+                          CornerRadius="12"
                           Cursor="Hand"
-                          BoxShadow="0 4 14 0 #12000000"
+                          BoxShadow="0 2 10 0 #10000000"
                           Tapped="OnProductTapped">
                     <DockPanel>
                       <Border DockPanel.Dock="Top"
-                              Height="110"
-                              CornerRadius="16,16,0,0"
+                              Height="72"
+                              CornerRadius="12,12,0,0"
                               Background="#F1F5F9"
                               ClipToBounds="True">
                         <Grid>
@@ -596,7 +597,7 @@
                                   IsVisible="{Binding Converter={StaticResource MissingProductImage}}">
                             <Image Source="{DynamicResource BrandLogo}"
                                    Stretch="Uniform"
-                                   Margin="18"
+                                   Margin="12"
                                    HorizontalAlignment="Center"
                                    VerticalAlignment="Center"
                                    Opacity="0.95" />
@@ -609,26 +610,26 @@
                           <Button Content="{Binding FavoriteGlyph}"
                                   HorizontalAlignment="Left"
                                   VerticalAlignment="Top"
-                                  Margin="8"
-                                  MinHeight="32"
-                                  MinWidth="36"
-                                  Padding="4,0"
+                                  Margin="4"
+                                  MinHeight="28"
+                                  MinWidth="28"
+                                  Padding="2,0"
                                   Background="#FEF9C3"
                                   Foreground="#A16207"
                                   CornerRadius="999"
-                                  FontSize="14"
+                                  FontSize="12"
                                   Click="OnFavoriteClick"
                                   Tag="{Binding}" />
                         </Grid>
                       </Border>
-                      <StackPanel Spacing="4" Margin="12,10,12,12">
-                        <TextBlock Text="{Binding DisplayNameAr}" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"
-                                   TextTrimming="CharacterEllipsis" MaxLines="2" MaxHeight="44" Foreground="#0F172A" />
-                        <TextBlock Text="{Binding NameZh}" FontSize="11" Foreground="#94A3B8" FlowDirection="LeftToRight"
+                      <StackPanel Spacing="2" Margin="8,6,8,8">
+                        <TextBlock Text="{Binding DisplayNameAr}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"
+                                   TextTrimming="CharacterEllipsis" MaxLines="2" MaxHeight="34" Foreground="#0F172A" />
+                        <TextBlock Text="{Binding NameZh}" FontSize="10" Foreground="#94A3B8" FlowDirection="LeftToRight"
                                    TextTrimming="CharacterEllipsis" MaxLines="1"
                                    IsVisible="{Binding HasNameZh}" />
-                        <Border Background="#ECFDF5" CornerRadius="8" Padding="8,4" HorizontalAlignment="Right" Margin="0,6,0,0">
-                          <TextBlock Text="{Binding PriceEgpText}" FontSize="16" FontWeight="Bold" Foreground="#047857" />
+                        <Border Background="#ECFDF5" CornerRadius="6" Padding="6,2" HorizontalAlignment="Right" Margin="0,2,0,0">
+                          <TextBlock Text="{Binding PriceEgpText}" FontSize="13" FontWeight="Bold" Foreground="#047857" />
                         </Border>
                       </StackPanel>
                     </DockPanel>

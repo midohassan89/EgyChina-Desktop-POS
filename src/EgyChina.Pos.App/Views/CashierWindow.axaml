@@ -17,7 +17,9 @@
   <Grid RowDefinitions="*,Auto">
   <Grid Grid.Row="0" RowDefinitions="Auto,*">
     <!-- Ops header: brand + cashier + status chips + actions -->
-    <Border Grid.Row="0" Background="#0B1220" Padding="16,12">
+    <Border Grid.Row="0" Background="#0B1220" Padding="16,12"
+            DoubleTapped="OnHeaderDoubleTapped"
+            ToolTip.Tip="ضغطتان هنا للتبديل بين ملء الشاشة والنافذة">
       <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
         <StackPanel Spacing="8" VerticalAlignment="Center">
           <StackPanel Orientation="Horizontal" Spacing="10">
@@ -1057,6 +1059,12 @@
         <Button Content="شاشة العميل"
                 Classes="pos-chip-info"
                 Command="{Binding ShowCustomerDisplayCommand}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center" />
+        <Button Content="{Binding CashierDisplayModeButtonText}"
+                Classes="pos-tender"
+                Background="#1D4ED8"
+                Command="{Binding ToggleCashierKioskCommand}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center" />
         <Button Content="إعادة طباعة"

@@ -99,12 +99,15 @@ public partial class PosSession : ObservableObject
 
     public Action? RequestCustomerDisplay { get; set; }
 
+    /// <summary>Toggles cashier kiosk FullScreen ↔ maximized window (taskbar visible).</summary>
+    public Action? RequestToggleCashierKiosk { get; set; }
+
     public event Action? TenderOpened;
 
     public event Action<UiFocusTarget>? FocusRequested;
 
     public string ShortcutHint { get; } =
-        "F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
+        "ضغطتين على الشريط العلوي = ملء الشاشة/نافذة  ·  F2 قفل  ·  F3 شاشة العميل  ·  F4 فحص سعر  ·  F5 إعادة طباعة  ·  F6 استرجاع  ·  F7 درج  ·  F8 أونلاين  ·  Esc إلغاء";
 
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
 
@@ -1651,6 +1654,20 @@ public partial class PosSession : ObservableObject
     {
         ShowMoreActions = false;
         RequestCustomerDisplay?.Invoke();
+    }
+
+    public string CashierDisplayModeButtonText =>
+        ScreenLayout.CashierKiosk ? "تصغير النافذة (إظهار شريط ويندوز)" : "ملء الشاشة بالكامل";
+
+    [RelayCommand]
+    private void ToggleCashierKiosk()
+    {
+        ShowMoreActions = false;
+        RequestToggleCashierKiosk?.Invoke();
+        OnPropertyChanged(nameof(CashierDisplayModeButtonText));
+        ScanHint = ScreenLayout.CashierKiosk
+            ? "وضع الكشك: الشاشة كاملة. ضغطتان على الشريط العلوي للتصغير."
+            : "وضع النافذة: شريط ويندوز ظاهر. ضغطتان على الشريط العلوي لملء الشاشة.";
     }
 
     [RelayCommand]

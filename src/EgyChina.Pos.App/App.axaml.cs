@@ -115,6 +115,7 @@ public partial class App : Application
         var erpGateway = PosErpGateway.FromOptions(syncOptions);
         _session = new PosSession(_database, products, status, demo, printer, erpGateway, syncOptions);
         _session.RequestCustomerDisplay = ShowCustomer;
+        _session.RequestToggleCashierKiosk = ToggleCashierKiosk;
         var disk = DiskSpaceGuard.Check(_database.DatabasePath);
         if (disk.HasWarning)
         {
@@ -258,6 +259,20 @@ public partial class App : Application
         _customer.Show();
     }
 
+    private void ToggleCashierKiosk()
+    {
+        var cashier = (ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.MainWindow;
+        if (cashier is null)
+            return;
+        ScreenLayout.ToggleCashierKiosk(cashier);
+        if (_session is not null)
+        {
+            _session.ScreenModeText = ScreenLayout.CashierKiosk
+                ? "كشك — ملء الشاشة (بدون شريط ويندوز)"
+                : "نافذة — شريط ويندوز ظاهر";
+        }
+    }
+
     private void PlaceWindows(bool moveCashier)
     {
         if (_session is null)
@@ -283,9 +298,10 @@ public partial class App : Application
         if (moveCashier)
             _cashierPlaced = true;
 
+        var kioskLabel = ScreenLayout.CashierKiosk ? "كشك ملء الشاشة" : "نافذة (شريط ويندوز ظاهر)";
         _session.ScreenModeText = placement.CustomerOnSecondary
-            ? "شاشتان — شاشة العميل على الشاشة الثانية"
-            : "شاشة واحدة — نافذة العميل بجانب الكاشير";
+            ? $"شاشتان — شاشة العميل على الثانية · {kioskLabel}"
+            : $"شاشة واحدة — نافذة العميل بجانب الكاشير · {kioskLabel}";
         _session.DisplayBanner = placement.CustomerOnSecondary
             ? string.Empty
             : "وضع التطوير: شاشة واحدة. على جهاز الكاشير تُعرض هذه النافذة على الشاشة الثانية.";

@@ -461,6 +461,14 @@ public partial class CashierWindow : Window
         session.SelectCategoryCommand.Execute(category);
     }
 
+    private void OnHeaderDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (DataContext is not PosSession session)
+            return;
+        session.ToggleCashierKioskCommand.Execute(null);
+        e.Handled = true;
+    }
+
     private void OnMoreActionsBackdrop(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
         if (DataContext is not PosSession session)

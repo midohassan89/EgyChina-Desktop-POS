@@ -8,12 +8,17 @@ namespace EgyChina.Pos.App;
 internal readonly record struct ScreenPlacement(int ScreenCount, bool CustomerOnSecondary);
 
 /// <summary>
-/// Puts the cashier on the primary screen and the customer window on the other one.
-/// Bounds from the platform are physical pixels. Window.Width is DIPs, so fullscreen
-/// placement sets position and then the window state instead of copying pixel width.
+/// Cashier till layout: kiosk FullScreen by default (covers the Windows taskbar).
+/// Touch cashiers exit via double-tap on the header or «المزيد → نافذة / ملء الشاشة».
+/// Set <c>EGYCHINA_POS_WINDOWED=1</c> to start windowed (laptop / developer).
 /// </summary>
 internal static class ScreenLayout
 {
+    public const string WindowedEnvironmentVariable = "EGYCHINA_POS_WINDOWED";
+
+    /// <summary>Default true on tills. False = Maximized inside the working area (taskbar visible).</summary>
+    public static bool CashierKiosk { get; set; } = PreferKioskAtStartup();
+
     public static ScreenPlacement Place(Window cashier, Window customer, bool moveCashier)
     {
         var screens = cashier.Screens;
@@ -32,34 +37,66 @@ internal static class ScreenLayout
         }
 
         if (moveCashier)
-            PlaceCashier(cashier, primary, secondary is not null);
+            PlaceCashier(cashier, primary);
 
         if (secondary is not null)
             PlaceCustomerFull(customer, secondary);
         else
             PlaceCustomerBeside(customer, primary);
 
-        PosLog.Info($"screens={screens.ScreenCount} dedicatedCustomer={secondary is not null} primary={primary.Bounds}");
+        PosLog.Info(
+            $"screens={screens.ScreenCount} dedicatedCustomer={secondary is not null} kiosk={CashierKiosk} primary={primary.Bounds}");
         return new ScreenPlacement(screens.ScreenCount, secondary is not null);
     }
 
-    private static void PlaceCashier(Window cashier, Screen primary, bool dedicated)
+    public static void ApplyCashierDisplayMode(Window cashier)
     {
-        var area = primary.WorkingArea;
-        cashier.WindowStartupLocation = WindowStartupLocation.Manual;
-        cashier.WindowState = WindowState.Normal;
-        cashier.Position = area.Position;
+        var screens = cashier.Screens;
+        if (screens is null || screens.ScreenCount == 0)
+            return;
+        var primary = screens.Primary ?? screens.All[0];
+        PlaceCashier(cashier, primary);
+    }
 
-        if (dedicated)
+    public static bool ToggleCashierKiosk(Window cashier)
+    {
+        CashierKiosk = !CashierKiosk;
+        ApplyCashierDisplayMode(cashier);
+        return CashierKiosk;
+    }
+
+    private static bool PreferKioskAtStartup()
+    {
+        var raw = Environment.GetEnvironmentVariable(WindowedEnvironmentVariable)?.Trim();
+        if (string.Equals(raw, "1", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(raw, "windowed", StringComparison.OrdinalIgnoreCase))
         {
-            cashier.WindowState = WindowState.Maximized;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static void PlaceCashier(Window cashier, Screen primary)
+    {
+        cashier.WindowStartupLocation = WindowStartupLocation.Manual;
+
+        if (CashierKiosk)
+        {
+            // Full screen over the taskbar — standard retail touch / kiosk till.
+            cashier.WindowDecorations = WindowDecorations.None;
+            cashier.WindowState = WindowState.Normal;
+            cashier.Position = primary.Bounds.Position;
+            cashier.WindowState = WindowState.FullScreen;
             return;
         }
 
-        var scale = primary.Scaling <= 0 ? 1 : primary.Scaling;
-        cashier.Width = Math.Max(720, area.Width / scale * 0.60);
-        cashier.Height = Math.Max(560, area.Height / scale - 32);
-        cashier.Position = new PixelPoint(area.X + 12, area.Y + 12);
+        // Windowed / maximized to the working area so the taskbar stays reachable.
+        cashier.WindowDecorations = WindowDecorations.Full;
+        cashier.WindowState = WindowState.Normal;
+        cashier.Position = primary.WorkingArea.Position;
+        cashier.WindowState = WindowState.Maximized;
     }
 
     private static void PlaceCustomerBeside(Window customer, Screen primary)

@@ -439,8 +439,8 @@
       </Border>
       </DockPanel>
 
-      <!-- Catalog column: search + products + OSK (keyboard never covers the cart) -->
-      <DockPanel Grid.Column="2">
+      <!-- Catalog column: search + products (OSK overlays this column only via Canvas measure) -->
+      <DockPanel x:Name="CatalogStage" Grid.Column="2">
         <Border DockPanel.Dock="Top"
                 Background="#FDECEC"
                 BorderBrush="#FECACA"
@@ -1176,22 +1176,24 @@
     </Border>
   </Border>
 
-  <!-- LTR host sized to the pad only (not Stretch). Parent must stay hit-testable or keys fall through to products. -->
-  <Border x:Name="OnScreenKeyboardHost"
+  <!-- Canvas Left/Bottom = physical pixels (ignore RTL). Null background + hit-testable so only the pad captures clicks. -->
+  <Canvas x:Name="OskLayer"
           ZIndex="120"
-          FlowDirection="LeftToRight"
-          HorizontalAlignment="Left"
-          VerticalAlignment="Bottom"
-          Margin="10,0,0,8"
-          Background="#0B1220"
-          CornerRadius="14,14,0,0"
-          IsVisible="False"
           IsHitTestVisible="True"
-          BoxShadow="0 -8 24 0 #88000000">
-    <controls:TouchKeyboard x:Name="OnScreenKeyboard"
-                            HorizontalAlignment="Stretch"
-                            VerticalAlignment="Bottom"
-                            IsHitTestVisible="True" />
-  </Border>
+          HorizontalAlignment="Stretch"
+          VerticalAlignment="Stretch"
+          Background="{x:Null}">
+    <Border x:Name="OnScreenKeyboardHost"
+            Background="#0B1220"
+            CornerRadius="14,14,0,0"
+            IsVisible="False"
+            IsHitTestVisible="True"
+            BoxShadow="0 -8 24 0 #88000000">
+      <controls:TouchKeyboard x:Name="OnScreenKeyboard"
+                              HorizontalAlignment="Stretch"
+                              VerticalAlignment="Bottom"
+                              IsHitTestVisible="True" />
+    </Border>
+  </Canvas>
   </Grid>
 </Window>

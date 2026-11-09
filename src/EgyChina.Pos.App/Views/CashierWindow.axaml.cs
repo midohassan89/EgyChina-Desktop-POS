@@ -22,6 +22,9 @@ public partial class CashierWindow : Window
     private readonly StringBuilder _wedgeBuffer = new();
     private PosSession? _session;
     private TextBox? _oskTarget;
+    private double _oskLeft = double.NaN;
+    private double _oskWidth = double.NaN;
+    private double _oskHeightCap = double.NaN;
 
     public CashierWindow()
     {
@@ -42,6 +45,7 @@ public partial class CashierWindow : Window
         Closed += (_, _) => _clock.Stop();
         DataContextChanged += (_, _) => AttachSession();
         SizeChanged += (_, _) => ApplyOskLayout();
+        CatalogStage.LayoutUpdated += (_, _) => ApplyOskLayout();
         KeyDown += OnWindowKeyDown;
         // Tunnel first: USB wedge types into whichever control has focus — steal codes globally.
         AddHandler(InputElement.TextInputEvent, OnPreviewTextInput, RoutingStrategies.Tunnel);
@@ -81,12 +85,42 @@ public partial class CashierWindow : Window
     }
 
     private const double CartColumnReserve = 422;
+    private const double TenderPadWidth = 420;
 
     private void ApplyOskLayout()
     {
-        // Host is LTR + Left = physical left (catalog). Size the HOST (not Stretch) so hits don't fall through.
-        var width = Math.Max(360, Bounds.Width - CartColumnReserve - 20);
-        var heightCap = Math.Clamp(Bounds.Height * 0.42, 180, 380);
+        // Pin the pad in physical pixels so window RTL cannot shove it over the cart.
+        var heightCap = Math.Clamp(Bounds.Height * 0.36, 160, 300);
+        double left = 10;
+        double width = Math.Max(360, Bounds.Width - CartColumnReserve - 20);
+        var tenderPad = ReferenceEquals(_oskTarget, TenderBox);
+
+        if (CatalogStage.Bounds.Width > 1
+            && CatalogStage.TranslatePoint(new Avalonia.Point(0, 0), OskLayer) is { } origin)
+        {
+            if (tenderPad)
+            {
+                // Narrow pad beside the cart so amount entry stays next to «المبلغ المستلم».
+                width = Math.Min(TenderPadWidth, CatalogStage.Bounds.Width);
+                left = Math.Max(0, origin.X + CatalogStage.Bounds.Width - width);
+                heightCap = Math.Clamp(Bounds.Height * 0.42, 200, 340);
+            }
+            else
+            {
+                left = Math.Max(0, origin.X);
+                width = Math.Max(280, CatalogStage.Bounds.Width);
+            }
+        }
+
+        if (left == _oskLeft && width == _oskWidth && heightCap == _oskHeightCap)
+            return;
+
+        _oskLeft = left;
+        _oskWidth = width;
+        _oskHeightCap = heightCap;
+
+        Canvas.SetLeft(OnScreenKeyboardHost, left);
+        Canvas.SetBottom(OnScreenKeyboardHost, 8);
         OnScreenKeyboardHost.Width = width;
         OnScreenKeyboardHost.MaxWidth = width;
         OnScreenKeyboardHost.MaxHeight = heightCap;
@@ -106,9 +140,9 @@ public partial class CashierWindow : Window
         || ReferenceEquals(box, ClosingCashBox)
         || ReferenceEquals(box, ExchangeRateBox);
 
-    /// <summary>PIN / cash / dialogs — show pad when field is focused for typing. Barcode stays scan-first.</summary>
-    private bool IsModalTypingField(TextBox box) =>
-        !ReferenceEquals(box, BarcodeBox);
+    /// <summary>Dialog PIN/float fields — show pad on focus. Search + tender amount need an explicit tap.</summary>
+    private bool ShowsOskOnFocus(TextBox box) =>
+        !ReferenceEquals(box, BarcodeBox) && !ReferenceEquals(box, TenderBox);
 
     private void PrepareOskFor(TextBox box)
     {
@@ -117,6 +151,8 @@ public partial class CashierWindow : Window
         OnScreenKeyboard.SetMode(numeric ? TouchKeyboardMode.Numeric : TouchKeyboardMode.Text);
         if (!numeric)
             OnScreenKeyboard.PreferLanguage(TouchKeyboardLanguage.Arabic);
+        // Force remeasure when switching tender ↔ search pad geometry.
+        _oskLeft = double.NaN;
         ApplyOskLayout();
     }
 
@@ -139,9 +175,8 @@ public partial class CashierWindow : Window
             return;
 
         PrepareOskFor(box);
-        // Programmatic FocusBarcode after every scan must NOT pop the keyboard.
-        // Modal amount/PIN fields may show immediately so the cashier can type.
-        if (IsModalTypingField(box))
+        // Search / tender amount: pad only after the cashier taps the field (not programmatic focus).
+        if (ShowsOskOnFocus(box))
             ShowOnScreenKeyboard();
     }
 
@@ -348,6 +383,8 @@ public partial class CashierWindow : Window
                 ClosingCashBox.SelectAll();
                 break;
             case UiFocusTarget.Tender:
+                // Quick-cash covers most tills — number pad only after an explicit tap on المبلغ المستلم.
+                HideOnScreenKeyboard();
                 TenderBox.Focus();
                 TenderBox.SelectAll();
                 break;
@@ -728,6 +765,7 @@ public partial class CashierWindow : Window
 
     private void FocusBarcode()
     {
+        HideOnScreenKeyboard();
         BarcodeBox.Focus();
         BarcodeBox.SelectAll();
     }

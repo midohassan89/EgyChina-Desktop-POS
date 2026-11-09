@@ -84,15 +84,17 @@ public partial class CashierWindow : Window
 
     private void ApplyOskLayout()
     {
-        // LTR host forces Left = physical left (catalog). Cart (~400px) stays free on the right.
+        // Host is LTR + Left = physical left (catalog). Size the HOST (not Stretch) so hits don't fall through.
         var width = Math.Max(360, Bounds.Width - CartColumnReserve - 20);
-        // Cap height; TouchKeyboard scrolls internally so bottom keys never clip away.
         var heightCap = Math.Clamp(Bounds.Height * 0.42, 180, 380);
-        OnScreenKeyboard.Width = width;
-        OnScreenKeyboard.MaxWidth = width;
+        OnScreenKeyboardHost.Width = width;
+        OnScreenKeyboardHost.MaxWidth = width;
+        OnScreenKeyboardHost.MaxHeight = heightCap;
+        OnScreenKeyboard.Width = double.NaN;
+        OnScreenKeyboard.MaxWidth = double.PositiveInfinity;
         OnScreenKeyboard.Height = double.NaN;
         OnScreenKeyboard.MaxHeight = heightCap;
-        OnScreenKeyboard.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+        OnScreenKeyboard.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
         OnScreenKeyboard.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
     }
 
@@ -121,12 +123,14 @@ public partial class CashierWindow : Window
     private void ShowOnScreenKeyboard()
     {
         ApplyOskLayout();
+        OnScreenKeyboardHost.IsVisible = true;
         OnScreenKeyboard.IsVisible = true;
     }
 
     private void HideOnScreenKeyboard()
     {
         OnScreenKeyboard.IsVisible = false;
+        OnScreenKeyboardHost.IsVisible = false;
     }
 
     private void OnTouchInputGotFocus(object? sender, RoutedEventArgs e)
@@ -163,14 +167,17 @@ public partial class CashierWindow : Window
 
     private void OnRootPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!OnScreenKeyboard.IsVisible)
+        if (!OnScreenKeyboardHost.IsVisible)
             return;
 
         if (e.Source is not Visual visual)
             return;
 
         // Keep keyboard while using it or retargeting another input.
-        if (OnScreenKeyboard.IsVisualAncestorOf(visual) || ReferenceEquals(visual, OnScreenKeyboard))
+        if (OnScreenKeyboardHost.IsVisualAncestorOf(visual)
+            || ReferenceEquals(visual, OnScreenKeyboardHost)
+            || OnScreenKeyboard.IsVisualAncestorOf(visual)
+            || ReferenceEquals(visual, OnScreenKeyboard))
             return;
         if (visual is TextBox || visual.FindAncestorOfType<TextBox>() is not null)
             return;
@@ -531,14 +538,20 @@ public partial class CashierWindow : Window
         }
     }
 
+    private bool IsTypingFieldFocused() =>
+        EnumerateTouchBoxes().Any(box => box.IsFocused);
+
     private void OnPreviewTextInput(object? sender, TextInputEventArgs e)
     {
         if (DataContext is not PosSession session || e.Handled)
             return;
 
-        // Global wedge capture: product scan works even when focus is on tiles / cart / header.
-        // On-screen keyboard writes TextBox.Text directly and never hits this path.
-        if (!ScannerInput.ShouldCaptureGlobally(IsScanLaneBlocked(session), e.Text))
+        // Global wedge capture only when no TextBox is focused — otherwise physical keyboard
+        // digits/letters must type into search / PIN / tender normally.
+        if (!ScannerInput.ShouldCaptureGlobally(
+                IsScanLaneBlocked(session),
+                IsTypingFieldFocused(),
+                e.Text))
             return;
 
         _wedgeBuffer.Append(e.Text);

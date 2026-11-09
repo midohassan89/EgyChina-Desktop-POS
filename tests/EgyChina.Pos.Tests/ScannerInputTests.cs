@@ -26,6 +26,19 @@ public sealed class ScannerInputTests
     }
 
     [Fact]
+    public void Does_not_capture_while_a_text_field_is_focused()
+    {
+        Assert.False(ScannerInput.ShouldCaptureGlobally(
+            overlayOpen: false,
+            inputFieldFocused: true,
+            text: "4"));
+        Assert.True(ScannerInput.ShouldCaptureGlobally(
+            overlayOpen: false,
+            inputFieldFocused: false,
+            text: "4"));
+    }
+
+    [Fact]
     public void Steals_only_from_search_when_lane_is_idle()
     {
         Assert.True(ScannerInput.ShouldStealFromSearch(

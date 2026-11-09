@@ -1176,18 +1176,21 @@
     </Border>
   </Border>
 
-  <!-- LTR host: Left = physical left = catalog. High ZIndex so dialogs don't block keys. -->
-  <Border ZIndex="120"
+  <!-- LTR host sized to the pad only (not Stretch). Parent must stay hit-testable or keys fall through to products. -->
+  <Border x:Name="OnScreenKeyboardHost"
+          ZIndex="120"
           FlowDirection="LeftToRight"
-          HorizontalAlignment="Stretch"
+          HorizontalAlignment="Left"
           VerticalAlignment="Bottom"
-          Background="Transparent"
-          IsHitTestVisible="False">
+          Margin="10,0,0,8"
+          Background="#0B1220"
+          CornerRadius="14,14,0,0"
+          IsVisible="False"
+          IsHitTestVisible="True"
+          BoxShadow="0 -8 24 0 #88000000">
     <controls:TouchKeyboard x:Name="OnScreenKeyboard"
-                            HorizontalAlignment="Left"
+                            HorizontalAlignment="Stretch"
                             VerticalAlignment="Bottom"
-                            Margin="10,0,0,8"
-                            IsVisible="False"
                             IsHitTestVisible="True" />
   </Border>
   </Grid>

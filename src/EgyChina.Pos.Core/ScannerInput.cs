@@ -21,10 +21,15 @@ public static class ScannerInput
 
     /// <summary>
     /// Capture wedge glyphs into the global scan buffer (not into the focused control).
-    /// Skips overlays that need the keyboard (PIN, tender, dialogs).
+    /// Skips overlays and any focused TextBox so the physical keyboard can type digits/letters
+    /// into search / PIN / tender fields normally.
     /// </summary>
+    public static bool ShouldCaptureGlobally(bool overlayOpen, bool inputFieldFocused, string? text) =>
+        !overlayOpen && !inputFieldFocused && LooksLikeScannerGlyph(text);
+
+    /// <summary>Backward-compatible overload (no focused-field check).</summary>
     public static bool ShouldCaptureGlobally(bool overlayOpen, string? text) =>
-        !overlayOpen && LooksLikeScannerGlyph(text);
+        ShouldCaptureGlobally(overlayOpen, inputFieldFocused: false, text);
 
     /// <summary>Legacy helper kept for Arabic-search steal scenarios / older tests.</summary>
     public static bool ShouldStealFromSearch(bool searchFocused, bool barcodeFocused, bool overlayOpen, string? text) =>

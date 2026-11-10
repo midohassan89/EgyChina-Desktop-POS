@@ -1075,6 +1075,19 @@
                 Command="{Binding ToggleCashierKioskCommand}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center" />
+        <Button Content="تحديث الأصناف الآن"
+                Classes="pos-tender"
+                Background="#059669"
+                Command="{Binding RefreshCatalogCommand}"
+                IsEnabled="{Binding CanRefreshCatalog}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                ToolTip.Tip="يسحب الأسعار والمنتجات الجديدة من ERP فوراً" />
+        <TextBlock Text="{Binding CatalogRefreshHint}"
+                   IsVisible="{Binding HasCatalogRefreshHint}"
+                   FontSize="12"
+                   Foreground="#A7F3D0"
+                   TextWrapping="Wrap" />
         <Button Content="مبيعات بانتظار الرفع"
                 Classes="pos-tender"
                 Background="#0EA5E9"
@@ -1118,7 +1131,19 @@
         <TextBlock Text="{Binding SyncMessage}" FontSize="13" Foreground="#94A3B8" TextWrapping="Wrap" />
         <TextBlock Text="{Binding SyncErrorCaption}" IsVisible="{Binding HasSyncError}"
                    FontSize="13" Foreground="#FCA5A5" TextWrapping="Wrap" />
-        <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#64748B" />
+        <TextBlock Text="{Binding CatalogCaption}" FontSize="12" Foreground="#64748B" TextWrapping="Wrap" />
+        <TextBlock Text="{Binding CatalogRefreshHint}"
+                   IsVisible="{Binding HasCatalogRefreshHint}"
+                   FontSize="12"
+                   Foreground="#A7F3D0"
+                   TextWrapping="Wrap" />
+        <Button Content="تحديث الأصناف الآن"
+                Classes="pos-tender"
+                Background="#059669"
+                Command="{Binding RefreshCatalogCommand}"
+                IsEnabled="{Binding CanRefreshCatalog}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center" />
         <Button Content="مبيعات بانتظار الرفع"
                 Classes="pos-tender"
                 Background="#0EA5E9"

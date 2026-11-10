@@ -124,6 +124,7 @@ public partial class App : Application
         }
 
         _worker = new SyncWorker(_database, status, syncOptions);
+        _session.BindSyncWorker(_worker);
         _worker.Start();
         StartProductImageWarmup(_database, _session, syncOptions.BaseAddress);
 
@@ -157,6 +158,8 @@ public partial class App : Application
                     liveHttp.DefaultRequestHeaders.UserAgent.ParseAdd("EgyChina-POS/0.1-live-catalog");
                     var live = await LiveStoreCatalogSync.ApplyAsync(database, origin, liveHttp, CancellationToken.None)
                         .ConfigureAwait(false);
+                    if (live.Ok)
+                        database.WriteCursor(SyncWorker.LiveCatalogCursorStream, "ok", null);
                     PosLog.Info(
                         live.Ok
                             ? $"live catalog pages={live.Pages} seen={live.Seen} upserted={live.Upserted} deactivated={live.Deactivated}"

@@ -11,6 +11,8 @@ public sealed class SyncOptions
     public const string PaymentMethodVariable = "EGYCHINA_POS_PAYMENT_METHOD";
     public const string MoneyScaleVariable = "EGYCHINA_POS_MONEY_SCALE";
     public const string CatalogPullVariable = "EGYCHINA_POS_CATALOG_PULL";
+    public const string SyncIntervalVariable = "EGYCHINA_POS_SYNC_INTERVAL";
+    public const string HttpTimeoutVariable = "EGYCHINA_POS_HTTP_TIMEOUT";
 
     /// <summary>
     /// Site origin, for example <c>https://erp.echinamart.com/</c>.
@@ -31,8 +33,14 @@ public sealed class SyncOptions
 
     public ErpMoneyScale MoneyScale { get; init; } = ErpMoneyScale.Unverified;
 
-    public bool CatalogPull { get; init; }
+    /// <summary>
+    /// Pull shelf changes via <c>GET /api/products?updatedSince=</c> on each worker tick.
+    /// Default on — professional hybrid with startup full sync + manual refresh.
+    /// Set <c>EGYCHINA_POS_CATALOG_PULL=0</c> to disable.
+    /// </summary>
+    public bool CatalogPull { get; init; } = true;
 
+    /// <summary>Background sync cadence (catalog pull + outbox). Default 30s.</summary>
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
     /// <summary>
@@ -41,8 +49,6 @@ public sealed class SyncOptions
     /// Override with <c>EGYCHINA_POS_HTTP_TIMEOUT</c> (seconds, 5–120).
     /// </summary>
     public TimeSpan HttpTimeout { get; init; } = TimeSpan.FromSeconds(45);
-
-    public const string HttpTimeoutVariable = "EGYCHINA_POS_HTTP_TIMEOUT";
 
     public string? TransmissionBlock()
     {
@@ -96,13 +102,31 @@ public sealed class SyncOptions
             httpTimeout = TimeSpan.FromSeconds(timeoutSec);
         }
 
+        var interval = TimeSpan.FromSeconds(30);
+        var intervalRaw = Environment.GetEnvironmentVariable(SyncIntervalVariable)?.Trim();
+        if (int.TryParse(intervalRaw, out var intervalSec))
+        {
+            intervalSec = Math.Clamp(intervalSec, 10, 600);
+            interval = TimeSpan.FromSeconds(intervalSec);
+        }
+
+        // Default ON. Only "0" / "false" / "off" disables periodic shelf pull.
+        var catalogPullRaw = Environment.GetEnvironmentVariable(CatalogPullVariable)?.Trim();
+        var catalogPull = catalogPullRaw is null
+            || catalogPullRaw.Length == 0
+            || catalogPullRaw is "1" or "true" or "yes" or "on"
+            || (!string.Equals(catalogPullRaw, "0", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(catalogPullRaw, "false", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(catalogPullRaw, "off", StringComparison.OrdinalIgnoreCase));
+
         return new SyncOptions
         {
             BaseAddress = uri,
             DeviceToken = deviceToken,
             PaymentMethod = Environment.GetEnvironmentVariable(PaymentMethodVariable),
             MoneyScale = scale,
-            CatalogPull = string.Equals(Environment.GetEnvironmentVariable(CatalogPullVariable), "1", StringComparison.Ordinal),
+            CatalogPull = catalogPull,
+            Interval = interval,
             HttpTimeout = httpTimeout,
         };
     }

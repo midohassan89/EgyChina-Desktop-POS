@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
+using System.Net.Http;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -19,6 +20,7 @@ public partial class PosSession : ObservableObject
     private readonly IReceiptPrinter _printer;
     private readonly IPosErpGateway _erp;
     private readonly SyncOptions _syncOptions;
+    private SyncWorker? _syncWorker;
     private string? _lastSaleId;
     private long _lastSaleTotalMinor;
     private DateTimeOffset? _settlementAt;
@@ -45,7 +47,7 @@ public partial class PosSession : ObservableObject
         _erp = erpGateway ?? NullPosErpGateway.Instance;
         _syncOptions = syncOptions ?? SyncOptions.FromEnvironment();
         DatabasePath = database.DatabasePath;
-        CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog);
+        CatalogCaption = FormatCatalogCaption(products.Count, demoCatalog, ReadCatalogUpdatedAt());
         ClockText = DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         IdleClockScript = CustomerDisplayProjector.IdleClockScript(DateTimeOffset.Now);
         IdleDateText = CustomerDisplayProjector.IdleDateText(DateTimeOffset.Now);
@@ -83,7 +85,23 @@ public partial class PosSession : ObservableObject
     [ObservableProperty]
     private string _catalogCaption = string.Empty;
 
+    [ObservableProperty]
+    private string _catalogRefreshHint = string.Empty;
+
+    [ObservableProperty]
+    private bool _isCatalogRefreshing;
+
+    public bool CanRefreshCatalog => !IsCatalogRefreshing;
+
+    public bool HasCatalogRefreshHint => !string.IsNullOrWhiteSpace(CatalogRefreshHint);
+
+    partial void OnCatalogRefreshHintChanged(string value) =>
+        OnPropertyChanged(nameof(HasCatalogRefreshHint));
+
     public string ShellNotice { get; } = "نقد بالجنيه يُحفظ على هذا الجهاز. رفع البيع إلى المنظومة اختياري حسب إعداد المزامنة.";
+
+    /// <summary>Wire the background worker so «تحديث الأصناف» can pulse an immediate tick.</summary>
+    public void BindSyncWorker(SyncWorker worker) => _syncWorker = worker;
 
     [ObservableProperty]
     private string _printerCaption = string.Empty;
@@ -1178,7 +1196,7 @@ public partial class PosSession : ObservableObject
     {
         var demo = _database.GetSetting("catalog.source") == "demo";
         _products = _database.ListActiveProducts();
-        CatalogCaption = FormatCatalogCaption(_products.Count, demo);
+        CatalogCaption = FormatCatalogCaption(_products.Count, demo, ReadCatalogUpdatedAt());
         ReloadCategories();
         OnPropertyChanged(nameof(VisibleProducts));
         OnPropertyChanged(nameof(HasNoSearchResults));
@@ -1911,6 +1929,55 @@ public partial class PosSession : ObservableObject
         RefreshOutboxPanel();
         OutboxPanelHint = $"أُعيد طابور {dead.ToString(CultureInfo.InvariantCulture)} تالف · نُبّه {nudged.ToString(CultureInfo.InvariantCulture)} معلّق. ستحاول المزامنة تلقائياً.";
         OnPropertyChanged(nameof(HasOutboxPanelHint));
+        _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+    }
+
+    /// <summary>
+    /// Professional hybrid: force a full public shelf rebuild now, then pulse the sync worker.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanRefreshCatalog))]
+    private async Task RefreshCatalogAsync()
+    {
+        if (IsCatalogRefreshing)
+            return;
+
+        IsCatalogRefreshing = true;
+        CatalogRefreshHint = "جاري تحديث الأصناف من ERP…";
+        OnPropertyChanged(nameof(CanRefreshCatalog));
+        RefreshCatalogCommand.NotifyCanExecuteChanged();
+        ShowMoreActions = false;
+
+        try
+        {
+            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            http.DefaultRequestHeaders.UserAgent.ParseAdd("EgyChina-POS/0.1-catalog-refresh");
+            var live = await LiveStoreCatalogSync.ApplyAsync(_database, origin, http, CancellationToken.None)
+                .ConfigureAwait(true);
+            if (live.Ok)
+            {
+                _database.WriteCursor(SyncWorker.LiveCatalogCursorStream, "ok", null);
+                ReloadCatalogFromDatabase();
+                CatalogRefreshHint =
+                    $"تم التحديث الآن · {_products.Count.ToString(CultureInfo.InvariantCulture)} صنف";
+                _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+            }
+            else
+            {
+                CatalogRefreshHint = $"تعذر التحديث: {live.Error ?? "خطأ غير معروف"}";
+            }
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("manual catalog refresh failed", ex);
+            CatalogRefreshHint = ArabicUi.FromException(ex, "تعذر تحديث الأصناف.");
+        }
+        finally
+        {
+            IsCatalogRefreshing = false;
+            OnPropertyChanged(nameof(CanRefreshCatalog));
+            RefreshCatalogCommand.NotifyCanExecuteChanged();
+        }
     }
 
     [RelayCommand]
@@ -2432,7 +2499,7 @@ public partial class PosSession : ObservableObject
             DeadOutbox = snap.DeadOutbox;
             LastSyncError = snap.LastError ?? string.Empty;
             _products = products;
-            CatalogCaption = FormatCatalogCaption(products.Count, demo);
+            CatalogCaption = FormatCatalogCaption(products.Count, demo, ReadCatalogUpdatedAt());
             OnPropertyChanged(nameof(VisibleProducts));
             OnPropertyChanged(nameof(HasNoSearchResults));
         }
@@ -2443,12 +2510,44 @@ public partial class PosSession : ObservableObject
             Dispatcher.UIThread.Post(Apply);
     }
 
-    private static string FormatCatalogCaption(int count, bool demoCatalog)
+    private DateTimeOffset? ReadCatalogUpdatedAt()
+    {
+        DateTimeOffset? best = null;
+        foreach (var stream in new[]
+                 {
+                     SyncWorker.LiveCatalogCursorStream,
+                     PosDatabase.CatalogCursorStream,
+                 })
+        {
+            var row = _database.ReadCursor(stream);
+            if (row?.LastSuccessAt is null)
+                continue;
+            if (!DateTimeOffset.TryParse(row.LastSuccessAt, null, DateTimeStyles.RoundtripKind, out var at))
+                continue;
+            if (best is null || at > best)
+                best = at;
+        }
+
+        return best;
+    }
+
+    private static string FormatCatalogCaption(int count, bool demoCatalog, DateTimeOffset? updatedAt)
     {
         var n = count.ToString(CultureInfo.InvariantCulture);
         if (demoCatalog)
-            return $"كتالوج تجريبي ({n} أصناف) — للمزامنة الحية اضبط EGYCHINA_POS_API + DEVICE_TOKEN + CATALOG_PULL=1";
-        return $"كتالوج ERP · {n} أصناف";
+            return $"كتالوج تجريبي ({n} أصناف) — حدّث الأصناف من «المزيد» بعد ربط ERP";
+
+        if (updatedAt is null)
+            return $"كتالوج ERP · {n} أصناف · بانتظار أول مزامنة";
+
+        var local = updatedAt.Value.ToLocalTime();
+        var age = DateTimeOffset.Now - updatedAt.Value;
+        var ageText = age.TotalSeconds < 90
+            ? "الآن"
+            : age.TotalMinutes < 60
+                ? $"منذ {(int)age.TotalMinutes} د"
+                : local.ToString("HH:mm", CultureInfo.InvariantCulture);
+        return $"كتالوج ERP · {n} أصناف · آخر تحديث {ageText}";
     }
 
     private static bool Matches(CatalogProduct product, string term)

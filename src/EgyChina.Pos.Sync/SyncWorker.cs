@@ -1,26 +1,30 @@
+using System.Globalization;
 using EgyChina.Pos.Core;
 using EgyChina.Pos.Data;
 
 namespace EgyChina.Pos.Sync;
 
 /// <summary>
-/// Background tick. Posts pending sales when device auth gates are set.
+/// Background tick. Pulls catalog (incremental + public fallback), posts pending sales.
 /// On start, requeues any <c>inflight</c> rows left by a crash. Never deletes a committed sale.
 /// </summary>
 public sealed class SyncWorker : IAsyncDisposable
 {
     public const string CursorStream = "worker";
+    public const string LiveCatalogCursorStream = "live-catalog";
     public const string NotConfiguredCursor = "not-configured";
 
     private readonly PosDatabase _database;
     private readonly SyncStatus _status;
     private readonly SyncOptions _options;
-    private readonly PeriodicTimer _timer;
     private readonly HttpClient? _http;
     private readonly bool _ownsHttpClient;
+    private readonly SemaphoreSlim _pulse = new(0, 1);
     private CancellationTokenSource? _cts;
     private Task? _loop;
     private int _started;
+    private int _forceLiveCatalog;
+    private int _tickGate;
 
     public SyncWorker(PosDatabase database, SyncStatus status, SyncOptions? options = null, HttpClient? httpClient = null)
     {
@@ -30,7 +34,6 @@ public sealed class SyncWorker : IAsyncDisposable
         if (_options.Interval <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(options), "Sync interval must be positive.");
 
-        _timer = new PeriodicTimer(_options.Interval);
         if (_options.BaseAddress is null)
         {
             _http = null;
@@ -66,7 +69,37 @@ public sealed class SyncWorker : IAsyncDisposable
         _loop = Task.Run(() => Loop(_cts.Token));
     }
 
+    /// <summary>Wake the loop now (catalog + outbox). Safe to call from the UI thread.</summary>
+    public void RequestImmediateTick(bool forceFullCatalog = false)
+    {
+        if (forceFullCatalog)
+            Interlocked.Exchange(ref _forceLiveCatalog, 1);
+        try
+        {
+            _pulse.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // Already queued.
+        }
+    }
+
     public async Task TickAsync(CancellationToken cancellationToken)
+    {
+        if (Interlocked.Exchange(ref _tickGate, 1) == 1)
+            return;
+
+        try
+        {
+            await TickCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _tickGate, 0);
+        }
+    }
+
+    private async Task TickCoreAsync(CancellationToken cancellationToken)
     {
         // Catalog pull needs API + device token only. Sale transmission still needs money/payment gates.
         if (_http is null || _options.BaseAddress is null)
@@ -79,7 +112,7 @@ public sealed class SyncWorker : IAsyncDisposable
         // Staff PINs — public store route, throttled so checkout stubs/tests stay quiet.
         var staffCursor = _database.ReadCursor("staff");
         var staffDue = staffCursor?.LastSuccessAt is null
-            || !DateTimeOffset.TryParse(staffCursor.LastSuccessAt, null, System.Globalization.DateTimeStyles.RoundtripKind, out var staffAt)
+            || !DateTimeOffset.TryParse(staffCursor.LastSuccessAt, null, DateTimeStyles.RoundtripKind, out var staffAt)
             || DateTimeOffset.UtcNow - staffAt > TimeSpan.FromMinutes(5);
         if (staffDue)
         {
@@ -119,13 +152,19 @@ public sealed class SyncWorker : IAsyncDisposable
             }
         }
 
+        if (_options.CatalogPull)
+        {
+            await RefreshCatalogAsync(deviceToken, cancellationToken).ConfigureAwait(false);
+        }
+
         var effectiveOptions = new SyncOptions
         {
             BaseAddress = _options.BaseAddress,
             DeviceToken = deviceToken,
             PaymentMethod = _options.PaymentMethod,
             MoneyScale = _options.MoneyScale,
-            CatalogPull = _options.CatalogPull,
+            // Catalog already handled above — sales path must not abort on catalog errors.
+            CatalogPull = false,
             Interval = _options.Interval,
             HttpTimeout = _options.HttpTimeout,
         };
@@ -146,11 +185,25 @@ public sealed class SyncWorker : IAsyncDisposable
             return;
         }
 
+        if (!canTransmitSales)
+        {
+            // Catalog-only till: still report healthy online after a successful shelf refresh.
+            var catalogOnlySnap = _database.ReadOutboxSnapshot();
+            _database.WriteCursor(CursorStream, "idle", "catalog-only");
+            _status.Update(
+                true,
+                "الكتالوج محدَّث تلقائياً. إرسال المبيعات ينتظر اكتمال إعداد وحدة المبلغ.",
+                catalogOnlySnap.Pending + catalogOnlySnap.Inflight,
+                catalogOnlySnap.Dead,
+                catalogOnlySnap.LastError);
+            return;
+        }
+
         var sync = new SaleOutboxSync(
             _database,
             new ErpPosClient(_options.BaseAddress, deviceToken, _http),
             effectiveOptions,
-            postSales: canTransmitSales);
+            postSales: true);
         SyncTickResult result;
         try
         {
@@ -168,11 +221,8 @@ public sealed class SyncWorker : IAsyncDisposable
         {
             "unauthorized" => "الخادم رد 401. المبيعات ما زالت على هذا الجهاز.",
             "transport" => "انقطع الرد قبل تأكيد القبول. البيع ما زال في صندوق الصادر.",
-            "catalog-rejected" => "تعذر قراءة الأصناف من /api/products. لم يُقبل بيع.",
             "idle" when result.Accepted > 0 => "قُبلت مبيعات على الخادم دون تكرار محلي.",
             "idle" when result.MarkedDead > 0 => "بعض المبيعات معلّمة كتالفة محلياً؛ الإيصال محفوظ.",
-            "idle" when !canTransmitSales && _options.CatalogPull =>
-                "الكتالوج محدَّث. إرسال المبيعات ينتظر وحدة المبلغ وطريقة الدفع.",
             "idle" when left == 0 && snap.Dead == 0 =>
                 _options.CatalogPull
                     ? "الكتالوج والمبيعات المحلية محدَّثان."
@@ -184,10 +234,104 @@ public sealed class SyncWorker : IAsyncDisposable
         _status.Update(online, text, left, snap.Dead, snap.LastError);
     }
 
+    private async Task RefreshCatalogAsync(string? deviceToken, CancellationToken cancellationToken)
+    {
+        if (_http is null || _options.BaseAddress is null)
+            return;
+
+        var forceLive = Interlocked.Exchange(ref _forceLiveCatalog, 0) == 1;
+        var incrementalOk = false;
+
+        if (!forceLive && !string.IsNullOrWhiteSpace(deviceToken))
+        {
+            try
+            {
+                var client = new ErpPosClient(_options.BaseAddress, deviceToken, _http);
+                var since = _database.ReadCursor(PosDatabase.CatalogCursorStream)?.Cursor;
+                var catalog = await client.GetProductsAsync(since, cancellationToken).ConfigureAwait(false);
+                if (catalog.Accepted && catalog.Body is not null)
+                {
+                    var applied = _database.ApplyCatalogFromErpJson(catalog.Body);
+                    if (!string.IsNullOrWhiteSpace(applied.ServerTime))
+                        _database.WriteCursor(PosDatabase.CatalogCursorStream, applied.ServerTime, null);
+                    else
+                        _database.WriteCursor(
+                            PosDatabase.CatalogCursorStream,
+                            DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture),
+                            null);
+                    _database.WriteCursor(LiveCatalogCursorStream, "ok", null);
+                    incrementalOk = true;
+                    PosLog.Info(
+                        $"catalog incremental upserted={applied.Upserted} deactivated={applied.Deactivated}");
+                }
+                else if (catalog.Unauthorized)
+                {
+                    PosLog.Info("catalog incremental unauthorized — falling back to public store catalog");
+                }
+                else
+                {
+                    PosLog.Info($"catalog incremental failed: {catalog.Error ?? catalog.StatusCode?.ToString()}");
+                }
+            }
+            catch (Exception ex)
+            {
+                PosLog.Error("catalog incremental failed", ex);
+            }
+        }
+
+        if (incrementalOk && !forceLive)
+            return;
+
+        // Public full shelf rebuild — always on force; otherwise throttle to every 2 minutes as fallback.
+        if (!forceLive)
+        {
+            var liveCursor = _database.ReadCursor(LiveCatalogCursorStream);
+            if (liveCursor?.LastSuccessAt is not null
+                && DateTimeOffset.TryParse(liveCursor.LastSuccessAt, null, DateTimeStyles.RoundtripKind, out var lastLive)
+                && DateTimeOffset.UtcNow - lastLive < TimeSpan.FromMinutes(2))
+            {
+                return;
+            }
+        }
+
+        try
+        {
+            var live = await LiveStoreCatalogSync.ApplyAsync(
+                    _database,
+                    _options.BaseAddress,
+                    _http,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (live.Ok)
+            {
+                _database.WriteCursor(LiveCatalogCursorStream, "ok", null);
+                PosLog.Info(
+                    $"catalog live pages={live.Pages} seen={live.Seen} upserted={live.Upserted} deactivated={live.Deactivated}");
+            }
+            else
+            {
+                _database.WriteCursor(LiveCatalogCursorStream, "error", live.Error);
+                PosLog.Info($"catalog live failed error={live.Error}");
+            }
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("catalog live sync failed", ex);
+            _database.WriteCursor(LiveCatalogCursorStream, "error", ex.Message);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         _cts?.Cancel();
-        _timer.Dispose();
+        try
+        {
+            _pulse.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+        }
+
         if (_loop is not null)
         {
             try
@@ -206,6 +350,7 @@ public sealed class SyncWorker : IAsyncDisposable
         if (_ownsHttpClient)
             _http?.Dispose();
         _cts?.Dispose();
+        _pulse.Dispose();
     }
 
     public static Uri CheckoutUri(Uri baseAddress)
@@ -260,8 +405,13 @@ public sealed class SyncWorker : IAsyncDisposable
 
             try
             {
-                if (!await _timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
-                    break;
+                var delay = Task.Delay(_options.Interval, cancellationToken);
+                var pulse = _pulse.WaitAsync(cancellationToken);
+                var finished = await Task.WhenAny(delay, pulse).ConfigureAwait(false);
+                if (finished == pulse)
+                    await pulse.ConfigureAwait(false);
+                else
+                    await delay.ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {

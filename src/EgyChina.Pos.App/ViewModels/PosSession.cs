@@ -266,6 +266,32 @@ public partial class PosSession : ObservableObject
     private string _heldCartError = string.Empty;
 
     [ObservableProperty]
+    private bool _showEditLine;
+
+    [ObservableProperty]
+    private string _editLineName = string.Empty;
+
+    [ObservableProperty]
+    private string _editQtyText = "1";
+
+    [ObservableProperty]
+    private string _editUnitPriceText = "0.00";
+
+    [ObservableProperty]
+    private LineDiscountKind _editDiscountKind = LineDiscountKind.None;
+
+    [ObservableProperty]
+    private string _editDiscountValueText = string.Empty;
+
+    [ObservableProperty]
+    private bool _editQtyLocked;
+
+    [ObservableProperty]
+    private string _editLineError = string.Empty;
+
+    private CartLine? _editingLine;
+
+    [ObservableProperty]
     private string _scanHint = "امسح الباركود أو اختر صنفاً.";
 
     [ObservableProperty]
@@ -445,7 +471,32 @@ public partial class PosSession : ObservableObject
     public bool HasSupervisorError => !string.IsNullOrWhiteSpace(SupervisorError);
 
     public bool BlocksScanning =>
-        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin || ShowOnlineOrders || ShowOutboxPanel;
+        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin || ShowOnlineOrders || ShowOutboxPanel || ShowEditLine;
+
+    public bool HasEditLineError => !string.IsNullOrWhiteSpace(EditLineError);
+
+    public bool ShowEditDiscountValue => EditDiscountKind != LineDiscountKind.None;
+
+    public bool IsEditDiscountNone => EditDiscountKind == LineDiscountKind.None;
+
+    public bool IsEditDiscountPercent => EditDiscountKind == LineDiscountKind.Percent;
+
+    public bool IsEditDiscountFlat => EditDiscountKind == LineDiscountKind.Flat;
+
+    public string EditDiscountPlaceholder =>
+        EditDiscountKind == LineDiscountKind.Percent
+            ? "النسبة مثل 10"
+            : "المبلغ بالجنيه";
+
+    public string EditPreviewTotalText
+    {
+        get
+        {
+            if (!TryParseEditDraft(out var qty, out var unit, out var kind, out var value, out _))
+                return Money.FormatEgp(0);
+            return Money.FormatEgp(CartLinePricing.ComputeLineTotalMinor(qty, unit, kind, value));
+        }
+    }
 
     public string ReturnModeButtonText => IsReturnMode ? "إنهاء الاسترجاع" : "وضع الاسترجاع";
 
@@ -529,6 +580,14 @@ public partial class PosSession : ObservableObject
 
     public bool IsCartEmpty => Lines.Count == 0;
 
+    /// <summary>Cart lines stay hidden while tendering so Confirm fits on short tills.</summary>
+    public bool ShowCartLines => !IsCartEmpty && !IsTendering;
+
+    public bool ShowEmptyCartHint => IsCartEmpty && !IsTendering;
+
+    /// <summary>Loyalty controls are cart-stage only; discount still shows in the tender panel.</summary>
+    public bool ShowLoyaltyPanelOutsideTender => HasLoyaltyCustomer && !IsTendering;
+
     public bool HasLines => Lines.Count > 0;
 
     public bool CanOperate => !NeedsLogin && !NeedsOpenShift && _currentCashier is not null && _currentShift is not null;
@@ -545,13 +604,13 @@ public partial class PosSession : ObservableObject
         CanOperate && !IsTendering && !BlocksScanning && !IsReturnMode;
 
     public bool CanToggleReturnMode =>
-        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders;
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders && !ShowEditLine;
 
     public bool CanOpenDrawer =>
-        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders;
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders && !ShowEditLine;
 
     public bool CanOpenOnlineOrders =>
-        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders;
+        CanOperate && !IsTendering && !ShowSupervisorPin && !ShowNotFound && !ShowPriceCheck && !ShowHeldCarts && !ShowOnlineOrders && !ShowEditLine;
 
     public bool HasHeldCarts => HeldCarts.Count > 0;
 
@@ -573,7 +632,7 @@ public partial class PosSession : ObservableObject
             ? "السلة فارغة"
             : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} أصناف";
 
-    public long SubtotalMinor => Lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
+    public long SubtotalMinor => Lines.Sum(line => checked(line.LineTotalMinor));
 
     public long TotalMinor => Math.Max(0, checked(SubtotalMinor - LoyaltyDiscountMinor));
 
@@ -777,6 +836,9 @@ public partial class PosSession : ObservableObject
             product.NameZh,
             embeddedTotalMinor,
             qty: 1,
+            isScalePriced: true,
+            LineDiscountKind.None,
+            discountValue: 0,
             RefreshCheckout,
             RemoveLine,
             HighlightLine);
@@ -797,6 +859,13 @@ public partial class PosSession : ObservableObject
 
     private void RemoveLineNow(CartLine line)
     {
+        if (_editingLine is not null && ReferenceEquals(_editingLine, line))
+        {
+            ShowEditLine = false;
+            _editingLine = null;
+            EditLineError = string.Empty;
+        }
+
         Lines.Remove(line);
         if (_highlightedLineId == line.LineId)
             ClearHighlight();
@@ -1269,6 +1338,136 @@ public partial class PosSession : ObservableObject
         RequestFocus(UiFocusTarget.Barcode);
     }
 
+    public void OpenEditLine(CartLine line)
+    {
+        if (!CanOperate || IsTendering || line is null)
+            return;
+        if (ShowSupervisorPin || ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowOnlineOrders)
+            return;
+
+        _editingLine = line;
+        EditLineName = line.DisplayNameAr;
+        EditQtyText = line.QtyText;
+        EditUnitPriceText = Money.FormatAmount(line.UnitPriceMinor);
+        EditDiscountKind = line.DiscountKind;
+        EditDiscountValueText = line.DiscountKind switch
+        {
+            LineDiscountKind.Percent when line.DiscountValue > 0 =>
+                line.DiscountValue.ToString(CultureInfo.InvariantCulture),
+            LineDiscountKind.Flat when line.DiscountValue > 0 =>
+                Money.FormatAmount(line.DiscountValue),
+            _ => string.Empty,
+        };
+        EditQtyLocked = line.IsScalePriced;
+        EditLineError = string.Empty;
+        ShowEditLine = true;
+        HighlightLine(line);
+        RequestFocus(UiFocusTarget.EditLineQty);
+    }
+
+    [RelayCommand]
+    private void CloseEditLine()
+    {
+        ShowEditLine = false;
+        _editingLine = null;
+        EditLineError = string.Empty;
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void SetEditDiscountNone() => EditDiscountKind = LineDiscountKind.None;
+
+    [RelayCommand]
+    private void SetEditDiscountPercent() => EditDiscountKind = LineDiscountKind.Percent;
+
+    [RelayCommand]
+    private void SetEditDiscountFlat() => EditDiscountKind = LineDiscountKind.Flat;
+
+    [RelayCommand]
+    private void ApplyEditLine()
+    {
+        if (_editingLine is null || !CanOperate || IsTendering)
+            return;
+
+        if (!TryParseEditDraft(out var qty, out var unit, out var kind, out var value, out var error))
+        {
+            EditLineError = error;
+            return;
+        }
+
+        _editingLine.ApplyEdit(qty, unit, kind, value);
+        ShowEditLine = false;
+        _editingLine = null;
+        EditLineError = string.Empty;
+        RefreshCheckout();
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    private bool TryParseEditDraft(
+        out int qty,
+        out long unitPriceMinor,
+        out LineDiscountKind kind,
+        out long discountValue,
+        out string error)
+    {
+        qty = 1;
+        unitPriceMinor = 0;
+        kind = EditDiscountKind;
+        discountValue = 0;
+        error = string.Empty;
+
+        if (EditQtyLocked && _editingLine is not null)
+            qty = _editingLine.Qty;
+        else if (!int.TryParse(EditQtyText.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out qty)
+                 || qty < 1
+                 || qty > 999)
+        {
+            error = "الكمية يجب أن تكون رقماً صحيحاً من 1 إلى 999.";
+            return false;
+        }
+
+        if (!Money.TryParseEgp(EditUnitPriceText, out unitPriceMinor))
+        {
+            error = "سعر الوحدة غير صالح.";
+            return false;
+        }
+
+        if (kind == LineDiscountKind.None)
+        {
+            discountValue = 0;
+            return true;
+        }
+
+        if (kind == LineDiscountKind.Percent)
+        {
+            if (!long.TryParse(EditDiscountValueText.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var pct)
+                || pct <= 0
+                || pct > 100)
+            {
+                error = "نسبة الخصم يجب أن تكون من 1 إلى 100.";
+                return false;
+            }
+
+            discountValue = pct;
+            return true;
+        }
+
+        if (!Money.TryParseEgp(EditDiscountValueText, out discountValue) || discountValue <= 0)
+        {
+            error = "مبلغ الخصم غير صالح.";
+            return false;
+        }
+
+        var gross = checked(unitPriceMinor * (long)qty);
+        if (discountValue > gross)
+        {
+            error = "الخصم أكبر من إجمالي السطر.";
+            return false;
+        }
+
+        return true;
+    }
+
     private void OpenNotFound(string barcode)
     {
         NotFoundBarcode = barcode;
@@ -1495,6 +1694,28 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanHoldCart));
         OnPropertyChanged(nameof(CanOpenHeldCarts));
     }
+
+    partial void OnShowEditLineChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
+
+    partial void OnEditDiscountKindChanged(LineDiscountKind value)
+    {
+        OnPropertyChanged(nameof(ShowEditDiscountValue));
+        OnPropertyChanged(nameof(IsEditDiscountNone));
+        OnPropertyChanged(nameof(IsEditDiscountPercent));
+        OnPropertyChanged(nameof(IsEditDiscountFlat));
+        OnPropertyChanged(nameof(EditDiscountPlaceholder));
+        OnPropertyChanged(nameof(EditPreviewTotalText));
+        if (value == LineDiscountKind.None)
+            EditDiscountValueText = string.Empty;
+    }
+
+    partial void OnEditQtyTextChanged(string value) => OnPropertyChanged(nameof(EditPreviewTotalText));
+
+    partial void OnEditUnitPriceTextChanged(string value) => OnPropertyChanged(nameof(EditPreviewTotalText));
+
+    partial void OnEditDiscountValueTextChanged(string value) => OnPropertyChanged(nameof(EditPreviewTotalText));
+
+    partial void OnEditLineErrorChanged(string value) => OnPropertyChanged(nameof(HasEditLineError));
 
     partial void OnPriceCheckResultChanged(PriceCheckResult? value) => OnPropertyChanged(nameof(HasPriceCheckResult));
 
@@ -2165,7 +2386,7 @@ public partial class PosSession : ObservableObject
             return;
 
         var lines = Lines
-            .Select(line => new CashSaleLine(line.ProductId, line.Barcode, line.NameAr, line.Qty, line.UnitPriceMinor))
+            .Select(line => line.ToCashSaleLine())
             .ToArray();
 
         if (BlockNewSales)
@@ -2408,6 +2629,9 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(TotalMinor));
         OnPropertyChanged(nameof(TotalText));
         OnPropertyChanged(nameof(IsCartEmpty));
+        OnPropertyChanged(nameof(ShowCartLines));
+        OnPropertyChanged(nameof(ShowEmptyCartHint));
+        OnPropertyChanged(nameof(ShowLoyaltyPanelOutsideTender));
         OnPropertyChanged(nameof(HasLines));
         OnPropertyChanged(nameof(CanBeginPayment));
         OnPropertyChanged(nameof(CanHoldCart));

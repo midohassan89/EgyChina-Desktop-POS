@@ -19,11 +19,13 @@
     <Grid Margin="10" ColumnDefinitions="Auto,12,*">
       <!-- Cart column: compact ops bar sits only above the order panel -->
       <DockPanel Grid.Column="0" Width="400">
+        <!-- Ops chrome hidden while tendering so Confirm stays on short tills -->
         <Border DockPanel.Dock="Top"
                 Background="#0B1220"
                 CornerRadius="14"
                 Padding="8,8"
                 Margin="0,0,0,8"
+                IsVisible="{Binding !IsTendering}"
                 DoubleTapped="OnHeaderDoubleTapped"
                 ToolTip.Tip="ضغطتان هنا للتبديل بين ملء الشاشة والنافذة">
           <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
@@ -87,7 +89,34 @@
           </Style>
         </Border.Styles>
         <DockPanel>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="0,0,0,10">
+          <!-- Sticky confirm/cancel while paying — never clipped under the fold -->
+          <Grid DockPanel.Dock="Bottom"
+                ColumnDefinitions="*,8,*"
+                Margin="0,8,0,0"
+                IsVisible="{Binding IsTendering}">
+            <Button Grid.Column="0"
+                    Content="تأكيد الدفع"
+                    Classes="pos-primary"
+                    Command="{Binding ConfirmCashCommand}"
+                    IsEnabled="{Binding CanConfirmCash}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    MinHeight="56"
+                    FontSize="18" />
+            <Button Grid.Column="2"
+                    Content="إلغاء"
+                    Classes="pos-tender"
+                    Command="{Binding CancelTenderCommand}"
+                    Background="#64748B"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    MinHeight="56" />
+          </Grid>
+
+          <Grid DockPanel.Dock="Top"
+                ColumnDefinitions="*,Auto"
+                Margin="0,0,0,10"
+                IsVisible="{Binding !IsTendering}">
             <StackPanel Spacing="2">
               <TextBlock Text="الطلب الحالي" FontSize="22" FontWeight="Bold" Foreground="#0F172A" />
               <TextBlock Text="{Binding LineCountText}" FontSize="13" Foreground="#64748B" />
@@ -99,6 +128,28 @@
                     Classes="pos-chip-warn"
                     VerticalAlignment="Center" />
           </Grid>
+
+          <!-- Compact tender caption replaces the tall cart header -->
+          <Border DockPanel.Dock="Top"
+                  Background="#0B1220"
+                  CornerRadius="12"
+                  Padding="12,10"
+                  Margin="0,0,0,8"
+                  IsVisible="{Binding IsTendering}">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Spacing="2">
+                <TextBlock Text="الدفع" FontSize="18" FontWeight="Bold" Foreground="#F8FAFC" />
+                <TextBlock Text="{Binding LineCountText}" FontSize="12" Foreground="#94A3B8" />
+              </StackPanel>
+              <TextBlock Grid.Column="1"
+                         Text="{Binding TotalText}"
+                         FontSize="22"
+                         FontWeight="Bold"
+                         Foreground="#6EE7B7"
+                         VerticalAlignment="Center"
+                         FlowDirection="LeftToRight" />
+            </Grid>
+          </Border>
 
           <Border DockPanel.Dock="Top"
                   Background="#FEF3C7"
@@ -136,7 +187,7 @@
                   CornerRadius="10"
                   Padding="10,8"
                   Margin="0,0,0,8"
-                  IsVisible="{Binding HasLoyaltyCustomer}">
+                  IsVisible="{Binding ShowLoyaltyPanelOutsideTender}">
             <Grid ColumnDefinitions="*,Auto,8,Auto">
               <StackPanel Spacing="2">
                 <TextBlock Text="{Binding LoyaltyCaption}"
@@ -166,11 +217,10 @@
             </Grid>
           </Border>
 
-          <Border DockPanel.Dock="Bottom" Margin="0,12,0,0">
+          <Border DockPanel.Dock="Bottom" Margin="0,12,0,0" IsVisible="{Binding !IsTendering}">
             <StackPanel Spacing="8">
               <Border Background="#ECFDF5" CornerRadius="14" Padding="14,12"
-                      BorderBrush="#A7F3D0" BorderThickness="1"
-                      IsVisible="{Binding !IsTendering}">
+                      BorderBrush="#A7F3D0" BorderThickness="1">
                 <StackPanel Spacing="6">
                   <Grid ColumnDefinitions="*,Auto">
                     <TextBlock Text="{Binding AmountLabel}" Foreground="#047857" FontSize="14" VerticalAlignment="Center" />
@@ -184,157 +234,10 @@
                 </StackPanel>
               </Border>
 
-              <Border Background="#0B1220" CornerRadius="16" Padding="14,12"
-                      IsVisible="{Binding IsTendering}">
-                <StackPanel Spacing="10">
-                  <TextBlock Text="اختر طريقة الدفع" Foreground="#94A3B8" FontSize="13" FontWeight="SemiBold" />
-                  <UniformGrid Columns="3" Rows="2">
-                    <Button Margin="4" Tag="Cash" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-cash"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="كاش" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
-                        <TextBlock Text="Cash" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
-                      </StackPanel>
-                    </Button>
-                    <Button Margin="4" Tag="Visa" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-visa"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="فيزا" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
-                        <TextBlock Text="Visa" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
-                      </StackPanel>
-                    </Button>
-                    <Button Margin="4" Tag="Wallet" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-wallet"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="محفظة" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
-                        <TextBlock Text="Wallet" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
-                      </StackPanel>
-                    </Button>
-                    <Button Margin="4" Tag="InstaPay" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-instapay"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="انستا باي" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
-                        <TextBlock Text="InstaPay" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
-                      </StackPanel>
-                    </Button>
-                    <Button Margin="4" Tag="WeChat" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-wechat"
-                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center">
-                      <StackPanel Spacing="2">
-                        <TextBlock Text="وي شات" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
-                        <TextBlock Text="WeChat" FontSize="11" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
-                      </StackPanel>
-                    </Button>
-                  </UniformGrid>
-                  <Border Background="#111827" CornerRadius="12" Padding="12,10" BorderBrush="#334155" BorderThickness="1">
-                    <StackPanel Spacing="6">
-                      <TextBlock Text="{Binding PaymentMethodLabel}" FontSize="18" FontWeight="Bold" Foreground="#6EE7B7" />
-                      <TextBlock Text="{Binding PaymentMethodLabelEn}" FontSize="13" Foreground="#CBD5E1" FlowDirection="LeftToRight" />
-                      <TextBlock Text="{Binding PaymentMethodLabelZh}" FontSize="13" Foreground="#94A3B8" />
-                      <Grid ColumnDefinitions="*,Auto" Margin="0,4,0,0">
-                        <TextBlock Text="قيمة الفاتورة" FontSize="14" Foreground="#94A3B8" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1"
-                                   Text="{Binding TotalText}"
-                                   FontSize="28"
-                                   FontWeight="Bold"
-                                   Foreground="#F8FAFC"
-                                   FlowDirection="LeftToRight" />
-                      </Grid>
-                    </StackPanel>
-                  </Border>
-
-                  <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
-                    <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
-                    <TextBox x:Name="ExchangeRateBox"
-                             Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
-                             FontSize="18"
-                             FlowDirection="LeftToRight"
-                             MinHeight="44"
-                             GotFocus="OnTouchInputGotFocus" />
-                    <TextBlock Text="{Binding WeChatCnyText}" FontSize="20" FontWeight="Bold" Foreground="#86EFAC" />
-                  </StackPanel>
-
-                  <StackPanel Spacing="8" IsVisible="{Binding IsCashPayment}">
-                    <TextBlock Text="فئات نقدية سريعة" Foreground="#94A3B8" FontSize="13"
-                               IsVisible="{Binding ShowQuickCashOptions}" />
-                    <ItemsControl ItemsSource="{Binding QuickCashOptions}"
-                                  IsVisible="{Binding ShowQuickCashOptions}">
-                      <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                          <UniformGrid Columns="3" />
-                        </ItemsPanelTemplate>
-                      </ItemsControl.ItemsPanel>
-                      <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:QuickCashOption">
-                          <Button Margin="3"
-                                  Tag="{Binding AmountMinor}"
-                                  Click="OnQuickCashClick"
-                                  Classes="pos-tender"
-                                  Classes.selected="{Binding IsDefault}"
-                                  MinHeight="48"
-                                  FontSize="18"
-                                  FontWeight="Bold"
-                                  HorizontalAlignment="Stretch"
-                                  HorizontalContentAlignment="Center"
-                                  Background="#334155"
-                                  Foreground="White"
-                                  Content="{Binding DisplayText}">
-                            <Button.Styles>
-                              <Style Selector="Button.selected">
-                                <Setter Property="Background" Value="#059669" />
-                              </Style>
-                              <Style Selector="Button.selected:pointerover /template/ ContentPresenter">
-                                <Setter Property="Background" Value="#10B981" />
-                              </Style>
-                            </Button.Styles>
-                          </Button>
-                        </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                    <TextBlock Text="المبلغ المستلم" Foreground="#94A3B8" FontSize="13" />
-                    <TextBox x:Name="TenderBox"
-                             GotFocus="OnTouchInputGotFocus"
-                             Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
-                             PlaceholderText="0.00"
-                             FontSize="22"
-                             MinHeight="48"
-                             FlowDirection="LeftToRight"
-                             KeyDown="OnTenderKeyDown" />
-                  </StackPanel>
-                  <TextBlock Text="{Binding TenderHint}"
-                             Foreground="#FCA5A5"
-                             IsVisible="{Binding CustomerChangeIsShortfall}"
-                             TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding TenderHint}"
-                             Foreground="#E2E8F0"
-                             IsVisible="{Binding !CustomerChangeIsShortfall}"
-                             TextWrapping="Wrap" />
-                  <Grid ColumnDefinitions="*,8,*">
-                    <Button Grid.Column="0"
-                            Content="تأكيد الدفع"
-                            Classes="pos-primary"
-                            Command="{Binding ConfirmCashCommand}"
-                            IsEnabled="{Binding CanConfirmCash}"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center"
-                            MinHeight="56"
-                            FontSize="18" />
-                    <Button Grid.Column="2"
-                            Content="إلغاء"
-                            Classes="pos-tender"
-                            Command="{Binding CancelTenderCommand}"
-                            Background="#64748B"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center"
-                            MinHeight="56" />
-                  </Grid>
-                </StackPanel>
-              </Border>
-
               <Button Content="الدفع"
                       Classes="pos-primary"
                       Command="{Binding BeginCashPaymentCommand}"
                       IsEnabled="{Binding CanBeginPayment}"
-                      IsVisible="{Binding !IsTendering}"
                       HorizontalAlignment="Stretch"
                       HorizontalContentAlignment="Center"
                       MinHeight="62"
@@ -342,7 +245,7 @@
                       FontWeight="Bold"
                       CornerRadius="14" />
 
-              <Grid ColumnDefinitions="*,8,*" IsVisible="{Binding !IsTendering}">
+              <Grid ColumnDefinitions="*,8,*">
                 <Button Content="{Binding HeldCartsButtonText}"
                         Command="{Binding OpenHeldCartsCommand}"
                         IsEnabled="{Binding CanOpenHeldCarts}"
@@ -370,71 +273,255 @@
             </StackPanel>
           </Border>
 
-          <StackPanel DockPanel.Dock="Top"
-                      IsVisible="{Binding IsCartEmpty}"
-                      Margin="8,48,8,0"
-                      Spacing="8"
-                      HorizontalAlignment="Center">
-            <TextBlock Text="السلة فارغة"
-                       FontSize="20"
-                       FontWeight="SemiBold"
-                       HorizontalAlignment="Center"
-                       Foreground="#94A3B8" />
-            <TextBlock Text="امسح باركود أو اختر صنفاً للبدء"
-                       FontSize="14"
-                       HorizontalAlignment="Center"
-                       TextAlignment="Center"
-                       Foreground="#CBD5E1"
-                       TextWrapping="Wrap" />
-          </StackPanel>
+          <!-- Single fill child: DockPanel would leave a white strip if the last sibling
+               is a hidden cart ScrollViewer while tender docks Left by default. -->
+          <Grid>
+            <StackPanel IsVisible="{Binding ShowEmptyCartHint}"
+                        Margin="8,48,8,0"
+                        Spacing="8"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Top">
+              <TextBlock Text="السلة فارغة"
+                         FontSize="20"
+                         FontWeight="SemiBold"
+                         HorizontalAlignment="Center"
+                         Foreground="#94A3B8" />
+              <TextBlock Text="امسح باركود أو اختر صنفاً للبدء"
+                         FontSize="14"
+                         HorizontalAlignment="Center"
+                         TextAlignment="Center"
+                         Foreground="#CBD5E1"
+                         TextWrapping="Wrap" />
+            </StackPanel>
 
-          <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-            <ItemsControl ItemsSource="{Binding Lines}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate x:DataType="vm:CartLine">
-                  <Border Classes="cart-line" Classes.highlighted="{Binding IsHighlighted}">
-                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
-                      <Border Grid.RowSpan="2" Width="52" Height="52" CornerRadius="12" Background="#F1F5F9"
-                              ClipToBounds="True" Margin="0,0,10,0" VerticalAlignment="Top">
-                        <Grid>
-                          <Border Background="#0B1220"
-                                  IsVisible="{Binding ProductId, Converter={StaticResource MissingProductImage}}">
-                            <Image Source="{DynamicResource BrandLogo}" Stretch="Uniform" Margin="8" Opacity="0.9" />
-                          </Border>
-                          <Image Source="{Binding ProductId, Converter={StaticResource ProductImage}}"
-                                 Stretch="UniformToFill"
-                                 IsVisible="{Binding ProductId, Converter={StaticResource HasProductImage}}" />
-                        </Grid>
-                      </Border>
-                      <TextBlock Grid.Column="1" Text="{Binding DisplayNameAr}" FontWeight="SemiBold" TextWrapping="Wrap"
-                                 TextTrimming="CharacterEllipsis" MaxLines="2" MaxHeight="44" Foreground="#0F172A" />
-                      <TextBlock Grid.Column="2" Text="{Binding LineTotalText}" FontWeight="Bold" Foreground="#059669" />
-                      <Grid Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto" Margin="0,8,0,0">
-                        <StackPanel Orientation="Horizontal" Spacing="8" FlowDirection="LeftToRight">
-                          <Button Content="−" Command="{Binding DecrementCommand}" Classes="pos-qty" />
-                          <Border MinWidth="44" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1"
-                                  CornerRadius="10" Padding="10,8">
-                            <TextBlock Text="{Binding QtyText}"
-                                       VerticalAlignment="Center"
-                                       HorizontalAlignment="Center"
-                                       FontWeight="Bold"
-                                       FontSize="15"
-                                       Foreground="#0F172A"
-                                       FlowDirection="LeftToRight" />
-                          </Border>
-                          <Button Content="+" Command="{Binding IncrementCommand}" Classes="pos-qty" />
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          IsVisible="{Binding ShowCartLines}">
+              <ItemsControl ItemsSource="{Binding Lines}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:CartLine">
+                    <Border Classes="cart-line" Classes.highlighted="{Binding IsHighlighted}">
+                      <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto">
+                        <Border Grid.RowSpan="2"
+                                Width="52"
+                                Height="52"
+                                CornerRadius="12"
+                                Background="#F1F5F9"
+                                ClipToBounds="True"
+                                Margin="0,0,10,0"
+                                VerticalAlignment="Top"
+                                Cursor="Hand"
+                                Tag="{Binding}"
+                                Tapped="OnCartLineEditTapped">
+                          <Grid>
+                            <Border Background="#0B1220"
+                                    IsVisible="{Binding ProductId, Converter={StaticResource MissingProductImage}}">
+                              <Image Source="{DynamicResource BrandLogo}" Stretch="Uniform" Margin="8" Opacity="0.9" />
+                            </Border>
+                            <Image Source="{Binding ProductId, Converter={StaticResource ProductImage}}"
+                                   Stretch="UniformToFill"
+                                   IsVisible="{Binding ProductId, Converter={StaticResource HasProductImage}}" />
+                          </Grid>
+                        </Border>
+                        <StackPanel Grid.Column="1"
+                                    Spacing="2"
+                                    Cursor="Hand"
+                                    Tag="{Binding}"
+                                    Tapped="OnCartLineEditTapped">
+                          <TextBlock Text="{Binding DisplayNameAr}"
+                                     FontWeight="SemiBold"
+                                     TextWrapping="Wrap"
+                                     TextTrimming="CharacterEllipsis"
+                                     MaxLines="2"
+                                     MaxHeight="44"
+                                     Foreground="#0F172A" />
+                          <TextBlock Text="{Binding DiscountCaption}"
+                                     IsVisible="{Binding HasDiscount}"
+                                     FontSize="12"
+                                     FontWeight="SemiBold"
+                                     Foreground="#B45309" />
                         </StackPanel>
-                        <Button Grid.Column="2"
-                                Content="حذف"
-                                Command="{Binding RemoveCommand}"
-                                Classes="pos-qty-del" />
+                        <StackPanel Grid.Column="2"
+                                    Spacing="2"
+                                    HorizontalAlignment="Left"
+                                    Cursor="Hand"
+                                    Tag="{Binding}"
+                                    Tapped="OnCartLineEditTapped">
+                          <TextBlock Text="{Binding LineTotalText}" FontWeight="Bold" Foreground="#059669" />
+                          <TextBlock Text="تعديل"
+                                     FontSize="11"
+                                     FontWeight="SemiBold"
+                                     Foreground="#64748B"
+                                     HorizontalAlignment="Center" />
+                        </StackPanel>
+                        <Grid Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto" Margin="0,8,0,0">
+                          <StackPanel Orientation="Horizontal" Spacing="8" FlowDirection="LeftToRight">
+                            <Button Content="−" Command="{Binding DecrementCommand}" Classes="pos-qty" />
+                            <Border MinWidth="44" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1"
+                                    CornerRadius="10" Padding="10,8"
+                                    Cursor="Hand"
+                                    Tag="{Binding}"
+                                    Tapped="OnCartLineEditTapped">
+                              <TextBlock Text="{Binding QtyText}"
+                                         VerticalAlignment="Center"
+                                         HorizontalAlignment="Center"
+                                         FontWeight="Bold"
+                                         FontSize="15"
+                                         Foreground="#0F172A"
+                                         FlowDirection="LeftToRight" />
+                            </Border>
+                            <Button Content="+" Command="{Binding IncrementCommand}" Classes="pos-qty" />
+                          </StackPanel>
+                          <Button Grid.Column="2"
+                                  Content="حذف"
+                                  Command="{Binding RemoveCommand}"
+                                  Classes="pos-qty-del" />
+                        </Grid>
                       </Grid>
-                    </Grid>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
+                          IsVisible="{Binding IsTendering}">
+              <Border Background="#0B1220" CornerRadius="16" Padding="12,10" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="8">
+                  <TextBlock Text="اختر طريقة الدفع" Foreground="#94A3B8" FontSize="12" FontWeight="SemiBold" />
+                  <UniformGrid Columns="3" Rows="2">
+                    <Button Margin="3" Tag="Cash" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-cash"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            MinHeight="52">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="كاش" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="Cash" FontSize="10" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="3" Tag="Visa" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-visa"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            MinHeight="52">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="فيزا" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="Visa" FontSize="10" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="3" Tag="Wallet" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-wallet"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            MinHeight="52">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="محفظة" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="Wallet" FontSize="10" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="3" Tag="InstaPay" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-instapay"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            MinHeight="52">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="انستا باي" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="InstaPay" FontSize="10" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                    <Button Margin="3" Tag="WeChat" Click="OnPaymentMethodClick" Classes="pos-tender pos-pay-wechat"
+                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            MinHeight="52">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="وي شات" FontSize="15" FontWeight="Bold" HorizontalAlignment="Center" Foreground="White" />
+                        <TextBlock Text="WeChat" FontSize="10" Opacity="0.85" HorizontalAlignment="Center" Foreground="White" FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                  </UniformGrid>
+                  <Border Background="#111827" CornerRadius="12" Padding="10,8" BorderBrush="#334155" BorderThickness="1">
+                    <StackPanel Spacing="4">
+                      <TextBlock Text="{Binding PaymentMethodLabel}" FontSize="16" FontWeight="Bold" Foreground="#6EE7B7" />
+                      <TextBlock Text="{Binding PaymentMethodLabelEn}" FontSize="12" Foreground="#CBD5E1" FlowDirection="LeftToRight" />
+                      <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
+                        <TextBlock Text="قيمة الفاتورة" FontSize="13" Foreground="#94A3B8" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding TotalText}"
+                                   FontSize="24"
+                                   FontWeight="Bold"
+                                   Foreground="#F8FAFC"
+                                   FlowDirection="LeftToRight" />
+                      </Grid>
+                      <TextBlock Text="{Binding LoyaltyDiscountText}"
+                                 IsVisible="{Binding ShowLoyaltyDiscount}"
+                                 Foreground="#FBBF24"
+                                 FontWeight="SemiBold"
+                                 FontSize="12" />
+                    </StackPanel>
                   </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
-          </ScrollViewer>
+
+                  <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
+                    <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
+                    <TextBox x:Name="ExchangeRateBox"
+                             Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
+                             FontSize="18"
+                             FlowDirection="LeftToRight"
+                             MinHeight="44"
+                             GotFocus="OnTouchInputGotFocus" />
+                    <TextBlock Text="{Binding WeChatCnyText}" FontSize="18" FontWeight="Bold" Foreground="#86EFAC" />
+                  </StackPanel>
+
+                  <StackPanel Spacing="6" IsVisible="{Binding IsCashPayment}">
+                    <TextBlock Text="فئات نقدية سريعة" Foreground="#94A3B8" FontSize="12"
+                               IsVisible="{Binding ShowQuickCashOptions}" />
+                    <ItemsControl ItemsSource="{Binding QuickCashOptions}"
+                                  IsVisible="{Binding ShowQuickCashOptions}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <UniformGrid Columns="3" />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:QuickCashOption">
+                          <Button Margin="2"
+                                  Tag="{Binding AmountMinor}"
+                                  Click="OnQuickCashClick"
+                                  Classes="pos-tender"
+                                  Classes.selected="{Binding IsDefault}"
+                                  MinHeight="44"
+                                  FontSize="16"
+                                  FontWeight="Bold"
+                                  HorizontalAlignment="Stretch"
+                                  HorizontalContentAlignment="Center"
+                                  Background="#334155"
+                                  Foreground="White"
+                                  Content="{Binding DisplayText}">
+                            <Button.Styles>
+                              <Style Selector="Button.selected">
+                                <Setter Property="Background" Value="#059669" />
+                              </Style>
+                              <Style Selector="Button.selected:pointerover /template/ ContentPresenter">
+                                <Setter Property="Background" Value="#10B981" />
+                              </Style>
+                            </Button.Styles>
+                          </Button>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Text="المبلغ المستلم" Foreground="#94A3B8" FontSize="12" />
+                    <TextBox x:Name="TenderBox"
+                             GotFocus="OnTouchInputGotFocus"
+                             Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
+                             PlaceholderText="0.00"
+                             FontSize="22"
+                             MinHeight="48"
+                             FlowDirection="LeftToRight"
+                             KeyDown="OnTenderKeyDown" />
+                  </StackPanel>
+                  <TextBlock Text="{Binding TenderHint}"
+                             Foreground="#FCA5A5"
+                             IsVisible="{Binding CustomerChangeIsShortfall}"
+                             TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding TenderHint}"
+                             Foreground="#E2E8F0"
+                             IsVisible="{Binding !CustomerChangeIsShortfall}"
+                             TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+            </ScrollViewer>
+          </Grid>
         </DockPanel>
       </Border>
       </DockPanel>
@@ -643,6 +730,215 @@
         </Border>
       </DockPanel>
     </Grid>
+
+  <!-- Form + numeric pad side-by-side so short tills never cover Apply -->
+  <Border Background="#CC0F172A" IsVisible="{Binding ShowEditLine}" ZIndex="42">
+    <Grid x:Name="EditLineShell"
+          Margin="16"
+          HorizontalAlignment="Center"
+          VerticalAlignment="Center"
+          MaxHeight="740"
+          ColumnDefinitions="Auto,14,Auto">
+      <Border Background="White"
+              BorderBrush="#E2E8F0"
+              BorderThickness="1"
+              CornerRadius="20"
+              Padding="0"
+              MinWidth="320"
+              MaxWidth="440"
+              BoxShadow="0 24 60 0 #66000000">
+        <DockPanel>
+          <Border DockPanel.Dock="Top" BorderBrush="#E2E8F0" BorderThickness="0,0,0,1" Padding="18,14">
+            <Grid ColumnDefinitions="*,Auto">
+              <StackPanel Spacing="4" Margin="0,0,12,0">
+                <TextBlock Text="تعديل الصنف" FontSize="22" FontWeight="Bold" Foreground="#0F172A" />
+                <TextBlock Text="{Binding EditLineName}"
+                           FontSize="14"
+                           Foreground="#64748B"
+                           TextWrapping="Wrap"
+                           TextTrimming="CharacterEllipsis"
+                           MaxLines="2" />
+              </StackPanel>
+              <Button Grid.Column="1"
+                      Content="✕"
+                      Command="{Binding CloseEditLineCommand}"
+                      Classes="pos-ghost"
+                      MinWidth="44"
+                      MinHeight="44"
+                      VerticalAlignment="Top" />
+            </Grid>
+          </Border>
+
+          <Border DockPanel.Dock="Bottom" BorderBrush="#E2E8F0" BorderThickness="0,1,0,0" Padding="18,14">
+            <Grid ColumnDefinitions="*,10,*">
+              <Button Content="تطبيق"
+                      Classes="pos-primary"
+                      Command="{Binding ApplyEditLineCommand}"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      MinHeight="52"
+                      FontSize="17"
+                      FontWeight="Bold" />
+              <Button Grid.Column="2"
+                      Content="إلغاء"
+                      Command="{Binding CloseEditLineCommand}"
+                      Background="#F8FAFC"
+                      Foreground="#334155"
+                      BorderBrush="#CBD5E1"
+                      BorderThickness="1"
+                      HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center"
+                      MinHeight="52"
+                      FontSize="16" />
+            </Grid>
+          </Border>
+
+          <ScrollViewer Margin="18,14" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="12">
+              <StackPanel Spacing="6">
+                <TextBlock Text="الكمية" FontSize="14" FontWeight="SemiBold" Foreground="#334155" />
+                <TextBox x:Name="EditQtyBox"
+                         GotFocus="OnTouchInputGotFocus"
+                         Text="{Binding EditQtyText, UpdateSourceTrigger=PropertyChanged}"
+                         IsEnabled="{Binding !EditQtyLocked}"
+                         FontSize="20"
+                         FontWeight="SemiBold"
+                         MinHeight="48"
+                         FlowDirection="LeftToRight" />
+                <TextBlock Text="كمية الميزان ثابتة من ملصق الوزن"
+                           IsVisible="{Binding EditQtyLocked}"
+                           FontSize="12"
+                           Foreground="#B45309"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+
+              <StackPanel Spacing="6">
+                <TextBlock Text="سعر الوحدة (ج.م)" FontSize="14" FontWeight="SemiBold" Foreground="#334155" />
+                <TextBox x:Name="EditUnitPriceBox"
+                         GotFocus="OnTouchInputGotFocus"
+                         Text="{Binding EditUnitPriceText, UpdateSourceTrigger=PropertyChanged}"
+                         FontSize="20"
+                         FontWeight="SemiBold"
+                         MinHeight="48"
+                         FlowDirection="LeftToRight" />
+              </StackPanel>
+
+              <StackPanel Spacing="8">
+                <TextBlock Text="الخصم" FontSize="14" FontWeight="SemiBold" Foreground="#334155" />
+                <UniformGrid Columns="3">
+                  <Button Margin="0,0,4,0"
+                          Content="بدون"
+                          Command="{Binding SetEditDiscountNoneCommand}"
+                          Classes="pos-tender"
+                          Classes.selected="{Binding IsEditDiscountNone}"
+                          MinHeight="46"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center"
+                          Background="#F8FAFC"
+                          Foreground="#475569"
+                          BorderBrush="#E2E8F0"
+                          BorderThickness="1">
+                    <Button.Styles>
+                      <Style Selector="Button.selected">
+                        <Setter Property="Background" Value="#ECFDF5" />
+                        <Setter Property="Foreground" Value="#065F46" />
+                        <Setter Property="BorderBrush" Value="#059669" />
+                        <Setter Property="BorderThickness" Value="2" />
+                      </Style>
+                    </Button.Styles>
+                  </Button>
+                  <Button Margin="2,0"
+                          Content="%"
+                          Command="{Binding SetEditDiscountPercentCommand}"
+                          Classes="pos-tender"
+                          Classes.selected="{Binding IsEditDiscountPercent}"
+                          MinHeight="46"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center"
+                          Background="#F8FAFC"
+                          Foreground="#475569"
+                          BorderBrush="#E2E8F0"
+                          BorderThickness="1">
+                    <Button.Styles>
+                      <Style Selector="Button.selected">
+                        <Setter Property="Background" Value="#ECFDF5" />
+                        <Setter Property="Foreground" Value="#065F46" />
+                        <Setter Property="BorderBrush" Value="#059669" />
+                        <Setter Property="BorderThickness" Value="2" />
+                      </Style>
+                    </Button.Styles>
+                  </Button>
+                  <Button Margin="4,0,0,0"
+                          Content="ج.م"
+                          Command="{Binding SetEditDiscountFlatCommand}"
+                          Classes="pos-tender"
+                          Classes.selected="{Binding IsEditDiscountFlat}"
+                          MinHeight="46"
+                          HorizontalAlignment="Stretch"
+                          HorizontalContentAlignment="Center"
+                          Background="#F8FAFC"
+                          Foreground="#475569"
+                          BorderBrush="#E2E8F0"
+                          BorderThickness="1">
+                    <Button.Styles>
+                      <Style Selector="Button.selected">
+                        <Setter Property="Background" Value="#ECFDF5" />
+                        <Setter Property="Foreground" Value="#065F46" />
+                        <Setter Property="BorderBrush" Value="#059669" />
+                        <Setter Property="BorderThickness" Value="2" />
+                      </Style>
+                    </Button.Styles>
+                  </Button>
+                </UniformGrid>
+                <TextBox x:Name="EditDiscountBox"
+                         GotFocus="OnTouchInputGotFocus"
+                         Text="{Binding EditDiscountValueText, UpdateSourceTrigger=PropertyChanged}"
+                         IsVisible="{Binding ShowEditDiscountValue}"
+                         PlaceholderText="{Binding EditDiscountPlaceholder}"
+                         FontSize="18"
+                         FontWeight="SemiBold"
+                         MinHeight="48"
+                         FlowDirection="LeftToRight" />
+              </StackPanel>
+
+              <Border Background="#0B1220" CornerRadius="14" Padding="16,14">
+                <Grid ColumnDefinitions="*,Auto">
+                  <TextBlock Text="إجمالي السطر" FontSize="14" Foreground="#94A3B8" VerticalAlignment="Center" />
+                  <TextBlock Grid.Column="1"
+                             Text="{Binding EditPreviewTotalText}"
+                             FontSize="26"
+                             FontWeight="Bold"
+                             Foreground="White"
+                             FlowDirection="LeftToRight" />
+                </Grid>
+              </Border>
+
+              <TextBlock Text="{Binding EditLineError}"
+                         IsVisible="{Binding HasEditLineError}"
+                         Foreground="#B91C1C"
+                         FontWeight="SemiBold"
+                         TextWrapping="Wrap" />
+            </StackPanel>
+          </ScrollViewer>
+        </DockPanel>
+      </Border>
+
+      <Border Grid.Column="2"
+              Background="#0B1220"
+              BorderBrush="#334155"
+              BorderThickness="1"
+              CornerRadius="20"
+              MinWidth="260"
+              MaxWidth="320"
+              Padding="4,4,4,8"
+              BoxShadow="0 24 60 0 #66000000"
+              VerticalAlignment="Stretch">
+        <controls:TouchKeyboard x:Name="EditLineNumpad"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch" />
+      </Border>
+    </Grid>
+  </Border>
 
   <Border Background="#CC0F172A" IsVisible="{Binding ShowHeldCarts}" ZIndex="38">
     <Border Background="White" BorderBrush="#F59E0B" BorderThickness="3" CornerRadius="16"

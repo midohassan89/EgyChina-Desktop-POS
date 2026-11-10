@@ -10,4 +10,5 @@ public enum UiFocusTarget
     PriceCheck,
     NotFoundAck,
     SupervisorPin,
+    EditLineQty,
 }

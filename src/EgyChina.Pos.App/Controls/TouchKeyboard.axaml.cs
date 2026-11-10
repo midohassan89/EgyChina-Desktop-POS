@@ -39,11 +39,23 @@ public sealed partial class TouchKeyboard : UserControl
     private TouchKeyboardMode _mode = TouchKeyboardMode.Text;
     private TouchKeyboardLanguage _language = TouchKeyboardLanguage.Arabic;
     private bool _shift;
+    private bool _embedded;
 
     public TouchKeyboard()
     {
         InitializeComponent();
         Rebuild();
+    }
+
+    /// <summary>
+    /// Inline pad inside a dialog: hide language/dismiss chrome; keep Enter.
+    /// </summary>
+    public void SetEmbedded(bool embedded)
+    {
+        if (_embedded == embedded)
+            return;
+        _embedded = embedded;
+        ApplyChrome();
     }
 
     public event Action<string>? TextTyped;
@@ -85,18 +97,26 @@ public sealed partial class TouchKeyboard : UserControl
     private void Rebuild()
     {
         TitleBlock.Text = _mode == TouchKeyboardMode.Numeric
-            ? "لوحة أرقام · Number pad"
+            ? (_embedded ? "أرقام" : "لوحة أرقام · Number pad")
             : _language == TouchKeyboardLanguage.Arabic
                 ? "لوحة مفاتيح عربية · Arabic"
                 : "English keyboard · لوحة إنجليزية";
         LanguageButton.Content = _language == TouchKeyboardLanguage.Arabic ? "EN" : "ع";
-        LanguageButton.IsVisible = _mode == TouchKeyboardMode.Text;
+        ApplyChrome();
 
         RowsHost.Children.Clear();
         if (_mode == TouchKeyboardMode.Numeric)
             BuildNumeric();
         else
             BuildText();
+    }
+
+    private void ApplyChrome()
+    {
+        LanguageButton.IsVisible = !_embedded && _mode == TouchKeyboardMode.Text;
+        HideButton.IsVisible = !_embedded;
+        EnterButton.Content = _embedded ? "التالي" : "Enter ↵";
+        EnterButton.MinWidth = _embedded ? 88 : 100;
     }
 
     private void BuildNumeric()

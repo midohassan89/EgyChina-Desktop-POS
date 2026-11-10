@@ -21,7 +21,18 @@ public sealed record HeldCartLinePayload(
     [property: JsonPropertyName("nameAr")] string NameAr,
     [property: JsonPropertyName("nameZh")] string? NameZh,
     [property: JsonPropertyName("qty")] int Qty,
-    [property: JsonPropertyName("unitPriceMinor")] long UnitPriceMinor);
+    [property: JsonPropertyName("unitPriceMinor")] long UnitPriceMinor,
+    [property: JsonPropertyName("discountKind")] string? DiscountKind = null,
+    [property: JsonPropertyName("discountValue")] long DiscountValue = 0,
+    [property: JsonPropertyName("isScalePriced")] bool IsScalePriced = false)
+{
+    public long LineTotalMinor =>
+        CartLinePricing.ComputeLineTotalMinor(
+            Qty,
+            UnitPriceMinor,
+            CartLinePricing.ParseStoredKind(DiscountKind),
+            DiscountValue);
+}
 
 public sealed record HeldCartPayload(
     [property: JsonPropertyName("lines")] IReadOnlyList<HeldCartLinePayload> Lines);

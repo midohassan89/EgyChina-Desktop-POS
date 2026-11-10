@@ -22,6 +22,9 @@ public partial class CartLine : ObservableObject
             product.NameZh,
             product.PriceEgpMinor,
             qty: 1,
+            isScalePriced: false,
+            LineDiscountKind.None,
+            discountValue: 0,
             changed,
             remove,
             touched)
@@ -40,6 +43,9 @@ public partial class CartLine : ObservableObject
             payload.NameZh,
             payload.UnitPriceMinor,
             Math.Max(1, payload.Qty),
+            payload.IsScalePriced,
+            CartLinePricing.ParseStoredKind(payload.DiscountKind),
+            payload.DiscountValue,
             changed,
             remove,
             touched)
@@ -56,17 +62,49 @@ public partial class CartLine : ObservableObject
         Action changed,
         Action<CartLine> remove,
         Action<CartLine>? touched = null)
+        : this(
+            productId,
+            barcode,
+            nameAr,
+            nameZh,
+            unitPriceMinor,
+            qty,
+            isScalePriced: false,
+            LineDiscountKind.None,
+            discountValue: 0,
+            changed,
+            remove,
+            touched)
+    {
+    }
+
+    public CartLine(
+        string productId,
+        string? barcode,
+        string nameAr,
+        string? nameZh,
+        long unitPriceMinor,
+        int qty,
+        bool isScalePriced,
+        LineDiscountKind discountKind,
+        long discountValue,
+        Action changed,
+        Action<CartLine> remove,
+        Action<CartLine>? touched = null)
     {
         LineId = Guid.NewGuid().ToString("N");
         ProductId = productId;
         Barcode = barcode;
         NameAr = nameAr;
         NameZh = nameZh;
-        UnitPriceMinor = unitPriceMinor;
+        IsScalePriced = isScalePriced;
+        _unitPriceMinor = Math.Max(0, unitPriceMinor);
+        _discountKind = discountKind;
+        _discountValue = Math.Max(0, discountValue);
         _changed = changed;
         _remove = remove;
         _touched = touched;
-        _qty = qty;
+        _qty = Math.Max(1, qty);
     }
 
     public string LineId { get; }
@@ -79,24 +117,109 @@ public partial class CartLine : ObservableObject
 
     public string? NameZh { get; }
 
+    public bool IsScalePriced { get; }
+
     public string DisplayNameAr => ProductDisplayNames.ForShelf(NameAr, NameZh, Barcode);
 
     public bool HasNameZh => !string.IsNullOrWhiteSpace(NameZh);
 
     public bool ShowCustomerNameZh => ProductDisplayNames.ShowSecondaryZh(NameAr, NameZh);
 
-    public long UnitPriceMinor { get; }
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(UnitPriceText))]
+    [NotifyPropertyChangedFor(nameof(LineTotalMinor))]
+    [NotifyPropertyChangedFor(nameof(LineTotalText))]
+    [NotifyPropertyChangedFor(nameof(DiscountMinor))]
+    [NotifyPropertyChangedFor(nameof(HasDiscount))]
+    [NotifyPropertyChangedFor(nameof(DiscountCaption))]
+    private long _unitPriceMinor;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LineTotalMinor))]
+    [NotifyPropertyChangedFor(nameof(LineTotalText))]
+    [NotifyPropertyChangedFor(nameof(DiscountMinor))]
+    [NotifyPropertyChangedFor(nameof(HasDiscount))]
+    [NotifyPropertyChangedFor(nameof(DiscountCaption))]
+    private LineDiscountKind _discountKind;
+
+    /// <summary>
+    /// Percent: whole percent 0–100. Flat: EGP piasters.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LineTotalMinor))]
+    [NotifyPropertyChangedFor(nameof(LineTotalText))]
+    [NotifyPropertyChangedFor(nameof(DiscountMinor))]
+    [NotifyPropertyChangedFor(nameof(HasDiscount))]
+    [NotifyPropertyChangedFor(nameof(DiscountCaption))]
+    private long _discountValue;
 
     public string UnitPriceText => Money.FormatEgp(UnitPriceMinor);
 
-    public string LineTotalText => Money.FormatEgp(UnitPriceMinor * Qty);
+    public long DiscountMinor =>
+        CartLinePricing.ComputeDiscountMinor(Qty, UnitPriceMinor, DiscountKind, DiscountValue);
+
+    public long LineTotalMinor =>
+        CartLinePricing.ComputeLineTotalMinor(Qty, UnitPriceMinor, DiscountKind, DiscountValue);
+
+    public string LineTotalText => Money.FormatEgp(LineTotalMinor);
+
+    public bool HasDiscount => DiscountMinor > 0;
+
+    public string DiscountCaption
+    {
+        get
+        {
+            if (!HasDiscount)
+                return string.Empty;
+            return DiscountKind switch
+            {
+                LineDiscountKind.Percent =>
+                    $"خصم {DiscountValue.ToString(System.Globalization.CultureInfo.InvariantCulture)}%",
+                LineDiscountKind.Flat =>
+                    "خصم " + Money.FormatEgp(DiscountValue),
+                _ => string.Empty,
+            };
+        }
+    }
 
     public string QtyText => Qty.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     public string QtyCaption => "× " + QtyText;
 
     public HeldCartLinePayload ToHeldPayload() =>
-        new(ProductId, Barcode, NameAr, NameZh, Qty, UnitPriceMinor);
+        new(
+            ProductId,
+            Barcode,
+            NameAr,
+            NameZh,
+            Qty,
+            UnitPriceMinor,
+            CartLinePricing.ToStoredKind(DiscountKind),
+            DiscountValue,
+            IsScalePriced);
+
+    public CashSaleLine ToCashSaleLine() =>
+        new(ProductId, Barcode, NameAr, Qty, UnitPriceMinor, DiscountMinor);
+
+    public void ApplyEdit(int qty, long unitPriceMinor, LineDiscountKind kind, long discountValue)
+    {
+        if (IsScalePriced)
+            qty = Qty;
+        else
+            qty = Math.Clamp(qty, 1, 999);
+
+        UnitPriceMinor = Math.Max(0, unitPriceMinor);
+        DiscountKind = kind == LineDiscountKind.None || discountValue <= 0
+            ? LineDiscountKind.None
+            : kind;
+        DiscountValue = DiscountKind == LineDiscountKind.None
+            ? 0
+            : Math.Max(0, discountValue);
+        if (Qty != qty)
+            Qty = qty;
+        else
+            NotifyPricingChanged();
+    }
 
     [ObservableProperty]
     private int _qty;
@@ -106,9 +229,37 @@ public partial class CartLine : ObservableObject
 
     partial void OnQtyChanged(int value)
     {
+        OnPropertyChanged(nameof(LineTotalMinor));
         OnPropertyChanged(nameof(LineTotalText));
+        OnPropertyChanged(nameof(DiscountMinor));
+        OnPropertyChanged(nameof(HasDiscount));
+        OnPropertyChanged(nameof(DiscountCaption));
         OnPropertyChanged(nameof(QtyText));
         OnPropertyChanged(nameof(QtyCaption));
+        _changed();
+        _touched?.Invoke(this);
+    }
+
+    partial void OnUnitPriceMinorChanged(long value) => NotifyPricingSideEffects();
+
+    partial void OnDiscountKindChanged(LineDiscountKind value) => NotifyPricingSideEffects();
+
+    partial void OnDiscountValueChanged(long value) => NotifyPricingSideEffects();
+
+    private void NotifyPricingChanged()
+    {
+        OnPropertyChanged(nameof(UnitPriceText));
+        OnPropertyChanged(nameof(LineTotalMinor));
+        OnPropertyChanged(nameof(LineTotalText));
+        OnPropertyChanged(nameof(DiscountMinor));
+        OnPropertyChanged(nameof(HasDiscount));
+        OnPropertyChanged(nameof(DiscountCaption));
+        _changed();
+        _touched?.Invoke(this);
+    }
+
+    private void NotifyPricingSideEffects()
+    {
         _changed();
         _touched?.Invoke(this);
     }
@@ -116,7 +267,7 @@ public partial class CartLine : ObservableObject
     [RelayCommand]
     private void Increment()
     {
-        if (Qty >= 999)
+        if (IsScalePriced || Qty >= 999)
             return;
         Qty++;
     }
@@ -124,7 +275,7 @@ public partial class CartLine : ObservableObject
     [RelayCommand]
     private void Decrement()
     {
-        if (Qty <= 1)
+        if (IsScalePriced || Qty <= 1)
             return;
         Qty--;
     }

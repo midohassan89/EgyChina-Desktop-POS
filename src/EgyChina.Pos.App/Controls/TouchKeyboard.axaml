@@ -90,13 +90,15 @@
                 MinWidth="64"
                 Click="OnToggleLanguage"
                 Margin="0,0,6,0" />
-        <Button Grid.Column="2"
+        <Button x:Name="HideButton"
+                Grid.Column="2"
                 Content="إخفاء"
                 Classes="osk-action"
                 MinWidth="80"
                 Click="OnHide"
                 Margin="0,0,6,0" />
-        <Button Grid.Column="3"
+        <Button x:Name="EnterButton"
+                Grid.Column="3"
                 Content="Enter ↵"
                 Classes="osk-enter"
                 MinWidth="100"

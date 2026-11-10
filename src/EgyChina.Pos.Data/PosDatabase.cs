@@ -2228,6 +2228,10 @@ public sealed class PosDatabase
                 throw new ArgumentOutOfRangeException(nameof(lines), "Quantity must be at least 1.");
             if (line.UnitPriceMinor < 0)
                 throw new ArgumentOutOfRangeException(nameof(lines), "Unit price cannot be negative.");
+            if (line.DiscountMinor < 0)
+                throw new ArgumentOutOfRangeException(nameof(lines), "Line discount cannot be negative.");
+            if (line.DiscountMinor > checked(line.UnitPriceMinor * line.Qty))
+                throw new ArgumentOutOfRangeException(nameof(lines), "Line discount exceeds line gross.");
             subtotal = checked(subtotal + line.LineTotalMinor);
         }
 
@@ -2320,7 +2324,7 @@ public sealed class PosDatabase
                       qty_milli, unit_price_minor, discount_minor, line_total_minor
                     ) VALUES (
                       $id, $sale, $lineNo, $product, $barcode, $name,
-                      $qty, $price, 0, $lineTotal
+                      $qty, $price, $discount, $lineTotal
                     );
                     """;
                 insert.Parameters.AddWithValue("$id", Guid.NewGuid().ToString("D"));
@@ -2331,6 +2335,7 @@ public sealed class PosDatabase
                 insert.Parameters.AddWithValue("$name", line.NameAr);
                 insert.Parameters.AddWithValue("$qty", line.QtyMilli);
                 insert.Parameters.AddWithValue("$price", line.UnitPriceMinor);
+                insert.Parameters.AddWithValue("$discount", Math.Max(0, line.DiscountMinor));
                 insert.Parameters.AddWithValue("$lineTotal", line.LineTotalMinor);
                 insert.ExecuteNonQuery();
                 lineNo++;
@@ -2617,7 +2622,7 @@ public sealed class PosDatabase
                 nameAr = line.NameAr,
                 qtyMilli = line.QtyMilli,
                 unitPriceMinor = line.UnitPriceMinor,
-                discountMinor = 0L,
+                discountMinor = Math.Max(0, line.DiscountMinor),
                 lineTotalMinor = line.LineTotalMinor,
             }).ToArray(),
             payments = new[]
@@ -3080,7 +3085,7 @@ public sealed class PosDatabase
 
         var payload = new HeldCartPayload(lines);
         var json = JsonSerializer.Serialize(payload);
-        var total = lines.Sum(line => checked(line.UnitPriceMinor * line.Qty));
+        var total = lines.Sum(line => checked(line.LineTotalMinor));
         var itemCount = lines.Sum(line => line.Qty);
         var now = DateTimeOffset.Now;
         var id = Guid.NewGuid().ToString("N");

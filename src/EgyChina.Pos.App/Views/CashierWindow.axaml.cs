@@ -25,6 +25,8 @@ public partial class CashierWindow : Window
     private double _oskLeft = double.NaN;
     private double _oskWidth = double.NaN;
     private double _oskHeightCap = double.NaN;
+    /// <summary>When false, the next GotFocus must not SelectAll (OSK refocus mid-typing).</summary>
+    private bool _selectAllOnFocus = true;
 
     public CashierWindow()
     {
@@ -64,6 +66,9 @@ public partial class CashierWindow : Window
         yield return ClosingCashBox;
         yield return PriceCheckBox;
         yield return SupervisorPinBox;
+        yield return EditQtyBox;
+        yield return EditUnitPriceBox;
+        yield return EditDiscountBox;
     }
 
     private void WireOnScreenKeyboard()
@@ -76,6 +81,15 @@ public partial class CashierWindow : Window
         OnScreenKeyboard.BackspacePressed += OnOskBackspace;
         OnScreenKeyboard.EnterPressed += OnOskEnter;
         OnScreenKeyboard.HideRequested += OnOskHide;
+
+        EditLineNumpad.TextTyped -= OnOskTextTyped;
+        EditLineNumpad.BackspacePressed -= OnOskBackspace;
+        EditLineNumpad.EnterPressed -= OnEditLineNumpadEnter;
+        EditLineNumpad.TextTyped += OnOskTextTyped;
+        EditLineNumpad.BackspacePressed += OnOskBackspace;
+        EditLineNumpad.EnterPressed += OnEditLineNumpadEnter;
+        EditLineNumpad.SetMode(TouchKeyboardMode.Numeric);
+        EditLineNumpad.SetEmbedded(true);
 
         foreach (var box in EnumerateTouchBoxes())
         {
@@ -132,21 +146,36 @@ public partial class CashierWindow : Window
         OnScreenKeyboard.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Bottom;
     }
 
+    private bool IsEditLineTouchField(TextBox box) =>
+        ReferenceEquals(box, EditQtyBox)
+        || ReferenceEquals(box, EditUnitPriceBox)
+        || ReferenceEquals(box, EditDiscountBox);
+
     private bool IsNumericTouchField(TextBox box) =>
         ReferenceEquals(box, PinBox)
         || ReferenceEquals(box, SupervisorPinBox)
         || ReferenceEquals(box, TenderBox)
         || ReferenceEquals(box, OpeningFloatBox)
         || ReferenceEquals(box, ClosingCashBox)
-        || ReferenceEquals(box, ExchangeRateBox);
+        || ReferenceEquals(box, ExchangeRateBox)
+        || IsEditLineTouchField(box);
 
     /// <summary>Dialog PIN/float fields — show pad on focus. Search + tender amount need an explicit tap.</summary>
     private bool ShowsOskOnFocus(TextBox box) =>
-        !ReferenceEquals(box, BarcodeBox) && !ReferenceEquals(box, TenderBox);
+        !ReferenceEquals(box, BarcodeBox)
+        && !ReferenceEquals(box, TenderBox)
+        && !IsEditLineTouchField(box);
 
     private void PrepareOskFor(TextBox box)
     {
         _oskTarget = box;
+        if (IsEditLineTouchField(box))
+        {
+            // Edit dialog owns a dedicated numeric pad beside the form.
+            HideOnScreenKeyboard();
+            return;
+        }
+
         var numeric = IsNumericTouchField(box);
         OnScreenKeyboard.SetMode(numeric ? TouchKeyboardMode.Numeric : TouchKeyboardMode.Text);
         if (!numeric)
@@ -158,6 +187,8 @@ public partial class CashierWindow : Window
 
     private void ShowOnScreenKeyboard()
     {
+        if (_session?.ShowEditLine == true)
+            return;
         ApplyOskLayout();
         OnScreenKeyboardHost.IsVisible = true;
         OnScreenKeyboard.IsVisible = true;
@@ -178,6 +209,11 @@ public partial class CashierWindow : Window
         // Search / tender amount: pad only after the cashier taps the field (not programmatic focus).
         if (ShowsOskOnFocus(box))
             ShowOnScreenKeyboard();
+
+        // Highlight existing value so the next key replaces it; cashier can cancel selection to edit.
+        if (_selectAllOnFocus)
+            QueueSelectAll(box);
+        _selectAllOnFocus = true;
     }
 
     private void OnTouchInputPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -188,8 +224,37 @@ public partial class CashierWindow : Window
         if (box is null || !EnumerateTouchBoxes().Contains(box))
             return;
 
+        // Already focused: leave caret placement alone so the cashier can edit part of the value.
         PrepareOskFor(box);
+        if (IsEditLineTouchField(box))
+            return;
         ShowOnScreenKeyboard();
+    }
+
+    private void QueueSelectAll(TextBox box)
+    {
+        // After mouse-down caret placement, so SelectAll wins on first focus.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!box.IsFocused || !_selectAllOnFocus)
+                return;
+            if (string.IsNullOrEmpty(box.Text))
+                return;
+            box.SelectAll();
+        }, DispatcherPriority.Input);
+    }
+
+    private void FocusWithoutSelectAll(TextBox box)
+    {
+        _selectAllOnFocus = false;
+        try
+        {
+            box.Focus();
+        }
+        finally
+        {
+            _selectAllOnFocus = true;
+        }
     }
 
     private static bool IsDialogTypingOpen(PosSession session) =>
@@ -231,7 +296,7 @@ public partial class CashierWindow : Window
 
         // Ensure the bound TextBox stays the active target (dialogs can steal focus).
         if (!_oskTarget.IsFocused)
-            _oskTarget.Focus();
+            FocusWithoutSelectAll(_oskTarget);
 
         var start = Math.Clamp(_oskTarget.SelectionStart, 0, _oskTarget.Text?.Length ?? 0);
         var length = Math.Max(0, _oskTarget.SelectionEnd - _oskTarget.SelectionStart);
@@ -268,7 +333,8 @@ public partial class CashierWindow : Window
 
         _oskTarget.SelectionStart = _oskTarget.CaretIndex;
         _oskTarget.SelectionEnd = _oskTarget.CaretIndex;
-        _oskTarget.Focus();
+        if (!_oskTarget.IsFocused)
+            FocusWithoutSelectAll(_oskTarget);
     }
 
     private void OnOskEnter()
@@ -292,6 +358,41 @@ public partial class CashierWindow : Window
             _session.ConfirmCloseShiftCommand.Execute(null);
         else if (ReferenceEquals(_oskTarget, PriceCheckBox) && _session is not null)
             _session.SubmitPriceCheckCommand.Execute(null);
+        else if (IsEditLineTouchField(_oskTarget))
+            FocusNextEditLineFieldOrApply();
+    }
+
+    private void OnEditLineNumpadEnter() => FocusNextEditLineFieldOrApply();
+
+    private void FocusNextEditLineFieldOrApply()
+    {
+        if (_session is null || !_session.ShowEditLine)
+            return;
+
+        if (_oskTarget is null || ReferenceEquals(_oskTarget, EditQtyBox))
+        {
+            EditUnitPriceBox.Focus();
+            EditUnitPriceBox.SelectAll();
+            _oskTarget = EditUnitPriceBox;
+            return;
+        }
+
+        if (ReferenceEquals(_oskTarget, EditUnitPriceBox))
+        {
+            if (_session.ShowEditDiscountValue)
+            {
+                EditDiscountBox.Focus();
+                EditDiscountBox.SelectAll();
+                _oskTarget = EditDiscountBox;
+                return;
+            }
+
+            _session.ApplyEditLineCommand.Execute(null);
+            return;
+        }
+
+        if (ReferenceEquals(_oskTarget, EditDiscountBox))
+            _session.ApplyEditLineCommand.Execute(null);
     }
 
     private void OnOskHide()
@@ -329,8 +430,19 @@ public partial class CashierWindow : Window
             or nameof(PosSession.ShowPriceCheck)
             or nameof(PosSession.ShowHeldCarts)
             or nameof(PosSession.ShowSupervisorPin)
-            or nameof(PosSession.ShowOnlineOrders))
+            or nameof(PosSession.ShowOnlineOrders)
+            or nameof(PosSession.ShowEditLine))
         {
+            if (e.PropertyName == nameof(PosSession.ShowEditLine))
+            {
+                HideOnScreenKeyboard();
+                if (_session?.ShowEditLine == true)
+                {
+                    EditLineNumpad.SetMode(TouchKeyboardMode.Numeric);
+                    EditLineNumpad.SetEmbedded(true);
+                }
+            }
+
             Dispatcher.UIThread.Post(FocusForSession);
         }
     }
@@ -360,6 +472,8 @@ public partial class CashierWindow : Window
             ApplyFocus(UiFocusTarget.NotFoundAck);
         else if (_session.ShowPriceCheck)
             ApplyFocus(UiFocusTarget.PriceCheck);
+        else if (_session.ShowEditLine)
+            ApplyFocus(UiFocusTarget.EditLineQty);
         else if (_session.IsTendering)
             ApplyFocus(UiFocusTarget.Tender);
         else
@@ -399,10 +513,40 @@ public partial class CashierWindow : Window
                 SupervisorPinBox.Focus();
                 SupervisorPinBox.SelectAll();
                 break;
+            case UiFocusTarget.EditLineQty:
+                if (_session?.EditQtyLocked == true)
+                {
+                    EditUnitPriceBox.Focus();
+                    EditUnitPriceBox.SelectAll();
+                }
+                else
+                {
+                    EditQtyBox.Focus();
+                    EditQtyBox.SelectAll();
+                }
+                break;
             default:
                 FocusBarcode();
                 break;
         }
+    }
+
+    private void OnCartLineEditTapped(object? sender, TappedEventArgs e)
+    {
+        if (DataContext is not PosSession session)
+            return;
+
+        CartLine? line = null;
+        if (sender is Control { Tag: CartLine tagged })
+            line = tagged;
+        else if (sender is Control { DataContext: CartLine fromContext })
+            line = fromContext;
+
+        if (line is null)
+            return;
+
+        session.OpenEditLine(line);
+        e.Handled = true;
     }
 
     private bool IsScanLaneBlocked(PosSession session) =>
@@ -496,6 +640,13 @@ public partial class CashierWindow : Window
             if (session.ShowHeldCarts)
             {
                 session.CloseHeldCartsCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (session.ShowEditLine)
+            {
+                session.CloseEditLineCommand.Execute(null);
                 e.Handled = true;
                 return;
             }

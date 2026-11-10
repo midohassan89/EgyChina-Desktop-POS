@@ -20,13 +20,17 @@ public sealed class PosDatabase
 
     private const string ProductSelect = """
         SELECT p.id, p.sku, p.barcode, p.name_ar, p.name_en, p.name_zh, pr.amount_minor,
-               CASE WHEN f.product_id IS NULL THEN 0 ELSE 1 END AS is_favorite,
+               CASE WHEN EXISTS (
+                 SELECT 1 FROM product_favorite f
+                 WHERE f.product_id = p.id
+                    OR (IFNULL(f.barcode, '') <> '' AND f.barcode = p.barcode)
+                    OR (IFNULL(f.prisma_id, '') <> '' AND f.prisma_id = IFNULL(p.prisma_id, ''))
+               ) THEN 1 ELSE 0 END AS is_favorite,
                p.image_url,
                p.category_id,
                c.name_ar AS category_name_ar
         FROM product p
         INNER JOIN product_price pr ON pr.product_id = p.id AND pr.currency = 'EGP'
-        LEFT JOIN product_favorite f ON f.product_id = p.id
         LEFT JOIN category c ON c.id = p.category_id
         WHERE p.is_active = 1
         """;
@@ -121,6 +125,13 @@ public sealed class PosDatabase
             {
                 ApplyMigrationScript(connection, "008_product_category.sql");
                 MarkMigration(connection, 8, "product-category");
+                version = 8;
+            }
+
+            if (version < 9)
+            {
+                ApplyMigrationScript(connection, "009_favorite_stable_keys.sql");
+                MarkMigration(connection, 9, "favorite-stable-keys");
             }
 
             EnsureTerminal(connection);
@@ -1106,6 +1117,7 @@ public sealed class PosDatabase
 
             WriteSetting(connection, "catalog.source", "erp");
             demoRemoved = PurgeDemoCatalog(connection, now);
+            RebindFavorites(connection);
             tx.Commit();
         }
 
@@ -2870,29 +2882,195 @@ public sealed class PosDatabase
         lock (_gate)
         {
             using var connection = Open();
+            string? barcode = null;
+            string? prismaId = null;
+            using (var lookup = connection.CreateCommand())
+            {
+                lookup.CommandText = "SELECT barcode, prisma_id FROM product WHERE id = $id LIMIT 1";
+                lookup.Parameters.AddWithValue("$id", productId);
+                using var reader = lookup.ExecuteReader();
+                if (reader.Read())
+                {
+                    barcode = reader.IsDBNull(0) ? null : reader.GetString(0);
+                    prismaId = reader.IsDBNull(1) ? null : reader.GetString(1);
+                }
+            }
+
             using var exists = connection.CreateCommand();
-            exists.CommandText = "SELECT 1 FROM product_favorite WHERE product_id = $id";
+            exists.CommandText = """
+                SELECT 1 FROM product_favorite
+                WHERE product_id = $id
+                   OR ($barcode IS NOT NULL AND barcode = $barcode)
+                   OR ($prisma IS NOT NULL AND prisma_id = $prisma)
+                LIMIT 1
+                """;
             exists.Parameters.AddWithValue("$id", productId);
+            exists.Parameters.AddWithValue("$barcode", (object?)barcode ?? DBNull.Value);
+            exists.Parameters.AddWithValue("$prisma", (object?)prismaId ?? DBNull.Value);
             var pinned = exists.ExecuteScalar() is not null;
             if (pinned)
             {
                 using var remove = connection.CreateCommand();
-                remove.CommandText = "DELETE FROM product_favorite WHERE product_id = $id";
+                remove.CommandText = """
+                    DELETE FROM product_favorite
+                    WHERE product_id = $id
+                       OR ($barcode IS NOT NULL AND barcode = $barcode)
+                       OR ($prisma IS NOT NULL AND prisma_id = $prisma)
+                    """;
                 remove.Parameters.AddWithValue("$id", productId);
+                remove.Parameters.AddWithValue("$barcode", (object?)barcode ?? DBNull.Value);
+                remove.Parameters.AddWithValue("$prisma", (object?)prismaId ?? DBNull.Value);
                 remove.ExecuteNonQuery();
                 return false;
             }
 
             using var insert = connection.CreateCommand();
             insert.CommandText = """
-                INSERT INTO product_favorite (product_id, pinned_at)
-                VALUES ($id, $at);
+                INSERT INTO product_favorite (product_id, pinned_at, barcode, prisma_id)
+                VALUES ($id, $at, $barcode, $prisma);
                 """;
             insert.Parameters.AddWithValue("$id", productId);
             insert.Parameters.AddWithValue("$at", Now());
+            insert.Parameters.AddWithValue("$barcode", (object?)barcode ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$prisma", (object?)prismaId ?? DBNull.Value);
             insert.ExecuteNonQuery();
             return true;
         }
+    }
+
+    /// <summary>
+    /// After catalog sync, point favorite rows at the current active product id
+    /// matched by prisma_id / barcode so pins survive row remaps.
+    /// </summary>
+    public int RebindFavorites()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return RebindFavorites(connection);
+        }
+    }
+
+    private static int RebindFavorites(SqliteConnection connection)
+    {
+        using var list = connection.CreateCommand();
+        list.CommandText = "SELECT product_id, pinned_at, barcode, prisma_id FROM product_favorite";
+        using var reader = list.ExecuteReader();
+        var rows = new List<(string ProductId, string PinnedAt, string? Barcode, string? PrismaId)>();
+        while (reader.Read())
+        {
+            rows.Add((
+                reader.GetString(0),
+                reader.GetString(1),
+                reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetString(3)));
+        }
+
+        var rebound = 0;
+        foreach (var row in rows)
+        {
+            var matchId = FindFavoriteMatchId(connection, row.ProductId, row.Barcode, row.PrismaId);
+            if (matchId is null)
+                continue;
+
+            string? barcode = row.Barcode;
+            string? prisma = row.PrismaId;
+            using (var enrich = connection.CreateCommand())
+            {
+                enrich.CommandText = "SELECT barcode, prisma_id FROM product WHERE id = $id LIMIT 1";
+                enrich.Parameters.AddWithValue("$id", matchId);
+                using var er = enrich.ExecuteReader();
+                if (er.Read())
+                {
+                    barcode ??= er.IsDBNull(0) ? null : er.GetString(0);
+                    prisma ??= er.IsDBNull(1) ? null : er.GetString(1);
+                }
+            }
+
+            if (string.Equals(matchId, row.ProductId, StringComparison.Ordinal)
+                && string.Equals(barcode ?? "", row.Barcode ?? "", StringComparison.Ordinal)
+                && string.Equals(prisma ?? "", row.PrismaId ?? "", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            // No nested transaction — callers may already be inside ApplyCatalogFromErpJson's tx.
+            using (var delete = connection.CreateCommand())
+            {
+                delete.CommandText = """
+                    DELETE FROM product_favorite
+                    WHERE product_id = $old
+                       OR product_id = $new
+                       OR ($barcode IS NOT NULL AND barcode = $barcode)
+                       OR ($prisma IS NOT NULL AND prisma_id = $prisma)
+                    """;
+                delete.Parameters.AddWithValue("$old", row.ProductId);
+                delete.Parameters.AddWithValue("$new", matchId);
+                delete.Parameters.AddWithValue("$barcode", (object?)barcode ?? DBNull.Value);
+                delete.Parameters.AddWithValue("$prisma", (object?)prisma ?? DBNull.Value);
+                delete.ExecuteNonQuery();
+            }
+
+            using (var insert = connection.CreateCommand())
+            {
+                insert.CommandText = """
+                    INSERT INTO product_favorite (product_id, pinned_at, barcode, prisma_id)
+                    VALUES ($id, $at, $barcode, $prisma);
+                    """;
+                insert.Parameters.AddWithValue("$id", matchId);
+                insert.Parameters.AddWithValue("$at", row.PinnedAt);
+                insert.Parameters.AddWithValue("$barcode", (object?)barcode ?? DBNull.Value);
+                insert.Parameters.AddWithValue("$prisma", (object?)prisma ?? DBNull.Value);
+                insert.ExecuteNonQuery();
+            }
+
+            rebound++;
+        }
+
+        return rebound;
+    }
+
+    private static string? FindFavoriteMatchId(
+        SqliteConnection connection,
+        string productId,
+        string? barcode,
+        string? prismaId)
+    {
+        using (var byId = connection.CreateCommand())
+        {
+            byId.CommandText = "SELECT id FROM product WHERE id = $id AND is_active = 1 LIMIT 1";
+            byId.Parameters.AddWithValue("$id", productId);
+            if (byId.ExecuteScalar() is string id)
+                return id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(prismaId))
+        {
+            using var byPrisma = connection.CreateCommand();
+            byPrisma.CommandText = """
+                SELECT id FROM product
+                WHERE is_active = 1 AND (prisma_id = $prisma OR id = $prisma)
+                LIMIT 1
+                """;
+            byPrisma.Parameters.AddWithValue("$prisma", prismaId);
+            if (byPrisma.ExecuteScalar() is string id)
+                return id;
+        }
+
+        if (!string.IsNullOrWhiteSpace(barcode))
+        {
+            using var byBarcode = connection.CreateCommand();
+            byBarcode.CommandText = """
+                SELECT id FROM product
+                WHERE is_active = 1 AND barcode = $barcode
+                LIMIT 1
+                """;
+            byBarcode.Parameters.AddWithValue("$barcode", barcode);
+            if (byBarcode.ExecuteScalar() is string id)
+                return id;
+        }
+
+        return null;
     }
 
     public HeldCartSummary HoldCart(IReadOnlyList<HeldCartLinePayload> lines, string? cashierId = null)

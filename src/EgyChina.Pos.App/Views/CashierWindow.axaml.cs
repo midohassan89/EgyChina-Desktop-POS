@@ -666,8 +666,19 @@ public partial class CashierWindow : Window
     private void OnFavoriteClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;
-        if (sender is not Button { Tag: CatalogProduct product } || DataContext is not PosSession session)
+        if (DataContext is not PosSession session)
             return;
+
+        CatalogProduct? product = null;
+        if (sender is Button button)
+        {
+            product = button.CommandParameter as CatalogProduct
+                      ?? button.DataContext as CatalogProduct;
+        }
+
+        if (product is null)
+            return;
+
         session.ToggleFavoriteCommand.Execute(product);
     }
 

@@ -165,6 +165,7 @@ public static class LiveStoreCatalogSync
 
         var applied = database.ApplyCatalogFromErpJson(payload);
         var deactivated = database.DeactivateProductsNotIn(keepIds);
+        database.RebindFavorites();
         return new LiveCatalogSyncResult(true, pages, seen, applied.Upserted, deactivated, null);
     }
 

@@ -30,7 +30,7 @@ public sealed class HeldCartTests : IDisposable
     {
         var database = new PosDatabase(Path.Combine(_directory, "pos.db"));
         database.Initialize();
-        Assert.Equal(8, database.GetSchemaVersion());
+        Assert.Equal(9, database.GetSchemaVersion());
 
         var rice = database.FindByBarcode(PosDatabase.DemoRiceBarcode)!;
         var oil = database.FindByBarcode(PosDatabase.DemoOilBarcode)!;

@@ -620,7 +620,8 @@
                                   CornerRadius="999"
                                   FontSize="12"
                                   Click="OnFavoriteClick"
-                                  Tag="{Binding}" />
+                                  CommandParameter="{Binding}"
+                                  Tag="{Binding Id}" />
                         </Grid>
                       </Border>
                       <StackPanel Spacing="2" Margin="8,6,8,8">

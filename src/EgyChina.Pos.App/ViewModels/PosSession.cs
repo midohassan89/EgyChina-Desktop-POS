@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Net.Http;
+using System.Net.NetworkInformation;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -75,10 +76,25 @@ public partial class PosSession : ObservableObject
         RefreshShiftState();
         ReloadHeldCarts();
         ReloadCategories();
+        ReloadRecentSales();
+        RefreshConnectivity();
+        ApplyConfiguredWeChatRate();
+        _ = SyncWeChatRateFromErpAsync();
+        try
+        {
+            NetworkChange.NetworkAvailabilityChanged += OnNetworkAvailabilityChanged;
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("network availability hook failed", ex);
+        }
+
         TryRestorePersistedSession();
     }
 
     public ObservableCollection<CartLine> Lines { get; } = new();
+
+    public ObservableCollection<RecentSaleSummary> RecentSales { get; } = new();
 
     public string DatabasePath { get; }
 
@@ -130,6 +146,9 @@ public partial class PosSession : ObservableObject
 
     public event Action<UiFocusTarget>? FocusRequested;
 
+    /// <summary>Fired after a cart line is highlighted so cashier/CFD views can scroll to it.</summary>
+    public event Action<CartLine>? CartLineRevealRequested;
+
     public ObservableCollection<HeldCartSummary> HeldCarts { get; } = new();
 
     public string LastSaleButtonText =>
@@ -168,6 +187,13 @@ public partial class PosSession : ObservableObject
 
     [ObservableProperty]
     private string _exchangeRateText = WeChatFx.DefaultEgpPerCny.ToString("0.##", CultureInfo.InvariantCulture);
+
+    [ObservableProperty]
+    private bool _isFetchingWeChatRate;
+
+    public bool CanRefreshWeChatRate => IsTendering && IsWeChatPayment && !IsFetchingWeChatRate;
+
+    public string WeChatRateRefreshButtonText => IsFetchingWeChatRate ? "…" : "من البنك";
 
     public string PaymentMethodLabel => PosPaymentMethods.LabelAr(SelectedPayment);
 
@@ -292,7 +318,37 @@ public partial class PosSession : ObservableObject
     private CartLine? _editingLine;
 
     [ObservableProperty]
-    private string _scanHint = "امسح الباركود أو اختر صنفاً.";
+    private bool _showPrintPrompt;
+
+    [ObservableProperty]
+    private string _printPromptCaption = string.Empty;
+
+    private string? _pendingPrintSaleId;
+    private bool _pendingPrintKickDrawer;
+
+    /// <summary>Ask before printing when distinct cart lines are 1–4; auto-print above that.</summary>
+    private const int AutoPrintMinLineCount = 5;
+
+    [ObservableProperty]
+    private string _scanHint = IdleScanHint;
+
+    [ObservableProperty]
+    private bool _isScanToastVisible;
+
+    [ObservableProperty]
+    private bool _scanToastIsWarning;
+
+    private CancellationTokenSource? _scanToastCts;
+
+    private bool _connectivityToastsArmed;
+
+    private bool _lastServerLinkUp;
+
+    private const string IdleScanHint = "امسح الباركود أو اختر صنفاً.";
+
+    public bool ShowScanToastInfo => IsScanToastVisible && !ScanToastIsWarning;
+
+    public bool ShowScanToastWarning => IsScanToastVisible && ScanToastIsWarning;
 
     [ObservableProperty]
     private bool _isReturnMode;
@@ -471,7 +527,14 @@ public partial class PosSession : ObservableObject
     public bool HasSupervisorError => !string.IsNullOrWhiteSpace(SupervisorError);
 
     public bool BlocksScanning =>
-        ShowNotFound || ShowPriceCheck || ShowHeldCarts || ShowSupervisorPin || ShowOnlineOrders || ShowOutboxPanel || ShowEditLine;
+        ShowNotFound
+        || ShowPriceCheck
+        || ShowHeldCarts
+        || ShowSupervisorPin
+        || ShowOnlineOrders
+        || ShowOutboxPanel
+        || ShowEditLine
+        || ShowPrintPrompt;
 
     public bool HasEditLineError => !string.IsNullOrWhiteSpace(EditLineError);
 
@@ -523,6 +586,10 @@ public partial class PosSession : ObservableObject
     private bool _isOnline;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(InternetToolTip))]
+    private bool _hasInternetLink;
+
+    [ObservableProperty]
     private string _clockText = string.Empty;
 
     [ObservableProperty]
@@ -560,6 +627,21 @@ public partial class PosSession : ObservableObject
             : string.Empty;
 
     public string OnlineText => IsOnline ? "السيرفر متصل" : "السيرفر غير مربوط";
+
+    public bool HasRecentSales => RecentSales.Count > 0;
+
+    public string InternetToolTip =>
+        HasInternetLink ? "الإنترنت متصل" : "لا يوجد اتصال إنترنت";
+
+    /// <summary>ERP link is only meaningful when the PC actually has internet.</summary>
+    public bool IsServerLinkUp => HasInternetLink && IsOnline;
+
+    public string ServerToolTip =>
+        !HasInternetLink
+            ? "السيرفر غير متاح — لا إنترنت"
+            : IsOnline
+                ? "السيرفر متصل"
+                : "السيرفر غير مربوط";
 
     public string OutboxCaption
     {
@@ -632,11 +714,19 @@ public partial class PosSession : ObservableObject
             ? "السلة فارغة"
             : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} أصناف";
 
+    public string LineCountTextZh =>
+        Lines.Count == 0
+            ? "购物车为空"
+            : $"{Lines.Count.ToString(CultureInfo.InvariantCulture)} 件商品";
+
     public long SubtotalMinor => Lines.Sum(line => checked(line.LineTotalMinor));
 
     public long TotalMinor => Math.Max(0, checked(SubtotalMinor - LoyaltyDiscountMinor));
 
     public string TotalText => Money.FormatEgp(TotalMinor);
+
+    /// <summary>Digits only for CFD header (currency shown separately as ج.م / 埃镑).</summary>
+    public string TotalAmountText => Money.FormatAmount(TotalMinor);
 
     public bool ShowSettlement => HasSettlement && IsCartEmpty;
 
@@ -789,31 +879,34 @@ public partial class PosSession : ObservableObject
 
         if (BlockNewSales)
         {
-            ScanHint = CashierAlert.Length > 0 ? CashierAlert : "القرص ممتلئ. لا يمكن إضافة أصناف الآن.";
+            AnnounceHint(CashierAlert.Length > 0 ? CashierAlert : "القرص ممتلئ. لا يمكن إضافة أصناف الآن.");
             return;
         }
 
         if (!CanOperate)
         {
-            ScanHint = NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع";
+            AnnounceHint(NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع");
             return;
         }
 
         HasSettlement = false;
         _settlementAt = null;
-        var existing = Lines.FirstOrDefault(line => line.ProductId == product.Id);
+        CartLine line;
+        var existing = Lines.FirstOrDefault(item => item.ProductId == product.Id);
         if (existing is null)
         {
-            var line = new CartLine(product, RefreshCheckout, RemoveLine, HighlightLine);
+            line = new CartLine(product, RefreshCheckout, RemoveLine, HighlightLine, AnnounceCartLineQtyAdjusted);
             Lines.Add(line);
             HighlightLine(line);
         }
         else
         {
             existing.Qty++;
+            line = existing;
+            HighlightLine(line);
         }
 
-        ScanHint = product.DisplayNameAr;
+        AnnounceHint($"أُضيف للسلة: {line.DisplayNameAr} · × {line.QtyText}");
         ScanSound.PlaySuccess();
         RequestFocus(UiFocusTarget.Barcode);
     }
@@ -821,8 +914,21 @@ public partial class PosSession : ObservableObject
     /// <summary>Scale label: one cart line priced at the embedded total (qty 1).</summary>
     public void AddScalePricedProduct(CatalogProduct product, long embeddedTotalMinor, string scaleDigits)
     {
-        if (BlocksScanning || BlockNewSales || !CanOperate)
+        if (BlocksScanning)
             return;
+
+        if (BlockNewSales)
+        {
+            AnnounceHint(CashierAlert.Length > 0 ? CashierAlert : "القرص ممتلئ. لا يمكن إضافة أصناف الآن.");
+            return;
+        }
+
+        if (!CanOperate)
+        {
+            AnnounceHint(NeedsLogin ? "سجّل الدخول أولاً" : "افتح وردية قبل البيع");
+            return;
+        }
+
         if (embeddedTotalMinor <= 0)
             return;
 
@@ -841,10 +947,11 @@ public partial class PosSession : ObservableObject
             discountValue: 0,
             RefreshCheckout,
             RemoveLine,
-            HighlightLine);
+            HighlightLine,
+            AnnounceCartLineQtyAdjusted);
         Lines.Add(line);
         HighlightLine(line);
-        ScanHint = display + " · ميزان";
+        AnnounceHint($"أُضيف للسلة: {display} · ميزان");
         ScanSound.PlaySuccess();
         RequestFocus(UiFocusTarget.Barcode);
     }
@@ -877,6 +984,7 @@ public partial class PosSession : ObservableObject
         _highlightedLineId = line.LineId;
         foreach (var item in Lines)
             item.IsHighlighted = item.LineId == line.LineId;
+        CartLineRevealRequested?.Invoke(line);
     }
 
     private void ClearHighlight()
@@ -1067,7 +1175,7 @@ public partial class PosSession : ObservableObject
             item.NameZh ?? product.NameZh,
             qty,
             unitMinor);
-        var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine);
+        var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine, AnnounceCartLineQtyAdjusted);
         Lines.Add(line);
         HighlightLine(line);
         return true;
@@ -1093,7 +1201,7 @@ public partial class PosSession : ObservableObject
                 .ConfigureAwait(true);
             if (customer is null)
             {
-                ClearLoyalty();
+                ClearLoyaltyState();
                 ScanHint = error ?? "عميل غير موجود";
                 return;
             }
@@ -1122,6 +1230,18 @@ public partial class PosSession : ObservableObject
 
     [RelayCommand]
     private void ClearLoyalty()
+    {
+        if (!HasLoyaltyCustomer)
+        {
+            ClearLoyaltyState();
+            return;
+        }
+
+        ClearLoyaltyState();
+        AnnounceHint("أُزيل عميل الولاء من الفاتورة.");
+    }
+
+    private void ClearLoyaltyState()
     {
         _loyaltyCustomer = null;
         RedeemLoyaltyPoints = false;
@@ -1178,7 +1298,7 @@ public partial class PosSession : ObservableObject
                     item.NameZh,
                     item.Qty,
                     item.UnitPriceMinor);
-                var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine);
+                var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine, AnnounceCartLineQtyAdjusted);
                 Lines.Add(line);
             }
 
@@ -1395,11 +1515,14 @@ public partial class PosSession : ObservableObject
             return;
         }
 
+        var name = _editingLine.DisplayNameAr;
         _editingLine.ApplyEdit(qty, unit, kind, value);
+        var qtyText = _editingLine.QtyText;
         ShowEditLine = false;
         _editingLine = null;
         EditLineError = string.Empty;
         RefreshCheckout();
+        AnnounceHint($"تم تعديل: {name} · × {qtyText}");
         RequestFocus(UiFocusTarget.Barcode);
     }
 
@@ -1493,7 +1616,7 @@ public partial class PosSession : ObservableObject
             TenderText = string.Empty;
             SaleError = string.Empty;
             ReloadHeldCarts();
-            ScanHint = "تم تعليق السلة";
+            AnnounceHint("تم تعليق السلة.");
             RefreshCheckout();
             RequestFocus(UiFocusTarget.Barcode);
         }
@@ -1501,7 +1624,7 @@ public partial class PosSession : ObservableObject
         {
             PosLog.Error("hold cart failed", ex);
             HeldCartError = ArabicUi.FromException(ex, "تعذر تعليق السلة.");
-            ScanHint = HeldCartError;
+            AnnounceHint(HeldCartError);
         }
     }
 
@@ -1542,6 +1665,7 @@ public partial class PosSession : ObservableObject
             if (lines is null || lines.Count == 0)
             {
                 HeldCartError = "السلة المعلّقة غير موجودة.";
+                AnnounceHint(HeldCartError);
                 ReloadHeldCarts();
                 return;
             }
@@ -1552,7 +1676,7 @@ public partial class PosSession : ObservableObject
             _settlementAt = null;
             foreach (var payload in lines)
             {
-                var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine);
+                var line = new CartLine(payload, RefreshCheckout, RemoveLine, HighlightLine, AnnounceCartLineQtyAdjusted);
                 Lines.Add(line);
             }
 
@@ -1561,7 +1685,7 @@ public partial class PosSession : ObservableObject
 
             ShowHeldCarts = false;
             ReloadHeldCarts();
-            ScanHint = $"استُرجعت سلة {held.Label}";
+            AnnounceHint($"استُرجعت سلة {held.Label}");
             RefreshCheckout();
             RequestFocus(UiFocusTarget.Barcode);
         }
@@ -1569,6 +1693,7 @@ public partial class PosSession : ObservableObject
         {
             PosLog.Error("resume held cart failed", ex);
             HeldCartError = ArabicUi.FromException(ex, "تعذر استرجاع السلة.");
+            AnnounceHint(HeldCartError);
             ReloadHeldCarts();
         }
     }
@@ -1586,11 +1711,13 @@ public partial class PosSession : ObservableObject
             ReloadHeldCarts();
             if (HeldCarts.Count == 0)
                 ShowHeldCarts = false;
+            AnnounceHint("تم حذف السلة المعلّقة.");
         }
         catch (Exception ex)
         {
             PosLog.Error("discard held cart failed", ex);
             HeldCartError = ArabicUi.FromException(ex, "تعذر حذف السلة المعلّقة.");
+            AnnounceHint(HeldCartError);
         }
     }
 
@@ -1603,11 +1730,52 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(HeldCartsButtonText));
     }
 
+    private void ReloadRecentSales()
+    {
+        RecentSales.Clear();
+        foreach (var sale in _database.ListRecentCompletedSales(3))
+            RecentSales.Add(sale);
+        OnPropertyChanged(nameof(HasRecentSales));
+    }
+
+    private void OnNetworkAvailabilityChanged(object? sender, NetworkAvailabilityEventArgs e) =>
+        Dispatcher.UIThread.Post(() => _ = RefreshConnectivityAsync(forceSaleRefresh: true));
+
+    private void RefreshConnectivity() => _ = RefreshConnectivityAsync(forceSaleRefresh: false);
+
+    private async Task RefreshConnectivityAsync(bool forceSaleRefresh)
+    {
+        // Real NCSI/TCP probe — GetIsNetworkAvailable alone stays green on LAN without internet.
+        var probed = await InternetReachability.ProbeAsync().ConfigureAwait(false);
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var changed = HasInternetLink != probed;
+            HasInternetLink = probed;
+            if (!_connectivityToastsArmed)
+            {
+                _connectivityToastsArmed = true;
+                _lastServerLinkUp = IsServerLinkUp;
+            }
+            else if (changed)
+            {
+                AnnounceHint(probed
+                    ? "الإنترنت رجع."
+                    : "انقطع الإنترنت — البيع المحلي شغال.");
+                _lastServerLinkUp = IsServerLinkUp;
+            }
+
+            if (changed || forceSaleRefresh)
+                ReloadRecentSales();
+        }).GetTask().ConfigureAwait(false);
+    }
+
     partial void OnHeldCartErrorChanged(string value) => OnPropertyChanged(nameof(HasHeldCartError));
 
     public void SetClock(DateTime now)
     {
         ClockText = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
+        if (now.Second % 5 == 0)
+            RefreshConnectivity();
         var stamp = new DateTimeOffset(now);
         IdleGreetingText = CustomerDisplayProjector.IdleGreeting(stamp);
         IdleClockScript = CustomerDisplayProjector.IdleClockScript(stamp);
@@ -1697,6 +1865,8 @@ public partial class PosSession : ObservableObject
 
     partial void OnShowEditLineChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
 
+    partial void OnShowPrintPromptChanged(bool value) => OnPropertyChanged(nameof(BlocksScanning));
+
     partial void OnEditDiscountKindChanged(LineDiscountKind value)
     {
         OnPropertyChanged(nameof(ShowEditDiscountValue));
@@ -1721,7 +1891,20 @@ public partial class PosSession : ObservableObject
 
     partial void OnPriceCheckErrorChanged(string value) => OnPropertyChanged(nameof(HasPriceCheckError));
 
-    partial void OnIsOnlineChanged(bool value) => OnPropertyChanged(nameof(OnlineText));
+    partial void OnIsOnlineChanged(bool value)
+    {
+        OnPropertyChanged(nameof(OnlineText));
+        OnPropertyChanged(nameof(IsServerLinkUp));
+        OnPropertyChanged(nameof(ServerToolTip));
+        MaybeAnnounceServerLink();
+    }
+
+    partial void OnHasInternetLinkChanged(bool value)
+    {
+        OnPropertyChanged(nameof(InternetToolTip));
+        OnPropertyChanged(nameof(IsServerLinkUp));
+        OnPropertyChanged(nameof(ServerToolTip));
+    }
 
     partial void OnPendingOutboxChanged(int value)
     {
@@ -1758,7 +1941,120 @@ public partial class PosSession : ObservableObject
 
     partial void OnCashierAlertChanged(string value) => OnPropertyChanged(nameof(HasCashierAlert));
 
-    partial void OnIsTenderingChanged(bool value) => RefreshCheckout();
+    partial void OnScanHintChanged(string value) => ShowScanToastFromHint(value);
+
+    partial void OnIsScanToastVisibleChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowScanToastInfo));
+        OnPropertyChanged(nameof(ShowScanToastWarning));
+    }
+
+    partial void OnScanToastIsWarningChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowScanToastInfo));
+        OnPropertyChanged(nameof(ShowScanToastWarning));
+    }
+
+    private void AnnounceHint(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+
+        if (string.Equals(ScanHint, message, StringComparison.Ordinal))
+        {
+            ShowScanToastFromHint(message);
+            return;
+        }
+
+        ScanHint = message;
+    }
+
+    private void AnnounceCartLineQtyAdjusted(CartLine line) =>
+        AnnounceHint($"تم تعديل: {line.DisplayNameAr} · × {line.QtyText}");
+
+    private void MaybeAnnounceServerLink()
+    {
+        if (!_connectivityToastsArmed)
+            return;
+
+        var now = IsServerLinkUp;
+        if (now == _lastServerLinkUp)
+            return;
+
+        _lastServerLinkUp = now;
+        if (!HasInternetLink)
+            return;
+
+        AnnounceHint(now
+            ? "السيرفر رجع."
+            : "السيرفر غير متصل — المبيعات هتتزامن لاحقاً.");
+    }
+
+    private void ShowScanToastFromHint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value) ||
+            string.Equals(value, IdleScanHint, StringComparison.Ordinal))
+        {
+            IsScanToastVisible = false;
+            _scanToastCts?.Cancel();
+            return;
+        }
+
+        ScanToastIsWarning = LooksLikeScanWarning(value);
+        IsScanToastVisible = true;
+        _ = DismissScanToastAfterDelayAsync(ScanToastIsWarning ? 4200 : 2200);
+    }
+
+    private static bool LooksLikeScanWarning(string value)
+    {
+        return value.Contains("تعذر", StringComparison.Ordinal)
+               || value.Contains("غير موجود", StringComparison.Ordinal)
+               || value.Contains("غير مضبوطة", StringComparison.Ordinal)
+               || value.Contains("غير متصل", StringComparison.Ordinal)
+               || value.Contains("انقطع", StringComparison.Ordinal)
+               || value.Contains("لا يمكن", StringComparison.Ordinal)
+               || value.Contains("ممتلئ", StringComparison.Ordinal)
+               || value.Contains("أكّد", StringComparison.Ordinal)
+               || value.Contains("خطأ", StringComparison.Ordinal)
+               || value.Contains("سجّل الدخول", StringComparison.Ordinal)
+               || value.Contains("افتح وردية", StringComparison.Ordinal)
+               || value.Contains("لم يُعثر", StringComparison.Ordinal)
+               || value.Contains("لا يوجد", StringComparison.Ordinal)
+               || value.Contains("لا توجد", StringComparison.Ordinal);
+    }
+
+    private async Task DismissScanToastAfterDelayAsync(int delayMs)
+    {
+        _scanToastCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _scanToastCts = cts;
+        var token = cts.Token;
+        try
+        {
+            await Task.Delay(delayMs, token).ConfigureAwait(false);
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (!token.IsCancellationRequested)
+                {
+                    IsScanToastVisible = false;
+                }
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    partial void OnIsTenderingChanged(bool value)
+    {
+        RefreshCheckout();
+        OnPropertyChanged(nameof(CanRefreshWeChatRate));
+    }
 
     partial void OnTenderTextChanged(string value)
     {
@@ -1775,6 +2071,8 @@ public partial class PosSession : ObservableObject
     {
         if (ShowSupervisorPin)
             return;
+
+        var hadLines = HasLines;
         Lines.Clear();
         ClearHighlight();
         IsTendering = false;
@@ -1786,6 +2084,8 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(HasActiveQueueTicket));
         OnPropertyChanged(nameof(ActiveQueueCaption));
         RefreshCheckout();
+        if (hadLines)
+            AnnounceHint("تم تفريغ السلة.");
     }
 
     private async Task CompleteQueueTicketAsync(string code, string saleId)
@@ -1794,11 +2094,15 @@ public partial class PosSession : ObservableObject
         {
             var ok = await _erp.CompleteQueueTicketAsync(code, saleId, CancellationToken.None).ConfigureAwait(true);
             if (!ok)
+            {
                 PosLog.Error($"queue ticket complete failed code={code}");
+                await SetPrintHintAsync("البيع محفوظ، لكن تعذر إغلاق القسيمة على السيرفر.").ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
             PosLog.Error($"queue ticket complete failed code={code}", ex);
+            await SetPrintHintAsync("البيع محفوظ، لكن تعذر إغلاق القسيمة على السيرفر.").ConfigureAwait(false);
         }
     }
 
@@ -1978,7 +2282,7 @@ public partial class PosSession : ObservableObject
         ShowCloseShift = false;
         IsReturnMode = false;
         _activeQueueTicketCode = null;
-        ClearLoyalty();
+        ClearLoyaltyState();
         ClearSupervisorChallenge();
         _currentCashier = null;
         CashierName = string.Empty;
@@ -2049,12 +2353,14 @@ public partial class PosSession : ObservableObject
             SessionCaption = $"{_currentCashier.DisplayName} · وردية مفتوحة";
             OnPropertyChanged(nameof(SessionChipText));
             RefreshCheckout();
+            AnnounceHint("تم فتح الوردية.");
             RequestFocus(UiFocusTarget.Barcode);
         }
         catch (Exception ex)
         {
             PosLog.Error("open shift failed", ex);
             ShiftError = ArabicUi.FromException(ex, "تعذر فتح الوردية.");
+            AnnounceHint(ShiftError);
         }
     }
 
@@ -2280,6 +2586,7 @@ public partial class PosSession : ObservableObject
             OnPropertyChanged(nameof(SessionChipText));
             OnPropertyChanged(nameof(HasZReport));
             RefreshCheckout();
+            AnnounceHint("أُغلقت الوردية.");
             RequestFocus(UiFocusTarget.OpeningFloat);
             DatabaseBackup.Create(_database);
 
@@ -2290,6 +2597,7 @@ public partial class PosSession : ObservableObject
         {
             PosLog.Error("close shift failed", ex);
             ShiftError = ArabicUi.FromException(ex, "تعذر إغلاق الوردية.");
+            AnnounceHint(ShiftError);
         }
     }
 
@@ -2302,12 +2610,13 @@ public partial class PosSession : ObservableObject
         HasSettlement = false;
         SaleError = string.Empty;
         SelectedPayment = PosPaymentMethod.Cash;
-        ExchangeRateText = WeChatFx.DefaultEgpPerCny.ToString("0.##", CultureInfo.InvariantCulture);
+        ApplyConfiguredWeChatRate();
         TenderText = Money.FormatAmount(CashSuggestions.DefaultAmount(TotalMinor));
         IsTendering = true;
         RebuildQuickCashOptions();
         TenderOpened?.Invoke();
         RequestFocus(UiFocusTarget.Tender);
+        _ = SyncWeChatRateFromErpAsync();
     }
 
     [RelayCommand]
@@ -2317,6 +2626,8 @@ public partial class PosSession : ObservableObject
             return;
         SelectedPayment = method;
         SaleError = string.Empty;
+        if (IsWeChatPayment)
+            ApplyConfiguredWeChatRate();
         if (IsCashPayment)
             TenderText = Money.FormatAmount(CashSuggestions.DefaultAmount(TotalMinor));
         else
@@ -2325,6 +2636,81 @@ public partial class PosSession : ObservableObject
         RefreshCheckout();
         if (IsCashPayment)
             RequestFocus(UiFocusTarget.Tender);
+        else if (IsWeChatPayment)
+            RequestFocus(UiFocusTarget.Tender);
+    }
+
+    [RelayCommand]
+    private async Task RefreshWeChatRateFromBankAsync()
+    {
+        if (!IsTendering || !IsWeChatPayment || IsFetchingWeChatRate)
+            return;
+
+        IsFetchingWeChatRate = true;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var safe = await WeChatLiveRate.FetchSafeEgpPerCnyAsync(http, CancellationToken.None)
+                .ConfigureAwait(true);
+            ExchangeRateText = WeChatFx.FormatRate(safe);
+            AnnounceHint($"تم تحديث سعر وي شات من البنك (−4%): {ExchangeRateText}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("wechat live rate fetch failed", ex);
+            AnnounceHint("تعذر جلب سعر الصرف — تحقق من الاتصال.");
+        }
+        finally
+        {
+            IsFetchingWeChatRate = false;
+        }
+    }
+
+    private decimal ReadConfiguredWeChatRate()
+    {
+        var raw = _database.GetSetting(WeChatFx.ConfiguredRateSettingKey);
+        return WeChatFx.TryParseRate(raw, out var rate) ? rate : WeChatFx.DefaultEgpPerCny;
+    }
+
+    private void ApplyConfiguredWeChatRate() =>
+        ExchangeRateText = WeChatFx.FormatRate(ReadConfiguredWeChatRate());
+
+    private async Task SyncWeChatRateFromErpAsync()
+    {
+        try
+        {
+            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
+            var url = new Uri(origin, "api/settings");
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            using var response = await http.GetAsync(url).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+                return;
+
+            await using var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            using var doc = await System.Text.Json.JsonDocument.ParseAsync(stream).ConfigureAwait(false);
+            if (!doc.RootElement.TryGetProperty("wechat_egp_per_cny", out var node) ||
+                node.ValueKind != System.Text.Json.JsonValueKind.Number)
+            {
+                return;
+            }
+
+            var rate = node.GetDecimal();
+            if (rate <= 0)
+                return;
+
+            var text = WeChatFx.FormatRate(decimal.Round(rate, 4, MidpointRounding.AwayFromZero));
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _database.WriteSetting(WeChatFx.ConfiguredRateSettingKey, text);
+                // Don't clobber a cashier mid-edit during tender; next WeChat select reloads.
+                if (!IsTendering)
+                    ExchangeRateText = text;
+            });
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("wechat rate sync from ERP failed", ex);
+        }
     }
 
     [RelayCommand]
@@ -2455,7 +2841,7 @@ public partial class PosSession : ObservableObject
             _lastSaleTotalMinor = sale.TotalMinor;
             IsReturnMode = false;
             _activeQueueTicketCode = null;
-            ClearLoyalty();
+            ClearLoyaltyState();
             ScanHint = wasReturn
                 ? $"تم الاسترجاع — إيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)} · {paymentLabel}"
                 : $"تم حفظ الإيصال {sale.ReceiptNo.ToString(CultureInfo.InvariantCulture)} · {paymentLabel}";
@@ -2467,16 +2853,84 @@ public partial class PosSession : ObservableObject
             OnPropertyChanged(nameof(LastSaleButtonText));
             OnPropertyChanged(nameof(HasActiveQueueTicket));
             OnPropertyChanged(nameof(ActiveQueueCaption));
+            ReloadRecentSales();
             RefreshCheckout();
             RequestFocus(UiFocusTarget.Barcode);
-            _ = PrintSaleAsync(sale.SaleId, isReprint: false, kickDrawer: kickDrawer);
             if (!string.IsNullOrWhiteSpace(queueCode) && !wasReturn)
                 _ = CompleteQueueTicketAsync(queueCode!, sale.SaleId);
+
+            // Distinct lines (not qty): 1–4 → ask cashier; 5+ → print immediately.
+            if (lines.Length > 0 && lines.Length < AutoPrintMinLineCount)
+                OpenPrintPrompt(sale.SaleId, kickDrawer, sale.ReceiptNo, lines.Length, wasReturn);
+            else
+                _ = PrintSaleAsync(sale.SaleId, isReprint: false, kickDrawer: kickDrawer);
         }
         catch (Exception ex)
         {
             PosLog.Error("sale confirm failed", ex);
             SaleError = ArabicUi.FromException(ex, "تعذر حفظ البيع. السلة ما زالت هنا.");
+        }
+    }
+
+    private void OpenPrintPrompt(string saleId, bool kickDrawer, int receiptNo, int lineCount, bool wasReturn)
+    {
+        _pendingPrintSaleId = saleId;
+        _pendingPrintKickDrawer = kickDrawer;
+        PrintPromptCaption = wasReturn
+            ? $"الاسترجاع محفوظ (إيصال {receiptNo.ToString(CultureInfo.InvariantCulture)}) · {lineCount.ToString(CultureInfo.InvariantCulture)} أصناف. هل تريد طباعة الإيصال؟"
+            : $"البيع محفوظ (إيصال {receiptNo.ToString(CultureInfo.InvariantCulture)}) · {lineCount.ToString(CultureInfo.InvariantCulture)} أصناف. هل تريد طباعة الإيصال؟";
+        ShowPrintPrompt = true;
+    }
+
+    [RelayCommand]
+    private void ConfirmPrintReceipt()
+    {
+        var saleId = _pendingPrintSaleId;
+        var kickDrawer = _pendingPrintKickDrawer;
+        ClearPrintPrompt();
+        if (string.IsNullOrWhiteSpace(saleId))
+            return;
+        _ = PrintSaleAsync(saleId, isReprint: false, kickDrawer: kickDrawer);
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    [RelayCommand]
+    private void SkipPrintReceipt()
+    {
+        var kickDrawer = _pendingPrintKickDrawer;
+        ClearPrintPrompt();
+        if (kickDrawer)
+            _ = KickDrawerOnlyAsync();
+        else
+            ScanHint = "تم الحفظ بدون طباعة. يمكن إعادة الطباعة من «آخر بيع».";
+        RequestFocus(UiFocusTarget.Barcode);
+    }
+
+    private void ClearPrintPrompt()
+    {
+        ShowPrintPrompt = false;
+        PrintPromptCaption = string.Empty;
+        _pendingPrintSaleId = null;
+        _pendingPrintKickDrawer = false;
+    }
+
+    private async Task KickDrawerOnlyAsync()
+    {
+        try
+        {
+            if (!_printer.IsConfigured)
+            {
+                await SetPrintHintAsync("تم الحفظ بدون طباعة. الطابعة غير مضبوطة — لم يُفتح الدرج.").ConfigureAwait(false);
+                return;
+            }
+
+            await _printer.KickDrawerAsync(CancellationToken.None).ConfigureAwait(false);
+            await SetPrintHintAsync("تم الحفظ بدون طباعة · فُتح درج النقدية.").ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("kick drawer after skip-print failed", ex);
+            await SetPrintHintAsync("تم الحفظ بدون طباعة. تعذر فتح الدرج.").ConfigureAwait(false);
         }
     }
 
@@ -2496,6 +2950,13 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(TenderHint));
         OnPropertyChanged(nameof(ShowCustomerChange));
         OnPropertyChanged(nameof(CustomerChangeText));
+        OnPropertyChanged(nameof(CanRefreshWeChatRate));
+    }
+
+    partial void OnIsFetchingWeChatRateChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanRefreshWeChatRate));
+        OnPropertyChanged(nameof(WeChatRateRefreshButtonText));
     }
 
     partial void OnExchangeRateTextChanged(string value)
@@ -2528,6 +2989,19 @@ public partial class PosSession : ObservableObject
         }
 
         _ = PrintSaleAsync(_lastSaleId, isReprint: true, kickDrawer: false);
+    }
+
+    [RelayCommand]
+    private void ReprintRecentSale(RecentSaleSummary? sale)
+    {
+        if (sale is null || string.IsNullOrWhiteSpace(sale.SaleId) || NeedsLogin || IsTendering)
+            return;
+        _lastSaleId = sale.SaleId;
+        _lastSaleTotalMinor = sale.TotalMinor;
+        OnPropertyChanged(nameof(CanReprint));
+        OnPropertyChanged(nameof(HasLastSale));
+        OnPropertyChanged(nameof(LastSaleButtonText));
+        _ = PrintSaleAsync(sale.SaleId, isReprint: true, kickDrawer: false);
     }
 
     [RelayCommand]
@@ -2628,6 +3102,7 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(SubtotalMinor));
         OnPropertyChanged(nameof(TotalMinor));
         OnPropertyChanged(nameof(TotalText));
+        OnPropertyChanged(nameof(TotalAmountText));
         OnPropertyChanged(nameof(IsCartEmpty));
         OnPropertyChanged(nameof(ShowCartLines));
         OnPropertyChanged(nameof(ShowEmptyCartHint));
@@ -2642,6 +3117,7 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(CanConfirmCash));
         OnPropertyChanged(nameof(ZReportVarianceText));
         OnPropertyChanged(nameof(LineCountText));
+        OnPropertyChanged(nameof(LineCountTextZh));
         OnPropertyChanged(nameof(AmountLabel));
         OnPropertyChanged(nameof(AmountText));
         OnPropertyChanged(nameof(TenderHint));
@@ -2726,6 +3202,8 @@ public partial class PosSession : ObservableObject
             CatalogCaption = FormatCatalogCaption(products.Count, demo, ReadCatalogUpdatedAt());
             OnPropertyChanged(nameof(VisibleProducts));
             OnPropertyChanged(nameof(HasNoSearchResults));
+            RefreshConnectivity();
+            ReloadRecentSales();
         }
 
         if (Dispatcher.UIThread.CheckAccess())

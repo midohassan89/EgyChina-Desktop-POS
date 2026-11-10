@@ -15,22 +15,23 @@
   <Window.Styles>
     <Style Selector="Border.cfd-line">
       <Setter Property="Background" Value="#FFFFFF" />
-      <Setter Property="BorderBrush" Value="#E2E8F0" />
+      <Setter Property="BorderBrush" Value="#E8EEF5" />
       <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="18" />
-      <Setter Property="Margin" Value="0,0,0,14" />
-      <Setter Property="Padding" Value="16,14" />
+      <Setter Property="CornerRadius" Value="20" />
+      <Setter Property="Margin" Value="0,0,0,12" />
+      <Setter Property="Padding" Value="18,16" />
+      <Setter Property="BoxShadow" Value="0 4 18 0 #0F0F172A" />
     </Style>
     <Style Selector="Border.cfd-line.highlighted">
       <Setter Property="Background" Value="#ECFDF5" />
       <Setter Property="BorderBrush" Value="#059669" />
-      <Setter Property="BorderThickness" Value="3" />
-      <Setter Property="BoxShadow" Value="0 8 24 0 #33059669" />
+      <Setter Property="BorderThickness" Value="2" />
+      <Setter Property="BoxShadow" Value="0 10 28 0 #33059669" />
     </Style>
   </Window.Styles>
 
   <Grid>
-    <!-- IDLE -->
+    <!-- IDLE: logo + AR/ZH clock greeting only (no English, no debug banner) -->
     <Grid IsVisible="{Binding IsCfdIdle}">
       <Grid.Background>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
@@ -39,99 +40,181 @@
           <GradientStop Color="#0B1220" Offset="1" />
         </LinearGradientBrush>
       </Grid.Background>
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" Margin="40">
-        <Border Width="320" Height="132" CornerRadius="24" Background="#000000"
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18" Margin="40">
+        <Border Width="340" Height="140" CornerRadius="28" Background="#000000"
                 HorizontalAlignment="Center" BorderBrush="#D4AF37" BorderThickness="2"
-                Padding="18,14" ClipToBounds="True">
+                Padding="20,16" ClipToBounds="True"
+                BoxShadow="0 16 40 0 #40000000">
           <Image Source="{DynamicResource BrandLogo}"
                  Stretch="Uniform"
                  HorizontalAlignment="Center"
                  VerticalAlignment="Center" />
         </Border>
-        <TextBlock Text="سوق العبور · EgyChina Hyper Market"
-                   FontSize="18"
-                   Foreground="#A7F3D0"
-                   HorizontalAlignment="Center"
-                   TextAlignment="Center" />
-        <controls:AnalogClockControl Width="280"
-                                     Height="280"
+        <controls:AnalogClockControl Width="300"
+                                     Height="300"
                                      HorizontalAlignment="Center"
                                      FlowDirection="LeftToRight"
                                      Script="{Binding IdleClockScript}"
-                                     Margin="0,10,0,0" />
+                                     Margin="0,12,0,0" />
         <TextBlock Text="{Binding IdleDateText}"
-                   FontSize="22"
+                   FontSize="24"
                    FontWeight="SemiBold"
                    Foreground="#F8FAFC"
                    HorizontalAlignment="Center"
                    TextAlignment="Center"
                    TextWrapping="Wrap"
-                   Margin="0,4,0,0"
-                   MaxWidth="520" />
+                   Margin="0,6,0,0"
+                   MaxWidth="560" />
         <TextBlock Text="{Binding IdleGreetingText}"
-                   FontSize="28"
-                   FontWeight="SemiBold"
+                   FontSize="30"
+                   FontWeight="Bold"
                    Foreground="#ECFDF5"
                    HorizontalAlignment="Center"
                    TextAlignment="Center"
                    TextWrapping="Wrap"
-                   Margin="0,8,0,0"
-                   MaxWidth="600" />
-        <TextBlock Text="{Binding DisplayBanner}"
-                   FontSize="13"
-                   Foreground="#6EE7B7"
-                   TextWrapping="Wrap"
-                   HorizontalAlignment="Center"
-                   TextAlignment="Center"
-                   IsVisible="{Binding HasDisplayBanner}"
-                   Margin="0,8,0,0"
-                   MaxWidth="520"
-                   Opacity="0.85" />
+                   Margin="0,10,0,0"
+                   MaxWidth="640" />
       </StackPanel>
     </Grid>
 
-    <!-- SHOPPING -->
+    <!-- SHOPPING: Arabic + Chinese only -->
     <Grid IsVisible="{Binding IsCfdShopping}" RowDefinitions="Auto,*">
-      <Border Grid.Row="0" Background="#0B1220" Padding="28,20" BorderBrush="#059669" BorderThickness="0,0,0,3">
-        <Grid ColumnDefinitions="*,Auto">
-          <StackPanel Spacing="4" VerticalAlignment="Center">
-            <TextBlock Text="فاتورتك الحالية" FontSize="28" FontWeight="Bold" Foreground="#F8FAFC" />
-            <TextBlock Text="您的当前账单 · Your current bill" FontSize="14" Foreground="#94A3B8" FlowDirection="LeftToRight" />
-            <TextBlock Text="{Binding LineCountText}" FontSize="15" Foreground="#6EE7B7" Margin="0,4,0,0" />
-          </StackPanel>
-          <Border Grid.Column="1" Background="#059669" CornerRadius="18" Padding="22,14" MinWidth="220"
-                  VerticalAlignment="Center" BoxShadow="0 8 28 0 #40059669">
-            <StackPanel Spacing="2">
-              <TextBlock Text="المبلغ المطلوب" FontSize="13" Foreground="#D1FAE5" HorizontalAlignment="Center" />
-              <TextBlock Text="{Binding TotalText}"
-                         FontSize="34"
-                         FontWeight="Bold"
-                         Foreground="White"
-                         HorizontalAlignment="Center"
-                         TextWrapping="Wrap" />
-            </StackPanel>
+      <Border Grid.Row="0" Background="#0B1220" Padding="20,10" BorderBrush="#059669" BorderThickness="0,0,0,3">
+        <!-- Single row LTR: amount (~2/3) | item counts | title — no overlays, so small screens shrink amount instead of covering -->
+        <Grid ColumnDefinitions="2*,12,Auto,12,Auto"
+              MinHeight="72"
+              FlowDirection="LeftToRight">
+          <Border Background="#059669"
+                  CornerRadius="20"
+                  Padding="18,10"
+                  MinWidth="200"
+                  HorizontalAlignment="Stretch"
+                  VerticalAlignment="Center"
+                  BoxShadow="0 8 24 0 #40059669">
+            <Grid ColumnDefinitions="*,Auto" FlowDirection="LeftToRight">
+              <StackPanel Orientation="Horizontal"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Center"
+                          Spacing="10"
+                          FlowDirection="LeftToRight">
+                <TextBlock Text="{Binding TotalAmountText}"
+                           FontSize="40"
+                           FontWeight="Bold"
+                           Foreground="White"
+                           VerticalAlignment="Center"
+                           TextWrapping="NoWrap" />
+                <StackPanel VerticalAlignment="Center" Spacing="0">
+                  <TextBlock Text="ج.م"
+                             FontSize="17"
+                             FontWeight="Bold"
+                             Foreground="White"
+                             TextAlignment="Center" />
+                  <TextBlock Text="埃镑"
+                             FontSize="12"
+                             FontWeight="SemiBold"
+                             Foreground="#D1FAE5"
+                             TextAlignment="Center"
+                             FlowDirection="LeftToRight" />
+                </StackPanel>
+              </StackPanel>
+              <StackPanel Grid.Column="1"
+                          VerticalAlignment="Center"
+                          Spacing="2"
+                          Margin="16,0,0,0">
+                <TextBlock Text="المبلغ المطلوب"
+                           FontSize="15"
+                           FontWeight="SemiBold"
+                           Foreground="#D1FAE5"
+                           TextAlignment="Right"
+                           TextWrapping="NoWrap"
+                           FlowDirection="RightToLeft" />
+                <TextBlock Text="应付金额"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#A7F3D0"
+                           TextAlignment="Right"
+                           TextWrapping="NoWrap"
+                           FlowDirection="LeftToRight" />
+              </StackPanel>
+            </Grid>
           </Border>
+
+          <!-- Item counts beside the title (own column — never under/over the title) -->
+          <StackPanel Grid.Column="2"
+                      Spacing="6"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center">
+            <Border Background="#052E1F"
+                    CornerRadius="999"
+                    Padding="10,4"
+                    BorderBrush="#059669"
+                    BorderThickness="1"
+                    HorizontalAlignment="Stretch">
+              <TextBlock Text="{Binding LineCountText}"
+                         FontSize="13"
+                         FontWeight="SemiBold"
+                         Foreground="#6EE7B7"
+                         TextAlignment="Center"
+                         TextWrapping="NoWrap" />
+            </Border>
+            <Border Background="#052E1F"
+                    CornerRadius="999"
+                    Padding="10,4"
+                    BorderBrush="#059669"
+                    BorderThickness="1"
+                    HorizontalAlignment="Stretch">
+              <TextBlock Text="{Binding LineCountTextZh}"
+                         FontSize="13"
+                         FontWeight="SemiBold"
+                         Foreground="#6EE7B7"
+                         TextAlignment="Center"
+                         TextWrapping="NoWrap"
+                         FlowDirection="LeftToRight" />
+            </Border>
+          </StackPanel>
+
+          <!-- Title on the far right -->
+          <StackPanel Grid.Column="4"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center"
+                      Spacing="3"
+                      MinWidth="120"
+                      MaxWidth="280">
+            <TextBlock Text="فاتورتك الحالية"
+                       FontSize="22"
+                       FontWeight="Bold"
+                       Foreground="#F8FAFC"
+                       TextAlignment="Center"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="您的当前账单"
+                       FontSize="15"
+                       FontWeight="SemiBold"
+                       Foreground="#A7F3D0"
+                       TextAlignment="Center"
+                       FlowDirection="LeftToRight"
+                       TextWrapping="Wrap" />
+          </StackPanel>
         </Grid>
       </Border>
 
-      <Border Grid.Row="1" Background="#F8FAFC" Padding="28,22">
+      <Border Grid.Row="1" Background="#EEF2F7" Padding="28,22">
         <ScrollViewer x:Name="CfdCartScroll"
                       HorizontalScrollBarVisibility="Disabled"
                       VerticalScrollBarVisibility="Auto">
-          <ItemsControl ItemsSource="{Binding Lines}">
+          <ItemsControl x:Name="CfdCartLines" ItemsSource="{Binding Lines}">
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:CartLine">
-                <Border Classes="cfd-line" Classes.highlighted="{Binding IsHighlighted}" MinHeight="96">
-                  <Grid ColumnDefinitions="72,16,*,16,Auto,16,140" MinHeight="72">
-                    <Border Width="72" Height="72" CornerRadius="14" Background="#F1F5F9"
+                <Border Classes="cfd-line" Classes.highlighted="{Binding IsHighlighted}" MinHeight="108">
+                  <Grid ColumnDefinitions="84,18,*,18,Auto,18,150" MinHeight="80">
+                    <Border Width="84" Height="84" CornerRadius="16" Background="#F1F5F9"
                             ClipToBounds="True" VerticalAlignment="Center"
-                            HorizontalAlignment="Stretch">
+                            BorderBrush="#E2E8F0" BorderThickness="1">
                       <Grid>
                         <Border Background="#0B1220"
                                 IsVisible="{Binding ProductId, Converter={StaticResource MissingProductImage}}">
                           <Image Source="{DynamicResource BrandLogo}"
                                  Stretch="Uniform"
-                                 Margin="10"
+                                 Margin="12"
                                  Opacity="0.9" />
                         </Border>
                         <Image Source="{Binding ProductId, Converter={StaticResource ProductImage}}"
@@ -139,39 +222,44 @@
                                IsVisible="{Binding ProductId, Converter={StaticResource HasProductImage}}" />
                       </Grid>
                     </Border>
-                    <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center" MinWidth="0">
+                    <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Center" MinWidth="0">
                       <TextBlock Text="{Binding DisplayNameAr}"
                                  FontSize="22"
-                                 FontWeight="SemiBold"
+                                 FontWeight="Bold"
                                  Foreground="#0F172A"
                                  TextWrapping="Wrap"
                                  TextTrimming="CharacterEllipsis"
                                  MaxLines="2"
-                                 MaxHeight="60" />
-                      <TextBlock Text="{Binding NameZh}"
-                                 FontSize="14"
-                                 Foreground="#64748B"
+                                 MaxHeight="62" />
+                      <TextBlock Text="{Binding CustomerNameZh}"
+                                 FontSize="18"
+                                 FontWeight="SemiBold"
+                                 Foreground="#334155"
                                  FlowDirection="LeftToRight"
+                                 TextWrapping="Wrap"
                                  TextTrimming="CharacterEllipsis"
-                                 MaxLines="1"
+                                 MaxLines="2"
+                                 MaxHeight="52"
                                  IsVisible="{Binding ShowCustomerNameZh}" />
                     </StackPanel>
                     <Border Grid.Column="4"
                             Background="#ECFDF5"
-                            CornerRadius="10"
-                            Padding="12,8"
+                            CornerRadius="12"
+                            Padding="14,10"
                             VerticalAlignment="Center"
-                            MinWidth="72">
+                            MinWidth="78"
+                            BorderBrush="#A7F3D0"
+                            BorderThickness="1">
                       <TextBlock Text="{Binding QtyCaption}"
-                                 FontSize="15"
-                                 FontWeight="SemiBold"
+                                 FontSize="17"
+                                 FontWeight="Bold"
                                  Foreground="#047857"
                                  HorizontalAlignment="Center"
                                  FlowDirection="LeftToRight" />
                     </Border>
                     <TextBlock Grid.Column="6"
                                Text="{Binding LineTotalText}"
-                               FontSize="24"
+                               FontSize="26"
                                FontWeight="Bold"
                                Foreground="#0F172A"
                                VerticalAlignment="Center"
@@ -187,7 +275,7 @@
       </Border>
     </Grid>
 
-    <!-- PAYMENT -->
+    <!-- PAYMENT: Arabic + Chinese only -->
     <Grid IsVisible="{Binding IsCfdPayment}">
       <Grid.Background>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
@@ -205,23 +293,39 @@
                 BorderBrush="#1E293B"
                 BorderThickness="1"
                 BoxShadow="0 16 48 0 #60000000">
-          <StackPanel Spacing="12">
-            <TextBlock Text="الدفع / Payment / 付款" FontSize="16" Foreground="#94A3B8" HorizontalAlignment="Center" />
+          <StackPanel Spacing="10">
+            <TextBlock Text="الدفع"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Foreground="#94A3B8"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="付款"
+                       FontSize="16"
+                       Foreground="#64748B"
+                       HorizontalAlignment="Center"
+                       FlowDirection="LeftToRight" />
             <TextBlock Text="{Binding PaymentMethodLabel}"
                        FontSize="36"
                        FontWeight="Bold"
                        Foreground="#34D399"
-                       HorizontalAlignment="Center" />
-            <TextBlock Text="{Binding PaymentMethodLabelEn}"
-                       FontSize="16"
-                       Foreground="#CBD5E1"
+                       HorizontalAlignment="Center"
+                       Margin="0,8,0,0" />
+            <TextBlock Text="{Binding PaymentMethodLabelZh}"
+                       FontSize="20"
+                       FontWeight="SemiBold"
+                       Foreground="#A7F3D0"
                        HorizontalAlignment="Center"
                        FlowDirection="LeftToRight" />
-            <TextBlock Text="{Binding PaymentMethodLabelZh}"
+            <TextBlock Text="المستحق"
                        FontSize="15"
+                       Foreground="#94A3B8"
+                       HorizontalAlignment="Center"
+                       Margin="0,14,0,0" />
+            <TextBlock Text="应付金额"
+                       FontSize="14"
                        Foreground="#64748B"
-                       HorizontalAlignment="Center" />
-            <TextBlock Text="المستحق" FontSize="15" Foreground="#94A3B8" HorizontalAlignment="Center" Margin="0,10,0,0" />
+                       HorizontalAlignment="Center"
+                       FlowDirection="LeftToRight" />
             <TextBlock Text="{Binding TotalText}"
                        FontSize="52"
                        FontWeight="Bold"
@@ -245,12 +349,20 @@
                        FontWeight="Bold"
                        Foreground="#FCA5A5"
                        HorizontalAlignment="Center" />
-            <TextBlock Text="جارٍ الدفع نقداً"
-                       IsVisible="{Binding IsCashPayment}"
-                       FontSize="17"
-                       Foreground="#94A3B8"
-                       HorizontalAlignment="Center"
-                       Margin="0,8,0,0" />
+            <StackPanel IsVisible="{Binding IsCashPayment}"
+                        Spacing="2"
+                        Margin="0,10,0,0"
+                        HorizontalAlignment="Center">
+              <TextBlock Text="جارٍ الدفع نقداً"
+                         FontSize="17"
+                         Foreground="#94A3B8"
+                         HorizontalAlignment="Center" />
+              <TextBlock Text="正在现金付款"
+                         FontSize="15"
+                         Foreground="#64748B"
+                         HorizontalAlignment="Center"
+                         FlowDirection="LeftToRight" />
+            </StackPanel>
           </StackPanel>
         </Border>
 
@@ -262,14 +374,15 @@
                 Width="360"
                 VerticalAlignment="Center"
                 BoxShadow="0 16 48 0 #50000000">
-          <StackPanel Spacing="12" HorizontalAlignment="Center">
+          <StackPanel Spacing="10" HorizontalAlignment="Center">
             <TextBlock Text="امسح للدفع"
                        FontSize="22"
                        FontWeight="Bold"
                        Foreground="#0F172A"
                        TextAlignment="Center" />
-            <TextBlock Text="Scan to Pay · 请扫码付款"
-                       FontSize="14"
+            <TextBlock Text="请扫码付款"
+                       FontSize="18"
+                       FontWeight="SemiBold"
                        Foreground="#047857"
                        HorizontalAlignment="Center"
                        FlowDirection="LeftToRight" />
@@ -299,15 +412,16 @@
                 Width="360"
                 VerticalAlignment="Center"
                 BoxShadow="0 16 48 0 #50000000">
-          <StackPanel Spacing="12" HorizontalAlignment="Center">
+          <StackPanel Spacing="10" HorizontalAlignment="Center">
             <TextBlock Text="امسح للدفع"
                        FontSize="22"
                        FontWeight="Bold"
                        Foreground="#5B2B8C"
                        TextAlignment="Center" />
-            <TextBlock Text="Scan to Pay · InstaPay"
-                       FontSize="14"
-                       Foreground="#64748B"
+            <TextBlock Text="请扫码付款"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Foreground="#7C3AED"
                        HorizontalAlignment="Center"
                        FlowDirection="LeftToRight" />
             <Border Background="#F8FAFC" CornerRadius="16" Padding="10" BorderBrush="#E2E8F0" BorderThickness="1">
@@ -329,6 +443,11 @@
                        FontSize="13"
                        Foreground="#64748B"
                        HorizontalAlignment="Center" />
+            <TextBlock Text="或转账至号码："
+                       FontSize="13"
+                       Foreground="#94A3B8"
+                       HorizontalAlignment="Center"
+                       FlowDirection="LeftToRight" />
             <TextBlock Text="{Binding InstaPayPhoneHint}"
                        FontSize="26"
                        FontWeight="Bold"
@@ -340,7 +459,7 @@
       </Grid>
     </Grid>
 
-    <!-- COMPLETED -->
+    <!-- COMPLETED: Arabic + Chinese only -->
     <Grid IsVisible="{Binding IsCfdCompleted}">
       <Grid.Background>
         <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
@@ -348,7 +467,7 @@
           <GradientStop Color="#065F46" Offset="1" />
         </LinearGradientBrush>
       </Grid.Background>
-      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18" Margin="40">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" Margin="40">
         <Border Width="104" Height="104" CornerRadius="52" Background="#10B981"
                 HorizontalAlignment="Center" BoxShadow="0 12 36 0 #4010B981">
           <TextBlock Text="✓"
@@ -363,8 +482,9 @@
                    FontWeight="Bold"
                    Foreground="#F8FAFC"
                    HorizontalAlignment="Center" />
-        <TextBlock Text="Thank you · 谢谢光临"
-                   FontSize="20"
+        <TextBlock Text="谢谢光临"
+                   FontSize="26"
+                   FontWeight="SemiBold"
                    Foreground="#A7F3D0"
                    HorizontalAlignment="Center"
                    FlowDirection="LeftToRight" />
@@ -376,6 +496,11 @@
                        FontSize="15"
                        Foreground="#94A3B8"
                        HorizontalAlignment="Center" />
+            <TextBlock Text="获得积分"
+                       FontSize="14"
+                       Foreground="#64748B"
+                       HorizontalAlignment="Center"
+                       FlowDirection="LeftToRight" />
             <TextBlock Text="{Binding LastPointsEarnedText}"
                        FontSize="36"
                        FontWeight="Bold"
@@ -392,12 +517,16 @@
                        HorizontalAlignment="Center"
                        TextWrapping="Wrap" />
             <Grid ColumnDefinitions="*,Auto">
-              <TextBlock Text="الباقي" FontSize="18" Foreground="#94A3B8" />
+              <StackPanel Spacing="2">
+                <TextBlock Text="الباقي" FontSize="18" Foreground="#94A3B8" />
+                <TextBlock Text="找零" FontSize="14" Foreground="#64748B" FlowDirection="LeftToRight" />
+              </StackPanel>
               <TextBlock Grid.Column="1"
                          Text="{Binding AmountText}"
                          FontSize="28"
                          FontWeight="Bold"
-                         Foreground="#FBBF24" />
+                         Foreground="#FBBF24"
+                         VerticalAlignment="Center" />
             </Grid>
           </StackPanel>
         </Border>

@@ -11,6 +11,7 @@ using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using EgyChina.Pos.App.Controls;
+using EgyChina.Pos.App.Helpers;
 using EgyChina.Pos.App.ViewModels;
 using EgyChina.Pos.Core;
 
@@ -408,6 +409,7 @@ public partial class CashierWindow : Window
             _session.TenderOpened -= FocusTender;
             _session.FocusRequested -= OnFocusRequested;
             _session.PropertyChanged -= OnSessionPropertyChanged;
+            _session.CartLineRevealRequested -= OnCartLineRevealRequested;
         }
 
         _session = DataContext as PosSession;
@@ -417,8 +419,12 @@ public partial class CashierWindow : Window
         _session.TenderOpened += FocusTender;
         _session.FocusRequested += OnFocusRequested;
         _session.PropertyChanged += OnSessionPropertyChanged;
+        _session.CartLineRevealRequested += OnCartLineRevealRequested;
         FocusForSession();
     }
+
+    private void OnCartLineRevealRequested(CartLine line) =>
+        CartLineScroll.Reveal(CartLinesScroll, line, "cart-line");
 
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -431,7 +437,8 @@ public partial class CashierWindow : Window
             or nameof(PosSession.ShowHeldCarts)
             or nameof(PosSession.ShowSupervisorPin)
             or nameof(PosSession.ShowOnlineOrders)
-            or nameof(PosSession.ShowEditLine))
+            or nameof(PosSession.ShowEditLine)
+            or nameof(PosSession.ShowPrintPrompt))
         {
             if (e.PropertyName == nameof(PosSession.ShowEditLine))
             {
@@ -442,6 +449,9 @@ public partial class CashierWindow : Window
                     EditLineNumpad.SetEmbedded(true);
                 }
             }
+
+            if (e.PropertyName == nameof(PosSession.ShowPrintPrompt) && _session?.ShowPrintPrompt == true)
+                HideOnScreenKeyboard();
 
             Dispatcher.UIThread.Post(FocusForSession);
         }
@@ -549,6 +559,15 @@ public partial class CashierWindow : Window
         e.Handled = true;
     }
 
+    private void OnRecentSaleClick(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not PosSession session)
+            return;
+        if (sender is not Button { Tag: RecentSaleSummary sale })
+            return;
+        session.ReprintRecentSaleCommand.Execute(sale);
+    }
+
     private bool IsScanLaneBlocked(PosSession session) =>
         session.NeedsLogin
         || session.NeedsOpenShift
@@ -647,6 +666,13 @@ public partial class CashierWindow : Window
             if (session.ShowEditLine)
             {
                 session.CloseEditLineCommand.Execute(null);
+                e.Handled = true;
+                return;
+            }
+
+            if (session.ShowPrintPrompt)
+            {
+                session.SkipPrintReceiptCommand.Execute(null);
                 e.Handled = true;
                 return;
             }

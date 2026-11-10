@@ -9,7 +9,7 @@ namespace EgyChina.Pos.App.Controls;
 
 /// <summary>
 /// Idle CFD analog clock: glassy dial, white hour/minute hands, orange second hand,
-/// numerals rotate Arabic / Latin / Chinese with the idle greeting.
+/// numerals rotate Arabic / Chinese with the idle greeting.
 /// Forced LTR so the RTL customer window does not mirror the dial.
 /// Owns a ~30fps timer so the second hand sweeps continuously.
 /// </summary>

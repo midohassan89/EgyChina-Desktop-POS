@@ -19,7 +19,7 @@
     <Grid Margin="10" ColumnDefinitions="Auto,12,*">
       <!-- Cart column: compact ops bar sits only above the order panel -->
       <DockPanel Grid.Column="0" Width="400">
-        <!-- Ops chrome hidden while tendering so Confirm stays on short tills -->
+        <!-- Ops: return / info / more — then net+server + last 3 invoices -->
         <Border DockPanel.Dock="Top"
                 Background="#0B1220"
                 CornerRadius="14"
@@ -28,43 +28,137 @@
                 IsVisible="{Binding !IsTendering}"
                 DoubleTapped="OnHeaderDoubleTapped"
                 ToolTip.Tip="ضغطتان هنا للتبديل بين ملء الشاشة والنافذة">
-          <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
-            <StackPanel Orientation="Horizontal" Spacing="6">
+          <Border.Styles>
+            <Style Selector="Border.sync-dot">
+              <Setter Property="Width" Value="10" />
+              <Setter Property="Height" Value="10" />
+              <Setter Property="CornerRadius" Value="99" />
+              <Setter Property="VerticalAlignment" Value="Center" />
+              <Setter Property="Background" Value="#FBBF24" />
+            </Style>
+            <Style Selector="Border.sync-dot.synced">
+              <Setter Property="Background" Value="#22C55E" />
+            </Style>
+            <Style Selector="Border.sync-dot.pending">
+              <Setter Property="Background" Value="#FBBF24" />
+            </Style>
+            <Style Selector="Border.sync-dot.failed">
+              <Setter Property="Background" Value="#EF4444" />
+            </Style>
+            <Style Selector="Border.link-pill">
+              <Setter Property="CornerRadius" Value="10" />
+              <Setter Property="Padding" Value="8,5" />
+              <Setter Property="VerticalAlignment" Value="Center" />
+              <Setter Property="MinHeight" Value="32" />
+            </Style>
+            <Style Selector="Border.link-pill.on">
+              <Setter Property="Background" Value="#14532D" />
+              <Setter Property="BorderBrush" Value="#22C55E" />
+              <Setter Property="BorderThickness" Value="1" />
+            </Style>
+            <Style Selector="Border.link-pill.off">
+              <Setter Property="Background" Value="#334155" />
+              <Setter Property="BorderBrush" Value="#64748B" />
+              <Setter Property="BorderThickness" Value="1" />
+            </Style>
+            <Style Selector="Border.link-pill.on Border.status-lamp">
+              <Setter Property="Background" Value="#22C55E" />
+            </Style>
+            <Style Selector="Border.link-pill.off Border.status-lamp">
+              <Setter Property="Background" Value="#94A3B8" />
+            </Style>
+          </Border.Styles>
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto">
               <Button Content="{Binding ReturnModeButtonText}"
                       Classes="pos-chip-return"
                       Command="{Binding ToggleReturnModeCommand}"
                       IsEnabled="{Binding CanToggleReturnMode}"
                       MinHeight="40"
-                      Padding="12,6" />
-              <Button Content="{Binding LastSaleButtonText}"
-                      Classes="pos-tender"
-                      Background="#475569"
-                      Command="{Binding ReprintLastCommand}"
-                      IsEnabled="{Binding CanReprint}"
-                      MinHeight="40"
                       Padding="12,6"
-                      ToolTip.Tip="إعادة طباعة آخر إيصال" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-              <Button Content="معلومات"
-                      Classes="pos-ghost"
-                      Command="{Binding ToggleStatusInfoCommand}"
-                      MinHeight="40"
-                      Padding="12,6" />
-              <Button Content="المزيد ▾"
-                      Classes="pos-chip-info"
-                      Command="{Binding ToggleMoreActionsCommand}"
-                      MinHeight="40"
-                      Padding="12,6" />
-            </StackPanel>
-            <TextBlock Grid.Row="1"
-                       Grid.ColumnSpan="2"
-                       Text="{Binding CashierName}"
+                      HorizontalAlignment="Left" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                <Button Content="معلومات"
+                        Classes="pos-ghost"
+                        Command="{Binding ToggleStatusInfoCommand}"
+                        MinHeight="40"
+                        Padding="12,6" />
+                <Button Content="المزيد ▾"
+                        Classes="pos-chip-info"
+                        Command="{Binding ToggleMoreActionsCommand}"
+                        MinHeight="40"
+                        Padding="12,6" />
+              </StackPanel>
+            </Grid>
+
+            <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
+              <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                <Border Classes="link-pill"
+                        Classes.on="{Binding HasInternetLink}"
+                        Classes.off="{Binding !HasInternetLink}"
+                        ToolTip.Tip="{Binding InternetToolTip}">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Classes="status-lamp" Width="10" Height="10" CornerRadius="99" VerticalAlignment="Center" />
+                    <TextBlock Text="شبكة"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="#F8FAFC"
+                               VerticalAlignment="Center" />
+                  </StackPanel>
+                </Border>
+                <Border Classes="link-pill"
+                        Classes.on="{Binding IsServerLinkUp}"
+                        Classes.off="{Binding !IsServerLinkUp}"
+                        ToolTip.Tip="{Binding ServerToolTip}">
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <Border Classes="status-lamp" Width="10" Height="10" CornerRadius="99" VerticalAlignment="Center" />
+                    <TextBlock Text="سيرفر"
+                               FontSize="12"
+                               FontWeight="SemiBold"
+                               Foreground="#F8FAFC"
+                               VerticalAlignment="Center" />
+                  </StackPanel>
+                </Border>
+              </StackPanel>
+
+              <ItemsControl ItemsSource="{Binding RecentSales}" IsVisible="{Binding HasRecentSales}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="6" />
+                  </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="core:RecentSaleSummary">
+                    <Button Tag="{Binding}"
+                            Click="OnRecentSaleClick"
+                            Background="#1E293B"
+                            Foreground="#E2E8F0"
+                            CornerRadius="10"
+                            Padding="8,6"
+                            MinHeight="36"
+                            ToolTip.Tip="{Binding SyncToolTip}">
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Border Classes="sync-dot"
+                                Classes.synced="{Binding IsSynced}"
+                                Classes.pending="{Binding IsPending}"
+                                Classes.failed="{Binding IsFailed}" />
+                        <TextBlock Text="{Binding AmountText}"
+                                   FontSize="13"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   FlowDirection="LeftToRight" />
+                      </StackPanel>
+                    </Button>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </WrapPanel>
+
+            <TextBlock Text="{Binding CashierName}"
                        FontSize="12"
                        Foreground="#94A3B8"
-                       Margin="2,6,0,0"
                        IsVisible="{Binding !NeedsLogin}" />
-          </Grid>
+          </StackPanel>
         </Border>
 
       <Border Background="#FFFFFF"
@@ -111,22 +205,6 @@
                     HorizontalAlignment="Stretch"
                     HorizontalContentAlignment="Center"
                     MinHeight="56" />
-          </Grid>
-
-          <Grid DockPanel.Dock="Top"
-                ColumnDefinitions="*,Auto"
-                Margin="0,0,0,10"
-                IsVisible="{Binding !IsTendering}">
-            <StackPanel Spacing="2">
-              <TextBlock Text="الطلب الحالي" FontSize="22" FontWeight="Bold" Foreground="#0F172A" />
-              <TextBlock Text="{Binding LineCountText}" FontSize="13" Foreground="#64748B" />
-            </StackPanel>
-            <Button Grid.Column="1"
-                    Content="تعليق"
-                    Command="{Binding HoldCurrentCartCommand}"
-                    IsEnabled="{Binding CanHoldCart}"
-                    Classes="pos-chip-warn"
-                    VerticalAlignment="Center" />
           </Grid>
 
           <!-- Compact tender caption replaces the tall cart header -->
@@ -245,24 +323,40 @@
                       FontWeight="Bold"
                       CornerRadius="14" />
 
-              <Grid ColumnDefinitions="*,8,*">
-                <Button Content="{Binding HeldCartsButtonText}"
+              <WrapPanel Orientation="Horizontal" ItemSpacing="6" LineSpacing="6">
+                <Border Background="#F1F5F9"
+                        CornerRadius="10"
+                        Padding="10,8"
+                        VerticalAlignment="Stretch"
+                        MinHeight="40">
+                  <TextBlock Text="{Binding LineCountText}"
+                             FontSize="13"
+                             FontWeight="SemiBold"
+                             Foreground="#475569"
+                             VerticalAlignment="Center" />
+                </Border>
+                <Button Content="تعليق"
+                        Command="{Binding HoldCurrentCartCommand}"
+                        IsEnabled="{Binding CanHoldCart}"
+                        Classes="pos-chip-warn"
+                        MinHeight="40"
+                        Padding="12,8" />
+                <Button Content="استئناف"
                         Command="{Binding OpenHeldCartsCommand}"
                         IsEnabled="{Binding CanOpenHeldCarts}"
                         Background="#FEF3C7"
                         Foreground="#92400E"
-                        CornerRadius="12"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Center" />
-                <Button Grid.Column="2"
-                        Content="تفريغ"
+                        CornerRadius="10"
+                        MinHeight="40"
+                        Padding="12,8" />
+                <Button Content="تفريغ"
                         Command="{Binding ClearCartCommand}"
                         Background="#FEE2E2"
                         Foreground="#B91C1C"
-                        CornerRadius="12"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Center" />
-              </Grid>
+                        CornerRadius="10"
+                        MinHeight="40"
+                        Padding="12,8" />
+              </WrapPanel>
 
               <TextBlock Text="{Binding SettlementText}"
                          IsVisible="{Binding ShowSettlement}"
@@ -294,9 +388,11 @@
                          TextWrapping="Wrap" />
             </StackPanel>
 
-            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+            <ScrollViewer x:Name="CartLinesScroll"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
                           IsVisible="{Binding ShowCartLines}">
-              <ItemsControl ItemsSource="{Binding Lines}">
+              <ItemsControl x:Name="CartLinesList" ItemsSource="{Binding Lines}">
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:CartLine">
                     <Border Classes="cart-line" Classes.highlighted="{Binding IsHighlighted}">
@@ -454,12 +550,28 @@
 
                   <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
                     <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
-                    <TextBox x:Name="ExchangeRateBox"
-                             Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
-                             FontSize="18"
-                             FlowDirection="LeftToRight"
-                             MinHeight="44"
-                             GotFocus="OnTouchInputGotFocus" />
+                    <Grid ColumnDefinitions="*,8,Auto">
+                      <TextBox x:Name="ExchangeRateBox"
+                               Text="{Binding ExchangeRateText, UpdateSourceTrigger=PropertyChanged}"
+                               FontSize="18"
+                               FlowDirection="LeftToRight"
+                               MinHeight="44"
+                               GotFocus="OnTouchInputGotFocus" />
+                      <Button Grid.Column="2"
+                              Content="{Binding WeChatRateRefreshButtonText}"
+                              Command="{Binding RefreshWeChatRateFromBankCommand}"
+                              Classes="pos-tender"
+                              MinHeight="44"
+                              MinWidth="96"
+                              Padding="12,8"
+                              Background="#065F46"
+                              IsEnabled="{Binding CanRefreshWeChatRate}"
+                              ToolTip.Tip="جلب سعر البنك الحالي مع خصم 4% لتقلبات العملة" />
+                    </Grid>
+                    <TextBlock Text="افتراضي من الإعدادات، أو حدّث من البنك (−4%)، أو عدّل يدوياً"
+                               Foreground="#64748B"
+                               FontSize="11"
+                               TextWrapping="Wrap" />
                     <TextBlock Text="{Binding WeChatCnyText}" FontSize="18" FontWeight="Bold" Foreground="#86EFAC" />
                   </StackPanel>
 
@@ -539,103 +651,66 @@
           <TextBlock Text="{Binding CashierAlert}" Foreground="#B91C1C" TextWrapping="Wrap" FontWeight="SemiBold" />
         </Border>
 
+        <!-- Search fills width; All / Favorites / Price check stay visible and wrap on short tills -->
         <Border DockPanel.Dock="Top"
                 Background="White"
                 CornerRadius="16"
-                Padding="10"
-                Margin="0,0,0,10"
+                Padding="10,8"
+                Margin="0,0,0,8"
                 BorderBrush="#E2E8F0"
                 BorderThickness="1"
                 BoxShadow="0 4 16 0 #0F000000">
-          <Grid ColumnDefinitions="*,10,Auto">
+          <Grid ColumnDefinitions="*,8,Auto">
             <TextBox x:Name="BarcodeBox"
-                     Grid.Column="0"
                      Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}"
                      PlaceholderText="ابحث بالاسم أو امسح الباركود..."
                      FontSize="18"
-                     MinHeight="48"
+                     MinHeight="44"
+                     MinWidth="140"
                      BorderThickness="0"
-                     Background="Transparent"
+                     Background="#F8FAFC"
+                     CornerRadius="12"
+                     Padding="12,8"
+                     VerticalAlignment="Center"
                      KeyDown="OnBarcodeKeyDown"
                      GotFocus="OnTouchInputGotFocus" />
-            <Button Grid.Column="2"
-                    Content="إدخال"
-                    Classes="pos-primary"
-                    MinWidth="96"
-                    CornerRadius="12"
-                    Click="OnBarcodeSubmit" />
+            <WrapPanel Grid.Column="2"
+                       Orientation="Horizontal"
+                       ItemSpacing="8"
+                       LineSpacing="8"
+                       VerticalAlignment="Center"
+                       MaxWidth="360">
+              <Button Content="الكل"
+                      Command="{Binding ShowAllCatalogCommand}"
+                      Classes="pos-tender"
+                      Background="#059669"
+                      CornerRadius="12"
+                      Padding="14,8"
+                      MinHeight="44"
+                      MinWidth="72"
+                      Opacity="{Binding CatalogAllEmphasis}"
+                      HorizontalContentAlignment="Center" />
+              <Button Content="★ المفضلة"
+                      Command="{Binding ShowFavoritesCatalogCommand}"
+                      Background="#FEF3C7"
+                      Foreground="#92400E"
+                      CornerRadius="12"
+                      Padding="14,8"
+                      MinHeight="44"
+                      MinWidth="96"
+                      Opacity="{Binding CatalogFavoritesEmphasis}"
+                      HorizontalContentAlignment="Center" />
+              <Button Content="فحص سعر F4"
+                      Command="{Binding OpenPriceCheckCommand}"
+                      Classes="pos-chip-info"
+                      CornerRadius="12"
+                      Padding="14,8"
+                      MinHeight="44"
+                      MinWidth="110"
+                      HorizontalContentAlignment="Center" />
+            </WrapPanel>
           </Grid>
         </Border>
-
-        <TextBlock DockPanel.Dock="Top" Text="{Binding ScanHint}" Margin="0,0,0,8" Foreground="#64748B" TextWrapping="Wrap" FontSize="13" />
-
-        <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-          <Button DockPanel.Dock="Left"
-                  Content="فحص سعر F4"
-                  Command="{Binding OpenPriceCheckCommand}"
-                  Classes="pos-chip-info"
-                  Margin="8,0,0,0"
-                  VerticalAlignment="Center" />
-          <Border Background="#F8FAFC" CornerRadius="14" Padding="8,6" BorderBrush="#E2E8F0" BorderThickness="1">
-            <ScrollViewer Classes="pos-cats">
-              <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Content="الكل"
-                        Command="{Binding ShowAllCatalogCommand}"
-                        Classes="pos-tender"
-                        Background="#059669"
-                        CornerRadius="999"
-                        Padding="16,8"
-                        MinHeight="40"
-                        Opacity="{Binding CatalogAllEmphasis}"
-                        HorizontalContentAlignment="Center" />
-                <Button Content="★ المفضلة"
-                        Command="{Binding ShowFavoritesCatalogCommand}"
-                        Background="#FEF3C7"
-                        Foreground="#92400E"
-                        CornerRadius="999"
-                        Padding="16,8"
-                        MinHeight="40"
-                        Opacity="{Binding CatalogFavoritesEmphasis}"
-                        HorizontalContentAlignment="Center" />
-                <ItemsControl ItemsSource="{Binding Categories}" IsVisible="{Binding HasCategories}">
-                  <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                      <StackPanel Orientation="Horizontal" Spacing="8" />
-                    </ItemsPanelTemplate>
-                  </ItemsControl.ItemsPanel>
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="core:CatalogCategory">
-                      <Button Content="{Binding ChipText}"
-                              Tag="{Binding}"
-                              Click="OnCategoryClick"
-                              Background="#E0F2FE"
-                              Foreground="#0C4A6E"
-                              CornerRadius="999"
-                              Padding="14,8"
-                              MinHeight="40"
-                              MaxWidth="220"
-                              HorizontalContentAlignment="Center">
-                        <Button.Styles>
-                          <Style Selector="Button:pointerover /template/ ContentPresenter">
-                            <Setter Property="Background" Value="#BAE6FD" />
-                            <Setter Property="Foreground" Value="#0C4A6E" />
-                          </Style>
-                        </Button.Styles>
-                      </Button>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </StackPanel>
-            </ScrollViewer>
-          </Border>
-        </DockPanel>
-        <TextBlock DockPanel.Dock="Top"
-                   Text="{Binding SelectedCategoryCaption}"
-                   IsVisible="{Binding HasSelectedCategory}"
-                   Margin="0,0,0,8"
-                   FontSize="13"
-                   FontWeight="SemiBold"
-                   Foreground="#0369A1" />
 
         <TextBlock DockPanel.Dock="Top"
                    Text="لا توجد أصناف مطابقة"
@@ -648,90 +723,184 @@
                    Margin="0,4,0,8"
                    Foreground="#64748B" />
 
-        <Border Background="#FFFFFF" CornerRadius="18" Padding="14" BorderBrush="#E2E8F0" BorderThickness="1"
-                BoxShadow="0 6 20 0 #10000000">
-          <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                        VerticalScrollBarVisibility="Auto">
-            <!-- Virtualized grid: all 3000+ products without loading every bitmap at once -->
-            <ItemsRepeater ItemsSource="{Binding VisibleProducts}">
-              <ItemsRepeater.Layout>
-                <!-- Compact till tiles: ~4–5 columns on typical 1366–1920 cashier screens -->
-                <UniformGridLayout MinItemWidth="132"
-                                   MinItemHeight="152"
-                                   MinColumnSpacing="8"
-                                   MinRowSpacing="8"
-                                   ItemsStretch="Fill"
-                                   ItemsJustification="Start" />
-              </ItemsRepeater.Layout>
-              <ItemsRepeater.ItemTemplate>
-                <DataTemplate x:DataType="core:CatalogProduct">
-                  <Border MinHeight="144"
-                          Padding="0"
-                          Background="#FFFFFF"
-                          BorderBrush="#E2E8F0"
-                          BorderThickness="1"
-                          CornerRadius="12"
-                          Cursor="Hand"
-                          BoxShadow="0 2 10 0 #10000000"
-                          Tapped="OnProductTapped">
-                    <DockPanel>
-                      <Border DockPanel.Dock="Top"
-                              Height="72"
-                              CornerRadius="12,12,0,0"
-                              Background="#F1F5F9"
-                              ClipToBounds="True">
-                        <Grid>
-                          <Border Background="#0B1220"
-                                  IsVisible="{Binding Converter={StaticResource MissingProductImage}}">
-                            <Image Source="{DynamicResource BrandLogo}"
-                                   Stretch="Uniform"
-                                   Margin="12"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Opacity="0.95" />
-                          </Border>
-                          <Image Source="{Binding Converter={StaticResource ProductImage}}"
-                                 Stretch="UniformToFill"
-                                 HorizontalAlignment="Stretch"
-                                 VerticalAlignment="Stretch"
-                                 IsVisible="{Binding Converter={StaticResource HasProductImage}}" />
-                          <Button Content="{Binding FavoriteGlyph}"
-                                  HorizontalAlignment="Left"
-                                  VerticalAlignment="Top"
-                                  Margin="4"
-                                  MinHeight="28"
-                                  MinWidth="28"
-                                  Padding="2,0"
-                                  Background="#FEF9C3"
-                                  Foreground="#A16207"
-                                  CornerRadius="999"
-                                  FontSize="12"
-                                  Click="OnFavoriteClick"
-                                  CommandParameter="{Binding}"
-                                  Tag="{Binding Id}" />
-                        </Grid>
-                      </Border>
-                      <StackPanel Spacing="2" Margin="8,6,8,8">
-                        <TextBlock Text="{Binding DisplayNameAr}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"
-                                   TextTrimming="CharacterEllipsis" MaxLines="2" MaxHeight="34" Foreground="#0F172A" />
-                        <TextBlock Text="{Binding NameZh}" FontSize="10" Foreground="#94A3B8" FlowDirection="LeftToRight"
-                                   TextTrimming="CharacterEllipsis" MaxLines="1"
-                                   IsVisible="{Binding HasNameZh}" />
-                        <Border Background="#ECFDF5" CornerRadius="6" Padding="6,2" HorizontalAlignment="Right" Margin="0,2,0,0">
-                          <TextBlock Text="{Binding PriceEgpText}" FontSize="13" FontWeight="Bold" Foreground="#047857" />
+        <!-- Product grid + transient toast (bottom-left over tiles; no permanent ScanHint strip) -->
+        <Grid>
+          <Border Background="#FFFFFF" CornerRadius="18" Padding="14" BorderBrush="#E2E8F0" BorderThickness="1"
+                  BoxShadow="0 6 20 0 #10000000">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+              <!-- Virtualized grid: all 3000+ products without loading every bitmap at once -->
+              <ItemsRepeater ItemsSource="{Binding VisibleProducts}">
+                <ItemsRepeater.Layout>
+                  <!-- Compact till tiles: ~4–5 columns on typical 1366–1920 cashier screens -->
+                  <UniformGridLayout MinItemWidth="132"
+                                     MinItemHeight="152"
+                                     MinColumnSpacing="8"
+                                     MinRowSpacing="8"
+                                     ItemsStretch="Fill"
+                                     ItemsJustification="Start" />
+                </ItemsRepeater.Layout>
+                <ItemsRepeater.ItemTemplate>
+                  <DataTemplate x:DataType="core:CatalogProduct">
+                    <Border MinHeight="144"
+                            Padding="0"
+                            Background="#FFFFFF"
+                            BorderBrush="#E2E8F0"
+                            BorderThickness="1"
+                            CornerRadius="12"
+                            Cursor="Hand"
+                            BoxShadow="0 2 10 0 #10000000"
+                            Tapped="OnProductTapped">
+                      <DockPanel>
+                        <Border DockPanel.Dock="Top"
+                                Height="72"
+                                CornerRadius="12,12,0,0"
+                                Background="#F1F5F9"
+                                ClipToBounds="True">
+                          <Grid>
+                            <Border Background="#0B1220"
+                                    IsVisible="{Binding Converter={StaticResource MissingProductImage}}">
+                              <Image Source="{DynamicResource BrandLogo}"
+                                     Stretch="Uniform"
+                                     Margin="12"
+                                     HorizontalAlignment="Center"
+                                     VerticalAlignment="Center"
+                                     Opacity="0.95" />
+                            </Border>
+                            <Image Source="{Binding Converter={StaticResource ProductImage}}"
+                                   Stretch="UniformToFill"
+                                   HorizontalAlignment="Stretch"
+                                   VerticalAlignment="Stretch"
+                                   IsVisible="{Binding Converter={StaticResource HasProductImage}}" />
+                            <Button Content="{Binding FavoriteGlyph}"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Top"
+                                    Margin="4"
+                                    MinHeight="28"
+                                    MinWidth="28"
+                                    Padding="2,0"
+                                    Background="#FEF9C3"
+                                    Foreground="#A16207"
+                                    CornerRadius="999"
+                                    FontSize="12"
+                                    Click="OnFavoriteClick"
+                                    CommandParameter="{Binding}"
+                                    Tag="{Binding Id}" />
+                          </Grid>
                         </Border>
-                      </StackPanel>
-                    </DockPanel>
-                  </Border>
-                </DataTemplate>
-              </ItemsRepeater.ItemTemplate>
-            </ItemsRepeater>
-          </ScrollViewer>
-        </Border>
+                        <StackPanel Spacing="2" Margin="8,6,8,8">
+                          <TextBlock Text="{Binding DisplayNameAr}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap"
+                                     TextTrimming="CharacterEllipsis" MaxLines="2" MaxHeight="34" Foreground="#0F172A" />
+                          <TextBlock Text="{Binding NameZh}" FontSize="10" Foreground="#94A3B8" FlowDirection="LeftToRight"
+                                     TextTrimming="CharacterEllipsis" MaxLines="1"
+                                     IsVisible="{Binding HasNameZh}" />
+                          <Border Background="#ECFDF5" CornerRadius="6" Padding="6,2" HorizontalAlignment="Right" Margin="0,2,0,0">
+                            <TextBlock Text="{Binding PriceEgpText}" FontSize="13" FontWeight="Bold" Foreground="#047857" />
+                          </Border>
+                        </StackPanel>
+                      </DockPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsRepeater.ItemTemplate>
+              </ItemsRepeater>
+            </ScrollViewer>
+          </Border>
+
+          <Border HorizontalAlignment="Left"
+                  VerticalAlignment="Bottom"
+                  Margin="16,0,16,16"
+                  MaxWidth="420"
+                  CornerRadius="14"
+                  Padding="14,12"
+                  Background="#E01E293B"
+                  BoxShadow="0 10 28 0 #55000000"
+                  IsHitTestVisible="False"
+                  IsVisible="{Binding ShowScanToastInfo}"
+                  ZIndex="40">
+            <TextBlock Text="{Binding ScanHint}"
+                       Foreground="#F8FAFC"
+                       FontSize="14"
+                       FontWeight="SemiBold"
+                       TextWrapping="Wrap"
+                       TextAlignment="Right" />
+          </Border>
+
+          <Border HorizontalAlignment="Left"
+                  VerticalAlignment="Bottom"
+                  Margin="16,0,16,16"
+                  MaxWidth="420"
+                  CornerRadius="14"
+                  Padding="14,12"
+                  Background="#E0B91C1C"
+                  BorderBrush="#FECACA"
+                  BorderThickness="1"
+                  BoxShadow="0 10 28 0 #55000000"
+                  IsHitTestVisible="False"
+                  IsVisible="{Binding ShowScanToastWarning}"
+                  ZIndex="41">
+            <TextBlock Text="{Binding ScanHint}"
+                       Foreground="#FEF2F2"
+                       FontSize="14"
+                       FontWeight="Bold"
+                       TextWrapping="Wrap"
+                       TextAlignment="Right" />
+          </Border>
+        </Grid>
       </DockPanel>
     </Grid>
 
   <!-- Form + numeric pad side-by-side so short tills never cover Apply -->
+  <Border Background="#CC0F172A" IsVisible="{Binding ShowPrintPrompt}" ZIndex="48">
+    <Border Background="White"
+            BorderBrush="#059669"
+            BorderThickness="3"
+            CornerRadius="20"
+            Padding="0"
+            Width="460"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            BoxShadow="0 24 60 0 #66000000">
+      <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#059669" Padding="22,18">
+          <StackPanel Spacing="4">
+            <TextBlock Text="طباعة الإيصال؟" FontSize="24" FontWeight="Bold" Foreground="White" />
+            <TextBlock Text="عدد الأصناف قليل — اختر قبل المتابعة"
+                       FontSize="13"
+                       Foreground="#D1FAE5" />
+          </StackPanel>
+        </Border>
+        <StackPanel Margin="22,20" Spacing="16">
+          <TextBlock Text="{Binding PrintPromptCaption}"
+                     FontSize="16"
+                     Foreground="#0F172A"
+                     TextWrapping="Wrap"
+                     LineHeight="26" />
+          <Grid ColumnDefinitions="*,10,*">
+            <Button Content="طباعة"
+                    Classes="pos-primary"
+                    Command="{Binding ConfirmPrintReceiptCommand}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    MinHeight="56"
+                    FontSize="18"
+                    FontWeight="Bold" />
+            <Button Grid.Column="2"
+                    Content="بدون طباعة"
+                    Command="{Binding SkipPrintReceiptCommand}"
+                    Background="#F1F5F9"
+                    Foreground="#334155"
+                    BorderBrush="#CBD5E1"
+                    BorderThickness="1"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    MinHeight="56"
+                    FontSize="17" />
+          </Grid>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+  </Border>
+
   <Border Background="#CC0F172A" IsVisible="{Binding ShowEditLine}" ZIndex="42">
     <Grid x:Name="EditLineShell"
           Margin="16"

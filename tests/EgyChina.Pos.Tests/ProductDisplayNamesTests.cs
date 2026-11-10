@@ -27,6 +27,15 @@ public sealed class ProductDisplayNamesTests
         Assert.Equal("مشروبات", ProductDisplayNames.PreferLocalized("مشروبات", "Soft Drinks", null));
         Assert.Equal("乳品", ProductDisplayNames.PreferLocalized("Dairy", "Dairy", "乳品"));
     }
+
+    [Fact]
+    public void ForCustomerZh_keeps_embedded_latin_words()
+    {
+        Assert.Equal(
+            "Abu Auf 榛子奶油和可可威化饼，35 克",
+            ProductDisplayNames.ForCustomerZh("Abu Auf 榛子奶油和可可威化饼，35 克"));
+        Assert.True(ProductDisplayNames.ShowCustomerZh("أبوعوف ويفر", "Abu Auf 榛子奶油和可可威化饼，35 克"));
+    }
 }
 
 public sealed class ScaleBarcodeTests

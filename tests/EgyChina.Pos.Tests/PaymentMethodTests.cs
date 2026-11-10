@@ -32,6 +32,7 @@ public sealed class PaymentMethodTests : IDisposable
         var safe = WeChatFx.ApplySafetyMargin(10m);
         Assert.Equal(9.60m, safe);
         Assert.Equal("¥ 12.50", WeChatFx.FormatCny(WeChatFx.EgpMinorToCnyMajor(8750, 7m)));
+        Assert.Equal("7.25", WeChatFx.FormatRate(7.25m));
     }
 
     [Fact]

@@ -9,12 +9,14 @@ public partial class CartLine : ObservableObject
     private readonly Action _changed;
     private readonly Action<CartLine> _remove;
     private readonly Action<CartLine>? _touched;
+    private readonly Action<CartLine>? _qtyAdjusted;
 
     public CartLine(
         CatalogProduct product,
         Action changed,
         Action<CartLine> remove,
-        Action<CartLine>? touched = null)
+        Action<CartLine>? touched = null,
+        Action<CartLine>? qtyAdjusted = null)
         : this(
             product.Id,
             product.Barcode,
@@ -27,7 +29,8 @@ public partial class CartLine : ObservableObject
             discountValue: 0,
             changed,
             remove,
-            touched)
+            touched,
+            qtyAdjusted)
     {
     }
 
@@ -35,7 +38,8 @@ public partial class CartLine : ObservableObject
         HeldCartLinePayload payload,
         Action changed,
         Action<CartLine> remove,
-        Action<CartLine>? touched = null)
+        Action<CartLine>? touched = null,
+        Action<CartLine>? qtyAdjusted = null)
         : this(
             payload.ProductId,
             payload.Barcode,
@@ -48,7 +52,8 @@ public partial class CartLine : ObservableObject
             payload.DiscountValue,
             changed,
             remove,
-            touched)
+            touched,
+            qtyAdjusted)
     {
     }
 
@@ -61,7 +66,8 @@ public partial class CartLine : ObservableObject
         int qty,
         Action changed,
         Action<CartLine> remove,
-        Action<CartLine>? touched = null)
+        Action<CartLine>? touched = null,
+        Action<CartLine>? qtyAdjusted = null)
         : this(
             productId,
             barcode,
@@ -74,7 +80,8 @@ public partial class CartLine : ObservableObject
             discountValue: 0,
             changed,
             remove,
-            touched)
+            touched,
+            qtyAdjusted)
     {
     }
 
@@ -90,7 +97,8 @@ public partial class CartLine : ObservableObject
         long discountValue,
         Action changed,
         Action<CartLine> remove,
-        Action<CartLine>? touched = null)
+        Action<CartLine>? touched = null,
+        Action<CartLine>? qtyAdjusted = null)
     {
         LineId = Guid.NewGuid().ToString("N");
         ProductId = productId;
@@ -104,6 +112,7 @@ public partial class CartLine : ObservableObject
         _changed = changed;
         _remove = remove;
         _touched = touched;
+        _qtyAdjusted = qtyAdjusted;
         _qty = Math.Max(1, qty);
     }
 
@@ -123,7 +132,10 @@ public partial class CartLine : ObservableObject
 
     public bool HasNameZh => !string.IsNullOrWhiteSpace(NameZh);
 
-    public bool ShowCustomerNameZh => ProductDisplayNames.ShowSecondaryZh(NameAr, NameZh);
+    /// <summary>Chinese label for the customer display (Latin/English words stripped).</summary>
+    public string CustomerNameZh => ProductDisplayNames.ForCustomerZh(NameZh);
+
+    public bool ShowCustomerNameZh => ProductDisplayNames.ShowCustomerZh(NameAr, NameZh);
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(UnitPriceText))]
@@ -270,6 +282,7 @@ public partial class CartLine : ObservableObject
         if (IsScalePriced || Qty >= 999)
             return;
         Qty++;
+        _qtyAdjusted?.Invoke(this);
     }
 
     [RelayCommand]
@@ -278,6 +291,7 @@ public partial class CartLine : ObservableObject
         if (IsScalePriced || Qty <= 1)
             return;
         Qty--;
+        _qtyAdjusted?.Invoke(this);
     }
 
     [RelayCommand]

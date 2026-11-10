@@ -2,12 +2,19 @@ namespace EgyChina.Pos.Core;
 
 /// <summary>
 /// WeChat helper: invoice stays EGP; CNY is a display conversion.
-/// Matches web checkout: default 7 EGP/CNY and a 4% safety haircut on live rates.
+/// Default fallback is 7 EGP/CNY; tills prefer ERP <c>wechat_egp_per_cny</c>.
+/// Live bank fetch applies a 4% safety haircut via <see cref="ApplySafetyMargin"/>.
 /// </summary>
 public static class WeChatFx
 {
     public const decimal DefaultEgpPerCny = 7m;
     public const decimal SafetyMargin = 0.04m;
+
+    /// <summary>Local SQLite key mirroring ERP StoreSetting <c>wechat_egp_per_cny</c>.</summary>
+    public const string ConfiguredRateSettingKey = "wechat.egp_per_cny";
+
+    public static string FormatRate(decimal egpPerCny) =>
+        egpPerCny.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
     public static decimal ApplySafetyMargin(decimal rawEgpPerCny)
     {

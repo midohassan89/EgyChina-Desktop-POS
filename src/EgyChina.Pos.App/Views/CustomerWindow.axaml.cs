@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using EgyChina.Pos.App.Helpers;
 using EgyChina.Pos.App.ViewModels;
 using EgyChina.Pos.Data;
 
@@ -26,6 +29,7 @@ public partial class CustomerWindow : Window
         {
             _session.PropertyChanged -= OnSessionPropertyChanged;
             _session.Lines.CollectionChanged -= OnLinesChanged;
+            _session.CartLineRevealRequested -= OnCartLineRevealRequested;
         }
 
         _session = DataContext as PosSession;
@@ -34,12 +38,16 @@ public partial class CustomerWindow : Window
 
         _session.PropertyChanged += OnSessionPropertyChanged;
         _session.Lines.CollectionChanged += OnLinesChanged;
+        _session.CartLineRevealRequested += OnCartLineRevealRequested;
         ReloadQrImages();
-        ScrollCartToEnd();
+        RevealHighlightedLine();
     }
 
     private void OnLinesChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
-        Dispatcher.UIThread.Post(ScrollCartToEnd, DispatcherPriority.Background);
+        RevealHighlightedLine();
+
+    private void OnCartLineRevealRequested(CartLine line) =>
+        CartLineScroll.Reveal(CfdCartScroll, line, "cfd-line");
 
     private void OnSessionPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -50,26 +58,21 @@ public partial class CustomerWindow : Window
             Dispatcher.UIThread.Post(ReloadQrImages);
         }
 
-        if (e.PropertyName is nameof(PosSession.IsCfdShopping)
-            or nameof(PosSession.LineCountText)
-            or nameof(PosSession.TotalText))
-        {
-            Dispatcher.UIThread.Post(ScrollCartToEnd, DispatcherPriority.Background);
-        }
+        if (e.PropertyName is nameof(PosSession.IsCfdShopping))
+            RevealHighlightedLine();
     }
 
-    private void ScrollCartToEnd()
+    private void RevealHighlightedLine()
     {
-        try
-        {
-            if (CfdCartScroll is null || _session is null || !_session.IsCfdShopping)
-                return;
-            CfdCartScroll.ScrollToEnd();
-        }
-        catch (Exception)
-        {
-            // Layout may not be ready yet.
-        }
+        if (_session is null || !_session.IsCfdShopping)
+            return;
+
+        var line = _session.Lines.FirstOrDefault(item => item.IsHighlighted)
+                   ?? _session.Lines.LastOrDefault();
+        if (line is null)
+            return;
+
+        CartLineScroll.Reveal(CfdCartScroll, line, "cfd-line");
     }
 
     private void ReloadQrImages()

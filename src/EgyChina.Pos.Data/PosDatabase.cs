@@ -875,6 +875,65 @@ public sealed class PosDatabase
     }
 
     /// <summary>
+    /// Last N completed sales with sync tone derived from sale.sync_status + latest outbox row.
+    /// </summary>
+    public IReadOnlyList<RecentSaleSummary> ListRecentCompletedSales(int limit = 3)
+    {
+        if (limit < 1)
+            return Array.Empty<RecentSaleSummary>();
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT
+                  s.id,
+                  s.receipt_no,
+                  s.total_minor,
+                  s.sync_status,
+                  (
+                    SELECT o.status
+                    FROM outbox o
+                    WHERE o.aggregate_type = 'sale' AND o.aggregate_id = s.id
+                    ORDER BY o.created_at DESC
+                    LIMIT 1
+                  ) AS outbox_status
+                FROM sale s
+                WHERE s.status = 'completed'
+                ORDER BY s.completed_at DESC, s.receipt_no DESC
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$limit", limit);
+            using var reader = command.ExecuteReader();
+            var list = new List<RecentSaleSummary>();
+            while (reader.Read())
+            {
+                var saleId = reader.GetString(0);
+                var receiptNo = reader.GetInt32(1);
+                var totalMinor = reader.GetInt64(2);
+                var syncStatus = reader.IsDBNull(3) ? "pending" : reader.GetString(3);
+                var outboxStatus = reader.IsDBNull(4) ? null : reader.GetString(4);
+                var tone = ResolveSaleSyncTone(syncStatus, outboxStatus);
+                list.Add(new RecentSaleSummary(saleId, receiptNo, totalMinor, tone));
+            }
+
+            return list;
+        }
+    }
+
+    private static SaleSyncTone ResolveSaleSyncTone(string syncStatus, string? outboxStatus)
+    {
+        if (string.Equals(syncStatus, "synced", StringComparison.OrdinalIgnoreCase))
+            return SaleSyncTone.Synced;
+        if (string.Equals(outboxStatus, "dead", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(syncStatus, "failed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(syncStatus, "dead", StringComparison.OrdinalIgnoreCase))
+            return SaleSyncTone.Failed;
+        return SaleSyncTone.Pending;
+    }
+
+    /// <summary>
     /// Builds a printable receipt from committed sale rows. Never mutates the sale.
     /// </summary>
     public ReceiptDocument? TryBuildReceiptDocument(string saleId, bool isReprint, bool kickDrawer = false)

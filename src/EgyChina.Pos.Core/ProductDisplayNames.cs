@@ -62,6 +62,20 @@ public static partial class ProductDisplayNames
         return !string.Equals(zh, primary, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// CFD Chinese line as stored — keep any embedded Latin/English words intact.
+    /// </summary>
+    public static string ForCustomerZh(string? nameZh)
+    {
+        var zh = Collapse(nameZh);
+        if (zh.Length == 0 || LooksSuspicious(zh))
+            return string.Empty;
+        return zh;
+    }
+
+    public static bool ShowCustomerZh(string? nameAr, string? nameZh) =>
+        ShowSecondaryZh(nameAr, nameZh);
+
     /// <summary>Prefer Arabic script for category chips; fall back to Latin name.</summary>
     public static string PreferLocalized(string? primary, string? secondaryEn, string? secondaryZh)
     {

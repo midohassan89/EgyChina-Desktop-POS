@@ -54,21 +54,15 @@ public static class CustomerDisplayProjector
         return IdleClockScript(now) switch
         {
             CustomerClockScript.Arabic => "أهلاً بكم في ايجي شاينا",
-            CustomerClockScript.Latin => "Welcome to EgyChina",
             _ => "欢迎光临埃及中国超市",
         };
     }
 
-    /// <summary>Same 4s rotation as the idle greeting: Arabic → English → Chinese.</summary>
+    /// <summary>Same 4s rotation as the idle greeting: Arabic ↔ Chinese only (no English).</summary>
     public static CustomerClockScript IdleClockScript(DateTimeOffset now)
     {
-        var index = (int)(now.ToUnixTimeSeconds() / (long)CustomerDisplayTiming.IdleGreetingRotate.TotalSeconds % 3);
-        return index switch
-        {
-            0 => CustomerClockScript.Arabic,
-            1 => CustomerClockScript.Latin,
-            _ => CustomerClockScript.Chinese,
-        };
+        var index = (int)(now.ToUnixTimeSeconds() / (long)CustomerDisplayTiming.IdleGreetingRotate.TotalSeconds % 2);
+        return index == 0 ? CustomerClockScript.Arabic : CustomerClockScript.Chinese;
     }
 
     public static string IdleDateText(DateTimeOffset now) =>

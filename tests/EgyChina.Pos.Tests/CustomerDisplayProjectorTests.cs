@@ -64,29 +64,27 @@ public sealed class CustomerDisplayProjectorTests
     }
 
     [Fact]
-    public void IdleGreeting_rotates_across_languages()
+    public void IdleGreeting_rotates_arabic_and_chinese_only()
     {
         var t0 = DateTimeOffset.FromUnixTimeSeconds(0);
         var t1 = DateTimeOffset.FromUnixTimeSeconds(4);
-        var t2 = DateTimeOffset.FromUnixTimeSeconds(8);
 
         Assert.Contains("ايجي", CustomerDisplayProjector.IdleGreeting(t0), StringComparison.Ordinal);
-        Assert.Contains("Welcome", CustomerDisplayProjector.IdleGreeting(t1), StringComparison.Ordinal);
-        Assert.Contains("欢迎", CustomerDisplayProjector.IdleGreeting(t2), StringComparison.Ordinal);
+        Assert.Contains("欢迎", CustomerDisplayProjector.IdleGreeting(t1), StringComparison.Ordinal);
+        Assert.DoesNotContain("Welcome", CustomerDisplayProjector.IdleGreeting(t0), StringComparison.Ordinal);
+        Assert.DoesNotContain("Welcome", CustomerDisplayProjector.IdleGreeting(t1), StringComparison.Ordinal);
     }
 
     [Fact]
     public void Idle_clock_script_and_date_rotate_with_greeting()
     {
         var arabicAt = new DateTimeOffset(2026, 11, 7, 16, 30, 0, TimeSpan.FromHours(2));
-        // Force buckets: unix/4 % 3
+        // Force buckets: unix/4 % 2 → Arabic ↔ Chinese
         var t0 = DateTimeOffset.FromUnixTimeSeconds(0);
         var t1 = DateTimeOffset.FromUnixTimeSeconds(4);
-        var t2 = DateTimeOffset.FromUnixTimeSeconds(8);
 
         Assert.Equal(CustomerClockScript.Arabic, CustomerDisplayProjector.IdleClockScript(t0));
-        Assert.Equal(CustomerClockScript.Latin, CustomerDisplayProjector.IdleClockScript(t1));
-        Assert.Equal(CustomerClockScript.Chinese, CustomerDisplayProjector.IdleClockScript(t2));
+        Assert.Equal(CustomerClockScript.Chinese, CustomerDisplayProjector.IdleClockScript(t1));
 
         Assert.Equal("٤", CustomerAnalogClock.HourLabel(4, CustomerClockScript.Arabic));
         Assert.Equal("4", CustomerAnalogClock.HourLabel(4, CustomerClockScript.Latin));

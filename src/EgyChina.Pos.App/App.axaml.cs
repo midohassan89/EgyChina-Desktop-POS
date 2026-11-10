@@ -305,8 +305,7 @@ public partial class App : Application
         _session.ScreenModeText = placement.CustomerOnSecondary
             ? $"شاشتان — شاشة العميل على الثانية · {kioskLabel}"
             : $"شاشة واحدة — نافذة العميل بجانب الكاشير · {kioskLabel}";
-        _session.DisplayBanner = placement.CustomerOnSecondary
-            ? string.Empty
-            : "وضع التطوير: شاشة واحدة. على جهاز الكاشير تُعرض هذه النافذة على الشاشة الثانية.";
+        // Never show placement/debug banners on the customer-facing display.
+        _session.DisplayBanner = string.Empty;
     }
 }

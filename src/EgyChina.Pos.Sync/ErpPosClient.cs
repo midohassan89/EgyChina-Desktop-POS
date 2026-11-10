@@ -33,7 +33,7 @@ public sealed class ErpPosClient : IDisposable
         _useStoreCheckout = string.IsNullOrWhiteSpace(deviceBearerToken);
         if (httpClient is null)
         {
-            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            _http = new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
             _ownsClient = true;
         }
         else

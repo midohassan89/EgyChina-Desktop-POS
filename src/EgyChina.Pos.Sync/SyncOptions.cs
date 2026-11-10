@@ -35,7 +35,14 @@ public sealed class SyncOptions
 
     public TimeSpan Interval { get; init; } = TimeSpan.FromSeconds(30);
 
-    public TimeSpan HttpTimeout { get; init; } = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// Per-request timeout for ERP sync. Cashier Wi‑Fi/4G often needs more than a few seconds
+    /// for <c>POST /api/store/pos-checkout</c>; 5s caused false transport cancellations on tills.
+    /// Override with <c>EGYCHINA_POS_HTTP_TIMEOUT</c> (seconds, 5–120).
+    /// </summary>
+    public TimeSpan HttpTimeout { get; init; } = TimeSpan.FromSeconds(45);
+
+    public const string HttpTimeoutVariable = "EGYCHINA_POS_HTTP_TIMEOUT";
 
     public string? TransmissionBlock()
     {
@@ -81,6 +88,13 @@ public sealed class SyncOptions
         };
 
         var deviceToken = DeviceCredentialStore.ImportFromEnvironmentIfPresent();
+        var httpTimeout = TimeSpan.FromSeconds(45);
+        var timeoutRaw = Environment.GetEnvironmentVariable(HttpTimeoutVariable)?.Trim();
+        if (int.TryParse(timeoutRaw, out var timeoutSec))
+        {
+            timeoutSec = Math.Clamp(timeoutSec, 5, 120);
+            httpTimeout = TimeSpan.FromSeconds(timeoutSec);
+        }
 
         return new SyncOptions
         {
@@ -89,6 +103,7 @@ public sealed class SyncOptions
             PaymentMethod = Environment.GetEnvironmentVariable(PaymentMethodVariable),
             MoneyScale = scale,
             CatalogPull = string.Equals(Environment.GetEnvironmentVariable(CatalogPullVariable), "1", StringComparison.Ordinal),
+            HttpTimeout = httpTimeout,
         };
     }
 }

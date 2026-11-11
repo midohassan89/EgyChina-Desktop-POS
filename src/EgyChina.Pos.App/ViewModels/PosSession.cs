@@ -121,8 +121,6 @@ public partial class PosSession : ObservableObject
     /// <summary>Wire the background worker so «تحديث الأصناف» can pulse an immediate tick.</summary>
     public void BindSyncWorker(SyncWorker worker) => _syncWorker = worker;
 
-    public void BindUpdateService(PosUpdateService service) => _updateService = service;
-
     /// <summary>Safe to apply a downloaded Velopack package (no open shift / tender).</summary>
     public bool CanApplyAppUpdate =>
         _currentShift is null && !IsTendering && !ShowCloseShift;
@@ -150,10 +148,32 @@ public partial class PosSession : ObservableObject
     [ObservableProperty]
     private string _updateHint = string.Empty;
 
+    [ObservableProperty]
+    private bool _isCheckingUpdates;
+
     public bool HasUpdateHint => !string.IsNullOrWhiteSpace(UpdateHint);
+
+    public bool CanCheckForUpdates => _updateService is not null && !IsCheckingUpdates;
+
+    public string CheckUpdatesButtonText =>
+        IsCheckingUpdates ? "جاري التحقق من التحديثات…" : "التحقق من وجود تحديثات";
 
     partial void OnUpdateHintChanged(string value) =>
         OnPropertyChanged(nameof(HasUpdateHint));
+
+    partial void OnIsCheckingUpdatesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanCheckForUpdates));
+        OnPropertyChanged(nameof(CheckUpdatesButtonText));
+        CheckForUpdatesCommand.NotifyCanExecuteChanged();
+    }
+
+    public void BindUpdateService(PosUpdateService service)
+    {
+        _updateService = service;
+        OnPropertyChanged(nameof(CanCheckForUpdates));
+        CheckForUpdatesCommand.NotifyCanExecuteChanged();
+    }
 
     [ObservableProperty]
     private string _printerCaption = string.Empty;
@@ -3093,6 +3113,38 @@ public partial class PosSession : ObservableObject
 
     [RelayCommand]
     private void CloseStatusInfo() => ShowStatusInfo = false;
+
+    [RelayCommand(CanExecute = nameof(CanCheckForUpdates))]
+    private async Task CheckForUpdates()
+    {
+        if (_updateService is null || IsCheckingUpdates)
+            return;
+
+        IsCheckingUpdates = true;
+        UpdateHint = "جاري التحقق من وجود تحديثات…";
+        AnnounceHint(UpdateHint);
+        try
+        {
+            await _updateService.CheckOnceAsync().ConfigureAwait(true);
+            if (string.IsNullOrWhiteSpace(UpdateHint) || UpdateHint.Contains("جاري التحقق", StringComparison.Ordinal))
+            {
+                UpdateHint = _updateService.HasPendingUpdate
+                    ? "يوجد تحديث جاهز — سيُطبَّق بعد قفل الوردية."
+                    : "لا يوجد تحديث جديد حالياً.";
+                AnnounceHint(UpdateHint);
+            }
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("manual update check failed", ex);
+            UpdateHint = "تعذر التحقق من التحديثات. تحقق من الاتصال.";
+            AnnounceHint(UpdateHint);
+        }
+        finally
+        {
+            IsCheckingUpdates = false;
+        }
+    }
 
     private async Task PrintSaleAsync(string saleId, bool isReprint, bool kickDrawer)
     {

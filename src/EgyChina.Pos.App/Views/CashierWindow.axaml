@@ -92,13 +92,20 @@
             </Grid>
 
             <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
-              <TextBlock Text="{Binding AppVersionText}"
-                         FontSize="11"
-                         FontWeight="SemiBold"
-                         Foreground="#FDE68A"
-                         VerticalAlignment="Center"
-                         FlowDirection="LeftToRight"
-                         Margin="0,0,4,0" />
+              <Border Background="#422006"
+                      BorderBrush="#FBBF24"
+                      BorderThickness="1"
+                      CornerRadius="10"
+                      Padding="8,5"
+                      VerticalAlignment="Center"
+                      ToolTip.Tip="إصدار البرنامج — افتح معلومات للتحديث اليدوي">
+                <TextBlock Text="{Binding AppVersionText}"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           Foreground="#FDE68A"
+                           VerticalAlignment="Center"
+                           FlowDirection="LeftToRight" />
+              </Border>
               <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <Border Classes="link-pill"
                         Classes.on="{Binding HasInternetLink}"
@@ -534,26 +541,6 @@
                       </StackPanel>
                     </Button>
                   </UniformGrid>
-                  <Border Background="#111827" CornerRadius="12" Padding="10,8" BorderBrush="#334155" BorderThickness="1">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="{Binding PaymentMethodLabel}" FontSize="16" FontWeight="Bold" Foreground="#6EE7B7" />
-                      <TextBlock Text="{Binding PaymentMethodLabelEn}" FontSize="12" Foreground="#CBD5E1" FlowDirection="LeftToRight" />
-                      <Grid ColumnDefinitions="*,Auto" Margin="0,2,0,0">
-                        <TextBlock Text="قيمة الفاتورة" FontSize="13" Foreground="#94A3B8" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="1"
-                                   Text="{Binding TotalText}"
-                                   FontSize="24"
-                                   FontWeight="Bold"
-                                   Foreground="#F8FAFC"
-                                   FlowDirection="LeftToRight" />
-                      </Grid>
-                      <TextBlock Text="{Binding LoyaltyDiscountText}"
-                                 IsVisible="{Binding ShowLoyaltyDiscount}"
-                                 Foreground="#FBBF24"
-                                 FontWeight="SemiBold"
-                                 FontSize="12" />
-                    </StackPanel>
-                  </Border>
 
                   <StackPanel Spacing="6" IsVisible="{Binding IsWeChatPayment}">
                     <TextBlock Text="سعر الصرف (ج.م / يوان)" Foreground="#94A3B8" FontSize="12" TextWrapping="Wrap" />
@@ -582,7 +569,17 @@
                     <TextBlock Text="{Binding WeChatCnyText}" FontSize="18" FontWeight="Bold" Foreground="#86EFAC" />
                   </StackPanel>
 
+                  <!-- Cash: typed amount first, then quick denominations -->
                   <StackPanel Spacing="6" IsVisible="{Binding IsCashPayment}">
+                    <TextBlock Text="المبلغ المستلم" Foreground="#94A3B8" FontSize="12" FontWeight="SemiBold" />
+                    <TextBox x:Name="TenderBox"
+                             GotFocus="OnTouchInputGotFocus"
+                             Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
+                             PlaceholderText="0.00"
+                             FontSize="22"
+                             MinHeight="48"
+                             FlowDirection="LeftToRight"
+                             KeyDown="OnTenderKeyDown" />
                     <TextBlock Text="فئات نقدية سريعة" Foreground="#94A3B8" FontSize="12"
                                IsVisible="{Binding ShowQuickCashOptions}" />
                     <ItemsControl ItemsSource="{Binding QuickCashOptions}"
@@ -619,16 +616,8 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <TextBlock Text="المبلغ المستلم" Foreground="#94A3B8" FontSize="12" />
-                    <TextBox x:Name="TenderBox"
-                             GotFocus="OnTouchInputGotFocus"
-                             Text="{Binding TenderText, UpdateSourceTrigger=PropertyChanged}"
-                             PlaceholderText="0.00"
-                             FontSize="22"
-                             MinHeight="48"
-                             FlowDirection="LeftToRight"
-                             KeyDown="OnTenderKeyDown" />
                   </StackPanel>
+
                   <TextBlock Text="{Binding TenderHint}"
                              Foreground="#FCA5A5"
                              IsVisible="{Binding CustomerChangeIsShortfall}"
@@ -637,6 +626,50 @@
                              Foreground="#E2E8F0"
                              IsVisible="{Binding !CustomerChangeIsShortfall}"
                              TextWrapping="Wrap" />
+
+                  <!-- Invoice total last — high contrast for the cashier -->
+                  <Border Background="#FEF3C7"
+                          CornerRadius="14"
+                          Padding="12,10"
+                          BorderBrush="#F59E0B"
+                          BorderThickness="3">
+                    <StackPanel Spacing="4">
+                      <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Text="قيمة الفاتورة"
+                                   FontSize="14"
+                                   FontWeight="Bold"
+                                   Foreground="#92400E"
+                                   VerticalAlignment="Center" />
+                        <Border Grid.Column="1"
+                                Background="#D97706"
+                                CornerRadius="8"
+                                Padding="10,4">
+                          <TextBlock Text="{Binding PaymentMethodLabel}"
+                                     FontSize="14"
+                                     FontWeight="Bold"
+                                     Foreground="White"
+                                     VerticalAlignment="Center" />
+                        </Border>
+                      </Grid>
+                      <TextBlock Text="{Binding TotalText}"
+                                 FontSize="34"
+                                 FontWeight="Bold"
+                                 Foreground="#7C2D12"
+                                 FlowDirection="LeftToRight"
+                                 HorizontalAlignment="Center" />
+                      <TextBlock Text="{Binding PaymentMethodLabelEn}"
+                                 FontSize="12"
+                                 Foreground="#B45309"
+                                 FlowDirection="LeftToRight"
+                                 HorizontalAlignment="Center" />
+                      <TextBlock Text="{Binding LoyaltyDiscountText}"
+                                 IsVisible="{Binding ShowLoyaltyDiscount}"
+                                 Foreground="#B45309"
+                                 FontWeight="SemiBold"
+                                 FontSize="12"
+                                 HorizontalAlignment="Center" />
+                    </StackPanel>
+                  </Border>
                 </StackPanel>
               </Border>
             </ScrollViewer>
@@ -1596,10 +1629,32 @@
         </Grid>
         <TextBlock Text="{Binding ClockText}" FontSize="28" FontWeight="Bold" Foreground="#F8FAFC"
                    FlowDirection="LeftToRight" />
-        <TextBlock Text="{Binding AppVersionText}" FontSize="14" FontWeight="SemiBold" Foreground="#FDE68A"
-                   FlowDirection="LeftToRight" />
+        <Border Background="#1E3A5F"
+                BorderBrush="#FBBF24"
+                BorderThickness="2"
+                CornerRadius="12"
+                Padding="12,10">
+          <StackPanel Spacing="4">
+            <TextBlock Text="إصدار البرنامج"
+                       FontSize="12"
+                       Foreground="#93C5FD" />
+            <TextBlock Text="{Binding AppVersionText}"
+                       FontSize="20"
+                       FontWeight="Bold"
+                       Foreground="#FDE68A"
+                       FlowDirection="LeftToRight" />
+          </StackPanel>
+        </Border>
         <TextBlock Text="{Binding UpdateHint}" IsVisible="{Binding HasUpdateHint}"
                    FontSize="13" Foreground="#A7F3D0" TextWrapping="Wrap" />
+        <Button Content="{Binding CheckUpdatesButtonText}"
+                Classes="pos-tender"
+                Background="#7C3AED"
+                Command="{Binding CheckForUpdatesCommand}"
+                IsEnabled="{Binding CanCheckForUpdates}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                MinHeight="44" />
         <TextBlock Text="{Binding SessionChipText}" FontSize="14" Foreground="#F9A8D4" />
         <TextBlock Text="{Binding OnlineText}" FontSize="14" Foreground="#A7F3D0" />
         <TextBlock Text="{Binding OutboxStatusText}" FontSize="14" Foreground="#E2E8F0" />

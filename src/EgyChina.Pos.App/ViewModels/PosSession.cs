@@ -5,6 +5,7 @@ using System.Net.NetworkInformation;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System.Reflection;
 using EgyChina.Pos.App.Services;
 using EgyChina.Pos.Core;
 using EgyChina.Pos.Data;
@@ -22,6 +23,7 @@ public partial class PosSession : ObservableObject
     private readonly IPosErpGateway _erp;
     private readonly SyncOptions _syncOptions;
     private SyncWorker? _syncWorker;
+    private PosUpdateService? _updateService;
     private string? _lastSaleId;
     private long _lastSaleTotalMinor;
     private DateTimeOffset? _settlementAt;
@@ -118,6 +120,40 @@ public partial class PosSession : ObservableObject
 
     /// <summary>Wire the background worker so «تحديث الأصناف» can pulse an immediate tick.</summary>
     public void BindSyncWorker(SyncWorker worker) => _syncWorker = worker;
+
+    public void BindUpdateService(PosUpdateService service) => _updateService = service;
+
+    /// <summary>Safe to apply a downloaded Velopack package (no open shift / tender).</summary>
+    public bool CanApplyAppUpdate =>
+        _currentShift is null && !IsTendering && !ShowCloseShift;
+
+    public void SetAppVersion(string version)
+    {
+        var clean = string.IsNullOrWhiteSpace(version) ? ReadFallbackVersion() : version.Trim();
+        AppVersionText = "نسخة " + clean;
+        var channel = _updateService?.Channel;
+        if (!string.IsNullOrWhiteSpace(channel))
+            AppVersionText += " · " + channel;
+    }
+
+    public void AnnounceUpdateHint(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return;
+        UpdateHint = message.Trim();
+        AnnounceHint(UpdateHint);
+    }
+
+    [ObservableProperty]
+    private string _appVersionText = "نسخة —";
+
+    [ObservableProperty]
+    private string _updateHint = string.Empty;
+
+    public bool HasUpdateHint => !string.IsNullOrWhiteSpace(UpdateHint);
+
+    partial void OnUpdateHintChanged(string value) =>
+        OnPropertyChanged(nameof(HasUpdateHint));
 
     [ObservableProperty]
     private string _printerCaption = string.Empty;
@@ -2632,6 +2668,10 @@ public partial class PosSession : ObservableObject
 
             if (printDoc is not null)
                 await PrintZReportAsync(printDoc).ConfigureAwait(true);
+
+            // Till is idle — apply a downloaded update if one is waiting.
+            if (_updateService?.TryApplyAfterShiftClose() == true)
+                return;
         }
         catch (Exception ex)
         {
@@ -3394,5 +3434,20 @@ public partial class PosSession : ObservableObject
             || (product.NameEn?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
             || (product.NameZh?.Contains(term, StringComparison.Ordinal) ?? false)
             || (product.Barcode?.Contains(term, StringComparison.Ordinal) ?? false);
+    }
+
+    private static string ReadFallbackVersion()
+    {
+        var assembly = typeof(PosSession).Assembly;
+        var informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var plus = informational.IndexOf('+', StringComparison.Ordinal);
+            return plus > 0 ? informational[..plus] : informational.Trim();
+        }
+
+        return assembly.GetName().Version?.ToString(3) ?? "0.0.0";
     }
 }

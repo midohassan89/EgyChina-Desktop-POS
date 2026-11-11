@@ -1,6 +1,24 @@
 ﻿# Build a Velopack one-click installer (Setup.exe) for EgyChina Desktop POS.
 # Self-contained win-x64 — tills do not need a separate .NET runtime.
 # Data stays in %LOCALAPPDATA%\EgyChina\Pos and is never packed into the installer.
+#
+# Examples:
+#   .\scripts\build-setup.ps1
+#   .\scripts\build-setup.ps1 -Channel beta
+#   .\scripts\build-setup.ps1 -Channel stable -PackVersion 0.3.22 -SkipDownload
+param(
+    [ValidateSet("stable", "beta")]
+    [string]$Channel = "stable",
+
+    [string]$PackVersion,
+
+    [string]$FeedUrl,
+
+    [switch]$SkipDownload,
+
+    [string]$OutputSetup
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
@@ -8,11 +26,12 @@ $project = Join-Path $root "src\EgyChina.Pos.App\EgyChina.Pos.App.csproj"
 $iconPath = Join-Path $root "assets\EgyChina.ico"
 $publishDir = Join-Path $root "artifacts\velopack\publish"
 $releasesDir = Join-Path $root "artifacts\velopack\releases"
-$setupOut = Join-Path $root "artifacts\Setup.exe"
+$setupOut = if ($OutputSetup) { $OutputSetup } else { Join-Path $root "artifacts\Setup.exe" }
 $packId = "EgyChinaPOS"
 $packTitle = "EgyChina POS"
 $mainExe = "EgyChina.Pos.App.exe"
 $velopackPkgVersion = "0.0.1298"
+$defaultFeedBase = "https://updates.echinamart.com"
 
 function Ensure-EgyChinaIcon([string]$Path) {
     if ((Test-Path $Path) -and ((Get-Item $Path).Length -gt 0)) {
@@ -169,9 +188,24 @@ function Ensure-Vpk([string]$Version) {
 }
 
 $versionNode = Select-Xml -Path $project -XPath "//Version" | Select-Object -First 1
-$version = if ($versionNode) { $versionNode.Node.InnerText.Trim() } else { "0.0.0" }
-if ($version -notmatch '^\d+\.\d+\.\d+') {
-    throw "Version '$version' is not valid for Velopack (need major.minor.patch)."
+$version = if ($PackVersion) {
+    $PackVersion.Trim().TrimStart('v', 'V')
+}
+elseif ($versionNode) {
+    $versionNode.Node.InnerText.Trim()
+}
+else {
+    "0.0.0"
+}
+if ($version -notmatch '^\d+\.\d+\.\d+([\-\+][0-9A-Za-z\.\-]+)?$') {
+    throw "Version '$version' is not valid for Velopack (semver required)."
+}
+
+$feed = if ($FeedUrl) {
+    $FeedUrl.Trim().TrimEnd('/') + "/"
+}
+else {
+    "$defaultFeedBase/$Channel/"
 }
 
 Ensure-EgyChinaIcon $iconPath
@@ -189,6 +223,7 @@ Write-Host "Publishing self-contained win-x64 $version ..."
     -r win-x64 `
     --self-contained true `
     -p:PublishReadyToRun=true `
+    -p:Version=$version `
     -p:DebugType=None `
     -o $publishDir
 if ($LASTEXITCODE -ne 0) {
@@ -203,11 +238,19 @@ if (-not (Test-Path $exePath)) {
 Assert-CleanPublish $publishDir
 Ensure-Vpk $velopackPkgVersion
 
-Write-Host "Packaging Velopack release ($packId $version) ..."
 # vpk 0.0.1298 targets Microsoft.AspNetCore.App 9; tills/devs may only have .NET 10.
 $prevRollForward = $env:DOTNET_ROLL_FORWARD
 $env:DOTNET_ROLL_FORWARD = "LatestMajor"
 try {
+    if (-not $SkipDownload) {
+        Write-Host "Downloading previous releases for deltas from $feed ..."
+        & vpk download http --outputDir $releasesDir --url $feed --channel $Channel
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "vpk download skipped/failed (first release or feed empty) — continuing without deltas."
+        }
+    }
+
+    Write-Host "Packaging Velopack release ($packId $version channel=$Channel) ..."
     & vpk pack `
         --packId $packId `
         --packVersion $version `
@@ -216,6 +259,7 @@ try {
         --packTitle $packTitle `
         --packAuthors "EgyChina" `
         --icon $iconPath `
+        --channel $Channel `
         --outputDir $releasesDir
     if ($LASTEXITCODE -ne 0) {
         throw "vpk pack failed with exit code $LASTEXITCODE"
@@ -247,6 +291,8 @@ Copy-Item -Force $generatedSetup.FullName $setupOut
 Write-Host ""
 Write-Host "Done."
 Write-Host "  Version : $version"
+Write-Host "  Channel : $Channel"
+Write-Host "  Feed    : $feed"
 Write-Host "  Setup   : $setupOut"
 Write-Host "  Releases: $releasesDir"
 Write-Host "Install on a till by running Setup.exe. Cashier data stays in %LOCALAPPDATA%\EgyChina\Pos and is not removed on uninstall."

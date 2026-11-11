@@ -48,6 +48,48 @@ public sealed class PosDatabase
 
     public string DatabasePath => _path;
 
+    /// <summary>Highest embedded schema migration version shipped with this build.</summary>
+    public const int LatestSchemaVersion = 9;
+
+    /// <summary>Read schema version without migrating. Returns 0 if the DB/file is missing or empty.</summary>
+    public static int PeekSchemaVersion(string databasePath)
+    {
+        if (string.IsNullOrWhiteSpace(databasePath) || !File.Exists(databasePath))
+            return 0;
+        try
+        {
+            if (new FileInfo(databasePath).Length == 0)
+                return 0;
+            using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = databasePath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false,
+            }.ToString());
+            connection.Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                SELECT COALESCE(MAX(version), 0) FROM schema_migration
+                """;
+            try
+            {
+                var scalar = cmd.ExecuteScalar();
+                return scalar is long l ? (int)l : Convert.ToInt32(scalar ?? 0);
+            }
+            catch (SqliteException)
+            {
+                return 0;
+            }
+        }
+        catch (Exception)
+        {
+            return 0;
+        }
+    }
+
+    public bool HasPendingMigrations() =>
+        PeekSchemaVersion(_path) < LatestSchemaVersion;
+
     public void Initialize()
     {
         lock (_gate)

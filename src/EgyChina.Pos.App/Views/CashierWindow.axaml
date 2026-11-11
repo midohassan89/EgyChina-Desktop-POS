@@ -92,6 +92,13 @@
             </Grid>
 
             <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
+              <TextBlock Text="{Binding AppVersionText}"
+                         FontSize="11"
+                         FontWeight="SemiBold"
+                         Foreground="#FDE68A"
+                         VerticalAlignment="Center"
+                         FlowDirection="LeftToRight"
+                         Margin="0,0,4,0" />
               <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                 <Border Classes="link-pill"
                         Classes.on="{Binding HasInternetLink}"
@@ -1589,6 +1596,10 @@
         </Grid>
         <TextBlock Text="{Binding ClockText}" FontSize="28" FontWeight="Bold" Foreground="#F8FAFC"
                    FlowDirection="LeftToRight" />
+        <TextBlock Text="{Binding AppVersionText}" FontSize="14" FontWeight="SemiBold" Foreground="#FDE68A"
+                   FlowDirection="LeftToRight" />
+        <TextBlock Text="{Binding UpdateHint}" IsVisible="{Binding HasUpdateHint}"
+                   FontSize="13" Foreground="#A7F3D0" TextWrapping="Wrap" />
         <TextBlock Text="{Binding SessionChipText}" FontSize="14" Foreground="#F9A8D4" />
         <TextBlock Text="{Binding OnlineText}" FontSize="14" Foreground="#A7F3D0" />
         <TextBlock Text="{Binding OutboxStatusText}" FontSize="14" Foreground="#E2E8F0" />

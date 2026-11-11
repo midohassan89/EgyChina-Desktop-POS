@@ -66,6 +66,8 @@ Preferred installer (Velopack one-click `Setup.exe`):
 
 Output: `artifacts\Setup.exe`. Installs **EgyChina POS** with desktop/Start Menu shortcuts. Self-contained win-x64 (no separate .NET install). Cashier data stays in `%LOCALAPPDATA%\EgyChina\Pos` and is **not** removed on uninstall.
 
+Automatic updates (beta/stable channels, GitHub tag → VPS): see [docs/auto-update.md](docs/auto-update.md).
+
 Legacy folder publish (optional):
 
 ```powershell

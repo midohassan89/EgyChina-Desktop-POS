@@ -19,6 +19,7 @@ public partial class App : Application
 {
     private PosDatabase? _database;
     private SyncWorker? _worker;
+    private PosUpdateService? _updates;
     private PosSession? _session;
     private CustomerWindow? _customer;
     private bool _cashierPlaced;
@@ -59,6 +60,8 @@ public partial class App : Application
 
             desktop.Exit += (_, _) =>
             {
+                if (_updates is not null)
+                    _updates.DisposeAsync().AsTask().GetAwaiter().GetResult();
                 if (_worker is not null)
                     _worker.DisposeAsync().AsTask().GetAwaiter().GetResult();
             };
@@ -100,6 +103,16 @@ public partial class App : Application
         }
 
         _database = new PosDatabase(PosPaths.DatabaseFile());
+        // Migrations must never run without a snapshot of the previous schema.
+        if (File.Exists(_database.DatabasePath) && _database.HasPendingMigrations())
+        {
+            var preMigrate = DatabaseBackup.Create(_database);
+            if (preMigrate.Created)
+                PosLog.Info($"pre-migration backup path={preMigrate.Path}");
+            else
+                PosLog.Error($"pre-migration backup skipped: {LogRedactor.Redact(preMigrate.Error)}");
+        }
+
         _database.Initialize();
         var products = _database.ListActiveProducts();
         var demo = _database.GetSetting("catalog.source") == "demo";
@@ -141,6 +154,25 @@ public partial class App : Application
         _worker.Start();
         StartProductImageWarmup(_database, _session, syncOptions.BaseAddress);
 
+        var updateSettings = PosUpdateSettings.Load(root);
+        PosLog.Info($"update feed channel={updateSettings.Channel} url={updateSettings.FeedUrl}");
+        _updates = new PosUpdateService(
+            updateSettings,
+            canApplyNow: () => _session?.CanApplyAppUpdate == true,
+            announce: message =>
+            {
+                try
+                {
+                    Dispatcher.UIThread.Post(() => _session?.AnnounceUpdateHint(message));
+                }
+                catch (Exception ex)
+                {
+                    PosLog.Error("update announce failed", ex);
+                }
+            });
+        _session.BindUpdateService(_updates);
+        _updates.Start();
+
         var cashier = new CashierWindow { DataContext = _session };
         cashier.Opened += (_, _) => PlaceWindows(moveCashier: !_cashierPlaced);
 
@@ -148,6 +180,7 @@ public partial class App : Application
         ShowCustomer();
 
         var version = ReadAppVersion();
+        _session.SetAppVersion(version);
         try
         {
             AppHeartbeat.Write(root, version);

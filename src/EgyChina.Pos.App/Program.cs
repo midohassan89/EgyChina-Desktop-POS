@@ -14,7 +14,10 @@ sealed class Program
     public static void Main(string[] args)
     {
         // Must run before UI / single-instance so install/update hooks can exit cleanly.
-        VelopackApp.Build().Run();
+        // Auto-apply disabled: we only apply when no open shift / tender is active.
+        VelopackApp.Build()
+            .SetAutoApplyOnStartup(false)
+            .Run();
 
         // Arabic copy, Western digits. ar-EG would rewrite money formatting.
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;

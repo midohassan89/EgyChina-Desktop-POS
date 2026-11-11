@@ -1,0 +1,129 @@
+# Build Velopack Setup + release packages on version tags, then rsync to the updates VPS.
+# Secrets (never commit): VPS_HOST, VPS_USER, VPS_SSH_KEY
+# Tags: v1.2.3 → stable · v1.2.3-beta / v1.2.3-beta.1 → beta
+
+name: Release Desktop POS
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      channel: ${{ steps.meta.outputs.channel }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Resolve version and channel
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.Trim().TrimStart('v', 'V')
+          if ($ver -notmatch '^\d+\.\d+\.\d+') {
+            throw "Tag '$tag' must look like v1.2.3 or v1.2.3-beta.1"
+          }
+          $channel = if ($ver -match '(?i)-beta') { "beta" } else { "stable" }
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "channel=$channel" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "version=$ver channel=$channel"
+
+      - name: Test
+        shell: pwsh
+        run: |
+          dotnet test tests\EgyChina.Pos.Tests\EgyChina.Pos.Tests.csproj -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build Setup (Velopack)
+        shell: pwsh
+        run: |
+          $env:DOTNET_ROLL_FORWARD = "LatestMajor"
+          .\scripts\build-setup.ps1 `
+            -Channel "${{ steps.meta.outputs.channel }}" `
+            -PackVersion "${{ steps.meta.outputs.version }}" `
+            -FeedUrl "https://updates.echinamart.com/${{ steps.meta.outputs.channel }}/"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: velopack-${{ steps.meta.outputs.channel }}-${{ steps.meta.outputs.version }}
+          path: |
+            artifacts/Setup.exe
+            artifacts/velopack/releases/**
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: velopack-${{ needs.build.outputs.channel }}-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Snapshot + rsync to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          CHANNEL: ${{ needs.build.outputs.channel }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VPS_HOST:-}" ] || [ -z "${VPS_USER:-}" ] || [ -z "${VPS_SSH_KEY:-}" ]; then
+            echo "Missing VPS_HOST / VPS_USER / VPS_SSH_KEY secrets."
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/pos_deploy_key
+          chmod 600 ~/.ssh/pos_deploy_key
+          cat > ~/.ssh/config <<EOF
+          Host pos-updates
+            HostName ${VPS_HOST}
+            User ${VPS_USER}
+            IdentityFile ~/.ssh/pos_deploy_key
+            StrictHostKeyChecking accept-new
+          EOF
+          chmod 600 ~/.ssh/config
+          REMOTE_DIR="/var/www/pos-updates/${CHANNEL}"
+          PREV_DIR="/var/www/pos-updates/${CHANNEL}.prev"
+          ssh pos-updates "mkdir -p '${REMOTE_DIR}' '${PREV_DIR}' && if [ -d '${REMOTE_DIR}' ]; then rsync -a --delete '${REMOTE_DIR}/' '${PREV_DIR}/'; fi"
+          # Artifact layout: Setup.exe at root, releases under velopack/releases or flat.
+          RELEASE_SRC="dist/velopack/releases"
+          if [ ! -d "$RELEASE_SRC" ]; then
+            RELEASE_SRC="dist"
+          fi
+          rsync -avz --delete \
+            --exclude 'Setup.exe' \
+            --exclude 'EgyChinaPOS-*-Setup.exe' \
+            "${RELEASE_SRC}/" \
+            "pos-updates:${REMOTE_DIR}/"
+          # Keep Setup.exe on the server for manual install if needed.
+          if [ -f dist/Setup.exe ]; then
+            scp dist/Setup.exe "pos-updates:${REMOTE_DIR}/Setup.exe"
+          fi
+
+      - name: GitHub Release with Setup.exe
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EgyChina POS ${{ needs.build.outputs.version }} (${{ needs.build.outputs.channel }})
+          files: dist/Setup.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

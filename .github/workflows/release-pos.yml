@@ -1,5 +1,5 @@
 # Build Velopack Setup + release packages on version tags, then rsync to the updates VPS.
-# Secrets (never commit): VPS_HOST, VPS_USER, VPS_SSH_KEY
+# Secrets (never commit): VPS_HOST, VPS_USER, VPS_PORT, VPS_SSH_KEY
 # Tags: v1.2.3 → stable · v1.2.3-beta / v1.2.3-beta.1 → beta
 
 name: Release Desktop POS
@@ -81,12 +81,13 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
           VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           CHANNEL: ${{ needs.build.outputs.channel }}
         run: |
           set -euo pipefail
-          if [ -z "${VPS_HOST:-}" ] || [ -z "${VPS_USER:-}" ] || [ -z "${VPS_SSH_KEY:-}" ]; then
-            echo "Missing VPS_HOST / VPS_USER / VPS_SSH_KEY secrets."
+          if [ -z "${VPS_HOST:-}" ] || [ -z "${VPS_USER:-}" ] || [ -z "${VPS_PORT:-}" ] || [ -z "${VPS_SSH_KEY:-}" ]; then
+            echo "Missing VPS_HOST / VPS_USER / VPS_PORT / VPS_SSH_KEY secrets."
             exit 1
           fi
           mkdir -p ~/.ssh
@@ -96,26 +97,32 @@ jobs:
           Host pos-updates
             HostName ${VPS_HOST}
             User ${VPS_USER}
+            Port ${VPS_PORT}
             IdentityFile ~/.ssh/pos_deploy_key
             StrictHostKeyChecking accept-new
           EOF
           chmod 600 ~/.ssh/config
+          RSYNC_RSH="ssh -p ${VPS_PORT} -i ~/.ssh/pos_deploy_key -o StrictHostKeyChecking=accept-new"
           REMOTE_DIR="/var/www/pos-updates/${CHANNEL}"
           PREV_DIR="/var/www/pos-updates/${CHANNEL}.prev"
-          ssh pos-updates "mkdir -p '${REMOTE_DIR}' '${PREV_DIR}' && if [ -d '${REMOTE_DIR}' ]; then rsync -a --delete '${REMOTE_DIR}/' '${PREV_DIR}/'; fi"
+          ssh -p "${VPS_PORT}" -i ~/.ssh/pos_deploy_key -o StrictHostKeyChecking=accept-new \
+            "${VPS_USER}@${VPS_HOST}" \
+            "mkdir -p '${REMOTE_DIR}' '${PREV_DIR}' && if [ -d '${REMOTE_DIR}' ]; then rsync -a --delete '${REMOTE_DIR}/' '${PREV_DIR}/'; fi"
           # Artifact layout: Setup.exe at root, releases under velopack/releases or flat.
           RELEASE_SRC="dist/velopack/releases"
           if [ ! -d "$RELEASE_SRC" ]; then
             RELEASE_SRC="dist"
           fi
           rsync -avz --delete \
+            -e "${RSYNC_RSH}" \
             --exclude 'Setup.exe' \
             --exclude 'EgyChinaPOS-*-Setup.exe' \
             "${RELEASE_SRC}/" \
-            "pos-updates:${REMOTE_DIR}/"
+            "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/"
           # Keep Setup.exe on the server for manual install if needed.
           if [ -f dist/Setup.exe ]; then
-            scp dist/Setup.exe "pos-updates:${REMOTE_DIR}/Setup.exe"
+            scp -P "${VPS_PORT}" -i ~/.ssh/pos_deploy_key -o StrictHostKeyChecking=accept-new \
+              dist/Setup.exe "${VPS_USER}@${VPS_HOST}:${REMOTE_DIR}/Setup.exe"
           fi
 
       - name: GitHub Release with Setup.exe

@@ -134,6 +134,7 @@ sudo chmod 600 /home/deploy/.ssh/authorized_keys
 في GitHub → Settings → Secrets:
 - `VPS_HOST` = IP أو hostname
 - `VPS_USER` = `deploy`
+- `VPS_PORT` = بورت SSH (مثلاً `8922` — مش 22)
 - `VPS_SSH_KEY` = محتوى الملف الخاص `pos_deploy_ed25519` كاملاً
 
 ### 2) Nginx + HTTPS لـ updates.echinamart.com

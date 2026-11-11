@@ -11,10 +11,23 @@ namespace EgyChina.Pos.Sync;
 /// </summary>
 public static class ShiftErpSync
 {
+    public static Task<ShiftErpSyncResult> PushPendingAsync(
+        PosDatabase database,
+        Uri erpOrigin,
+        string? deviceBearerToken,
+        CancellationToken cancellationToken) =>
+        PushPendingAsync(
+            database,
+            erpOrigin,
+            deviceBearerToken,
+            ShiftErpSyncPhase.All,
+            cancellationToken);
+
     public static async Task<ShiftErpSyncResult> PushPendingAsync(
         PosDatabase database,
         Uri erpOrigin,
         string? deviceBearerToken,
+        ShiftErpSyncPhase phase,
         CancellationToken cancellationToken)
     {
         // Store shift routes do not require Bearer; token is optional for future protected paths.
@@ -25,6 +38,8 @@ public static class ShiftErpSync
         using var client = new ErpPosClient(erpOrigin, deviceBearerToken);
         var opened = 0;
         var closed = 0;
+        var doOpens = phase is ShiftErpSyncPhase.Opens or ShiftErpSyncPhase.All;
+        var doCloses = phase is ShiftErpSyncPhase.Closes or ShiftErpSyncPhase.All;
 
         foreach (var row in pending)
         {
@@ -32,7 +47,7 @@ public static class ShiftErpSync
             var shift = row;
             try
             {
-                if (string.IsNullOrWhiteSpace(shift.ServerId))
+                if (doOpens && string.IsNullOrWhiteSpace(shift.ServerId))
                 {
                     var bound = await EnsureOpenedAsync(database, client, shift, cancellationToken)
                         .ConfigureAwait(false);
@@ -42,9 +57,12 @@ public static class ShiftErpSync
                     shift = bound;
                 }
 
-                if (string.Equals(shift.Status, "closed", StringComparison.OrdinalIgnoreCase)
+                if (doCloses
+                    && string.Equals(shift.Status, "closed", StringComparison.OrdinalIgnoreCase)
                     && !string.Equals(shift.SyncStatus, "synced", StringComparison.OrdinalIgnoreCase))
                 {
+                    if (string.IsNullOrWhiteSpace(shift.ServerId))
+                        continue;
                     if (await CloseOnErpAsync(database, client, shift, cancellationToken).ConfigureAwait(false))
                         closed++;
                 }
@@ -158,6 +176,16 @@ public static class ShiftErpSync
         if (string.IsNullOrWhiteSpace(localShift.ServerId))
             return false;
 
+        // ERP only increments cashSales while the shift is OPEN. Never close until local
+        // sales for this till have been accepted (or the Z totals stay wrong on the dashboard).
+        var outbox = database.ReadOutboxSnapshot();
+        if (outbox.Pending + outbox.Inflight > 0)
+        {
+            PosLog.Info(
+                $"defer shift close local={localShift.Id} server={localShift.ServerId} pending={outbox.Pending} inflight={outbox.Inflight}");
+            return false;
+        }
+
         var actualMajor = (localShift.ClosingCashMinor ?? localShift.OpeningFloatMinor) / 100m;
         long.TryParse(localShift.ServerId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var shiftIdNum);
         var payload = new Dictionary<string, object?>
@@ -209,6 +237,13 @@ public static class ShiftErpSync
             return null;
         }
     }
+}
+
+public enum ShiftErpSyncPhase
+{
+    Opens,
+    Closes,
+    All,
 }
 
 public sealed record ShiftErpSyncResult(bool Ok, int Opened, int Closed, string? Error);

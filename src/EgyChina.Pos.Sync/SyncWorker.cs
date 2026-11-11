@@ -157,21 +157,22 @@ public sealed class SyncWorker : IAsyncDisposable
             await RefreshCatalogAsync(deviceToken, cancellationToken).ConfigureAwait(false);
         }
 
-        // Shifts → ERP (open/close) so dashboard Z-reports stay complete — independent of sale money gates.
+        // Bind open shifts first so sale payloads can resolve ERP shiftId via localShiftId.
         try
         {
-            var shifts = await ShiftErpSync.PushPendingAsync(
+            var opens = await ShiftErpSync.PushPendingAsync(
                     _database,
                     _options.BaseAddress,
                     deviceToken,
+                    ShiftErpSyncPhase.Opens,
                     cancellationToken)
                 .ConfigureAwait(false);
-            if (shifts.Opened > 0 || shifts.Closed > 0)
-                PosLog.Info($"shift erp sync opened={shifts.Opened} closed={shifts.Closed}");
+            if (opens.Opened > 0)
+                PosLog.Info($"shift erp sync opened={opens.Opened}");
         }
         catch (Exception ex)
         {
-            PosLog.Error("shift erp sync tick failed", ex);
+            PosLog.Error("shift erp open tick failed", ex);
         }
 
         var effectiveOptions = new SyncOptions
@@ -186,69 +187,97 @@ public sealed class SyncWorker : IAsyncDisposable
             HttpTimeout = _options.HttpTimeout,
         };
 
-        var saleBlock = effectiveOptions.TransmissionBlock();
-        var canTransmitSales = saleBlock is null;
-        if (!canTransmitSales && !_options.CatalogPull)
-        {
-            var (cursor, message) = saleBlock switch
-            {
-                "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
-                "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
-                "demo-product-not-on-erp" => ("demo-product-not-on-erp", "بيع بأصناف تجريبية محلية لا تُرفع لسيرفر ERP."),
-                _ => (NotConfiguredCursor, "البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP لرفع المبيعات."),
-            };
-            _database.WriteCursor(CursorStream, cursor, null);
-            PublishLocalStatus(message, online: false);
-            return;
-        }
-
-        if (!canTransmitSales)
-        {
-            // Catalog-only till: still report healthy online after a successful shelf refresh.
-            var catalogOnlySnap = _database.ReadOutboxSnapshot();
-            _database.WriteCursor(CursorStream, "idle", "catalog-only");
-            _status.Update(
-                true,
-                "الكتالوج محدَّث تلقائياً. إرسال المبيعات ينتظر اكتمال إعداد وحدة المبلغ.",
-                catalogOnlySnap.Pending + catalogOnlySnap.Inflight,
-                catalogOnlySnap.Dead,
-                catalogOnlySnap.LastError);
-            return;
-        }
-
-        var sync = new SaleOutboxSync(
-            _database,
-            new ErpPosClient(_options.BaseAddress, deviceToken, _http),
-            effectiveOptions,
-            postSales: true);
-        SyncTickResult result;
         try
         {
-            result = await sync.RunAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
+            var saleBlock = effectiveOptions.TransmissionBlock();
+            var canTransmitSales = saleBlock is null;
+            if (!canTransmitSales && !_options.CatalogPull)
+            {
+                var (cursor, message) = saleBlock switch
+                {
+                    "money-scale-unverified" => ("money-scale-unverified", "وحدة المبلغ في /api/checkout غير مؤكدة. لا يُرسل بيع."),
+                    "payment-method-unverified" => ("payment-method-unverified", "اسم طريقة الدفع عند الـ ERP غير معروف. لا يُرسل بيع."),
+                    "demo-product-not-on-erp" => ("demo-product-not-on-erp", "بيع بأصناف تجريبية محلية لا تُرفع لسيرفر ERP."),
+                    _ => (NotConfiguredCursor, "البيع يعمل على الجهاز. لم يُضبط رابط سيرفر ERP لرفع المبيعات."),
+                };
+                _database.WriteCursor(CursorStream, cursor, null);
+                PublishLocalStatus(message, online: false);
+                return;
+            }
 
-        var snap = result.Snapshot ?? _database.ReadOutboxSnapshot();
-        var left = result.Pending >= 0 ? result.Pending : snap.Pending + snap.Inflight;
-        var online = result.Code is "idle";
-        var text = result.Code switch
+            if (!canTransmitSales)
+            {
+                // Catalog-only till: still report healthy online after a successful shelf refresh.
+                var catalogOnlySnap = _database.ReadOutboxSnapshot();
+                _database.WriteCursor(CursorStream, "idle", "catalog-only");
+                _status.Update(
+                    true,
+                    "الكتالوج محدَّث تلقائياً. إرسال المبيعات ينتظر اكتمال إعداد وحدة المبلغ.",
+                    catalogOnlySnap.Pending + catalogOnlySnap.Inflight,
+                    catalogOnlySnap.Dead,
+                    catalogOnlySnap.LastError);
+                return;
+            }
+
+            var sync = new SaleOutboxSync(
+                _database,
+                new ErpPosClient(_options.BaseAddress, deviceToken, _http),
+                effectiveOptions,
+                postSales: true);
+            SyncTickResult result;
+            try
+            {
+                result = await sync.RunAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            var snap = result.Snapshot ?? _database.ReadOutboxSnapshot();
+            var left = result.Pending >= 0 ? result.Pending : snap.Pending + snap.Inflight;
+            var online = result.Code is "idle";
+            var text = result.Code switch
+            {
+                "unauthorized" => "الخادم رد 401. المبيعات ما زالت على هذا الجهاز.",
+                "transport" => "انقطع الرد قبل تأكيد القبول. البيع ما زال في صندوق الصادر.",
+                "idle" when result.Accepted > 0 => "قُبلت مبيعات على الخادم دون تكرار محلي.",
+                "idle" when result.MarkedDead > 0 => "بعض المبيعات معلّمة كتالفة محلياً؛ الإيصال محفوظ.",
+                "idle" when left == 0 && snap.Dead == 0 =>
+                    _options.CatalogPull
+                        ? "الكتالوج والمبيعات المحلية محدَّثان."
+                        : "لا توجد مبيعات بانتظار الإرسال.",
+                "idle" when left == 0 => "لا بانتظار إرسال. توجد قيود تالفة تحتاج مراجعة.",
+                _ => "صندوق الصادر ينتظر رقم صنف من الـ ERP أو رداً مكتملاً.",
+            };
+            _database.WriteCursor(CursorStream, result.Code, result.Detail);
+            _status.Update(online, text, left, snap.Dead, snap.LastError);
+        }
+        finally
         {
-            "unauthorized" => "الخادم رد 401. المبيعات ما زالت على هذا الجهاز.",
-            "transport" => "انقطع الرد قبل تأكيد القبول. البيع ما زال في صندوق الصادر.",
-            "idle" when result.Accepted > 0 => "قُبلت مبيعات على الخادم دون تكرار محلي.",
-            "idle" when result.MarkedDead > 0 => "بعض المبيعات معلّمة كتالفة محلياً؛ الإيصال محفوظ.",
-            "idle" when left == 0 && snap.Dead == 0 =>
-                _options.CatalogPull
-                    ? "الكتالوج والمبيعات المحلية محدَّثان."
-                    : "لا توجد مبيعات بانتظار الإرسال.",
-            "idle" when left == 0 => "لا بانتظار إرسال. توجد قيود تالفة تحتاج مراجعة.",
-            _ => "صندوق الصادر ينتظر رقم صنف من الـ ERP أو رداً مكتملاً.",
-        };
-        _database.WriteCursor(CursorStream, result.Code, result.Detail);
-        _status.Update(online, text, left, snap.Dead, snap.LastError);
+            // Close only after the sales pass — ERP cashSales increments only while OPEN.
+            // Skipped automatically while outbox still has pending/inflight rows.
+            try
+            {
+                var closes = await ShiftErpSync.PushPendingAsync(
+                        _database,
+                        _options.BaseAddress,
+                        deviceToken,
+                        ShiftErpSyncPhase.Closes,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+                if (closes.Closed > 0)
+                    PosLog.Info($"shift erp sync closed={closes.Closed}");
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                PosLog.Error("shift erp close tick failed", ex);
+            }
+        }
     }
 
     private async Task RefreshCatalogAsync(string? deviceToken, CancellationToken cancellationToken)
@@ -338,11 +367,120 @@ public sealed class SyncWorker : IAsyncDisposable
         }
     }
 
-    /// <summary>Push any pending shift open/close before process exit.</summary>
+    /// <summary>
+    /// Drain pending sale outbox now. Returns remaining pending+inflight (0 = clear).
+    /// Call before Z-close upload so ERP shift totals include those sales.
+    /// </summary>
+    public async Task<int> FlushSalesAsync(CancellationToken cancellationToken = default)
+    {
+        if (_http is null || _options.BaseAddress is null)
+            return CountOpenOutbox();
+
+        await WaitForTickGateAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var deviceToken = !string.IsNullOrWhiteSpace(_options.DeviceToken)
+                ? _options.DeviceToken
+                : DeviceCredentialStore.Load();
+
+            // Opens first so mapper can resolve localShiftId → ERP shiftId.
+            try
+            {
+                using var openCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                openCts.CancelAfter(TimeSpan.FromSeconds(15));
+                await ShiftErpSync.PushPendingAsync(
+                        _database,
+                        _options.BaseAddress,
+                        deviceToken,
+                        ShiftErpSyncPhase.Opens,
+                        openCts.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                PosLog.Info("shift open flush before sales timed out");
+            }
+
+            var saleOptions = new SyncOptions
+            {
+                BaseAddress = _options.BaseAddress,
+                DeviceToken = deviceToken,
+                PaymentMethod = _options.PaymentMethod,
+                MoneyScale = _options.MoneyScale,
+                CatalogPull = false,
+                Interval = _options.Interval,
+                HttpTimeout = _options.HttpTimeout,
+            };
+            if (saleOptions.TransmissionBlock() is not null)
+            {
+                PosLog.Info("sale flush skipped — transmission blocked");
+                return CountOpenOutbox();
+            }
+
+            // Drain in batches until empty or token fires (close UI uses ~45s).
+            var acceptedTotal = 0;
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var before = CountOpenOutbox();
+                if (before == 0)
+                    break;
+
+                var sync = new SaleOutboxSync(
+                    _database,
+                    new ErpPosClient(_options.BaseAddress, deviceToken, _http),
+                    saleOptions,
+                    postSales: true);
+                SyncTickResult result;
+                try
+                {
+                    result = await sync.RunAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                acceptedTotal += result.Accepted;
+                var left = CountOpenOutbox();
+                if (left == 0)
+                    break;
+                // No progress this pass — avoid spinning on poison/backoff rows.
+                if (result.Accepted == 0 && result.Posted == 0)
+                    break;
+                if (left >= before && result.Accepted == 0)
+                    break;
+            }
+
+            var remaining = CountOpenOutbox();
+            PosLog.Info($"sale flush accepted={acceptedTotal} remaining={remaining}");
+            return remaining;
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _tickGate, 0);
+        }
+    }
+
+    /// <summary>Push pending sales then shift open/close before process exit.</summary>
     public async Task FlushShiftsAsync(CancellationToken cancellationToken = default)
     {
         if (_http is null || _options.BaseAddress is null)
             return;
+
+        try
+        {
+            using var salesCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            salesCts.CancelAfter(TimeSpan.FromSeconds(30));
+            await FlushSalesAsync(salesCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            PosLog.Info("sale flush on exit cancelled/timeout");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("sale flush on exit failed", ex);
+        }
 
         var deviceToken = !string.IsNullOrWhiteSpace(_options.DeviceToken)
             ? _options.DeviceToken
@@ -355,6 +493,7 @@ public sealed class SyncWorker : IAsyncDisposable
                     _database,
                     _options.BaseAddress,
                     deviceToken,
+                    ShiftErpSyncPhase.All,
                     linked.Token)
                 .ConfigureAwait(false);
             if (shifts.Opened > 0 || shifts.Closed > 0)
@@ -367,6 +506,21 @@ public sealed class SyncWorker : IAsyncDisposable
         catch (Exception ex)
         {
             PosLog.Error("shift flush on exit failed", ex);
+        }
+    }
+
+    private int CountOpenOutbox()
+    {
+        var snap = _database.ReadOutboxSnapshot();
+        return snap.Pending + snap.Inflight;
+    }
+
+    private async Task WaitForTickGateAsync(CancellationToken cancellationToken)
+    {
+        while (Interlocked.CompareExchange(ref _tickGate, 1, 0) != 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            await Task.Delay(40, cancellationToken).ConfigureAwait(false);
         }
     }
 

@@ -2607,15 +2607,28 @@ public partial class PosSession : ObservableObject
             OnPropertyChanged(nameof(SessionChipText));
             OnPropertyChanged(nameof(HasZReport));
             RefreshCheckout();
-            AnnounceHint("جاري رفع تقفيل الوردية للسيرفر…");
             RequestFocus(UiFocusTarget.OpeningFloat);
             DatabaseBackup.Create(_database);
+
+            // Sales must hit ERP while the shift is still OPEN there — flush outbox before close.
+            AnnounceHint("جاري رفع المبيعات المعلقة للسيرفر…");
+            var salesRemaining = await FlushSalesBeforeCloseAsync().ConfigureAwait(true);
+            if (salesRemaining > 0)
+            {
+                AnnounceHint("جاري رفع تقفيل الوردية بعد اكتمال المبيعات…");
+            }
+            else
+            {
+                AnnounceHint("جاري رفع تقفيل الوردية للسيرفر…");
+            }
 
             // Await ERP close so exiting the app right after Z-close does not leave the shift OPEN.
             var uploaded = await PushCloseShiftToErpAsync(closedLocal).ConfigureAwait(true);
             AnnounceHint(uploaded
                 ? "أُغلقت الوردية ورُفعت للسيرفر."
-                : "أُغلقت محلياً — التقفيل سيُرفع تلقائياً عند الاتصال.");
+                : salesRemaining > 0
+                    ? "أُغلقت محلياً — المبيعات أولاً ثم التقفيل يُرفعان تلقائياً."
+                    : "أُغلقت محلياً — التقفيل سيُرفع تلقائياً عند الاتصال.");
 
             if (printDoc is not null)
                 await PrintZReportAsync(printDoc).ConfigureAwait(true);
@@ -3106,6 +3119,32 @@ public partial class PosSession : ObservableObject
         {
             PosLog.Error("push open shift to erp failed", ex);
             _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+        }
+    }
+
+    private async Task<int> FlushSalesBeforeCloseAsync()
+    {
+        if (_syncWorker is null)
+            return _database.ReadOutboxSnapshot() is { } snap
+                ? snap.Pending + snap.Inflight
+                : 0;
+
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            return await _syncWorker.FlushSalesAsync(cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            PosLog.Info("flush sales before close timed out");
+            var snap = _database.ReadOutboxSnapshot();
+            return snap.Pending + snap.Inflight;
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("flush sales before close failed", ex);
+            var snap = _database.ReadOutboxSnapshot();
+            return snap.Pending + snap.Inflight;
         }
     }
 

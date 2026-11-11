@@ -180,6 +180,8 @@ public partial class PosSession : ObservableObject
 
     public bool IsCfdCompleted => CustomerDisplayMode == CustomerDisplayMode.Completed;
 
+    public bool IsCfdPriceCheck => CustomerDisplayMode == CustomerDisplayMode.PriceCheck;
+
     public IReadOnlyList<PosPaymentMethod> PaymentOptions => PosPaymentMethods.CheckoutOptions;
 
     [ObservableProperty]
@@ -523,6 +525,10 @@ public partial class PosSession : ObservableObject
     public bool HasPriceCheckResult => PriceCheckResult is not null;
 
     public bool HasPriceCheckError => !string.IsNullOrWhiteSpace(PriceCheckError);
+
+    public bool IsCfdPriceCheckWaiting => IsCfdPriceCheck && !HasPriceCheckResult && !HasPriceCheckError;
+
+    public bool IsCfdPriceCheckMiss => IsCfdPriceCheck && HasPriceCheckError;
 
     public bool HasSupervisorError => !string.IsNullOrWhiteSpace(SupervisorError);
 
@@ -1410,6 +1416,7 @@ public partial class PosSession : ObservableObject
         PriceCheckQuery = string.Empty;
         PriceCheckResult = null;
         PriceCheckError = string.Empty;
+        RefreshCustomerDisplayMode(DateTimeOffset.Now);
         RequestFocus(UiFocusTarget.PriceCheck);
     }
 
@@ -1420,6 +1427,7 @@ public partial class PosSession : ObservableObject
         PriceCheckQuery = string.Empty;
         PriceCheckResult = null;
         PriceCheckError = string.Empty;
+        RefreshCustomerDisplayMode(DateTimeOffset.Now);
         RequestFocus(UiFocusTarget.Barcode);
     }
 
@@ -1436,6 +1444,7 @@ public partial class PosSession : ObservableObject
         {
             PriceCheckResult = null;
             PriceCheckError = $"غير موجود: {code}";
+            RefreshCustomerDisplayMode(DateTimeOffset.Now);
             RequestFocus(UiFocusTarget.PriceCheck);
             return;
         }
@@ -1447,6 +1456,7 @@ public partial class PosSession : ObservableObject
             product.NameZh,
             product.Sku,
             product.PriceEgpMinor);
+        RefreshCustomerDisplayMode(DateTimeOffset.Now);
         RequestFocus(UiFocusTarget.PriceCheck);
     }
 
@@ -1887,9 +1897,19 @@ public partial class PosSession : ObservableObject
 
     partial void OnEditLineErrorChanged(string value) => OnPropertyChanged(nameof(HasEditLineError));
 
-    partial void OnPriceCheckResultChanged(PriceCheckResult? value) => OnPropertyChanged(nameof(HasPriceCheckResult));
+    partial void OnPriceCheckResultChanged(PriceCheckResult? value)
+    {
+        OnPropertyChanged(nameof(HasPriceCheckResult));
+        OnPropertyChanged(nameof(IsCfdPriceCheckWaiting));
+        OnPropertyChanged(nameof(IsCfdPriceCheckMiss));
+    }
 
-    partial void OnPriceCheckErrorChanged(string value) => OnPropertyChanged(nameof(HasPriceCheckError));
+    partial void OnPriceCheckErrorChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasPriceCheckError));
+        OnPropertyChanged(nameof(IsCfdPriceCheckWaiting));
+        OnPropertyChanged(nameof(IsCfdPriceCheckMiss));
+    }
 
     partial void OnIsOnlineChanged(bool value)
     {
@@ -3223,7 +3243,8 @@ public partial class PosSession : ObservableObject
             IsTendering,
             HasSettlement,
             _settlementAt,
-            now);
+            now,
+            ShowPriceCheck);
         if (CustomerDisplayMode != next)
             CustomerDisplayMode = next;
 
@@ -3231,6 +3252,9 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(IsCfdShopping));
         OnPropertyChanged(nameof(IsCfdPayment));
         OnPropertyChanged(nameof(IsCfdCompleted));
+        OnPropertyChanged(nameof(IsCfdPriceCheck));
+        OnPropertyChanged(nameof(IsCfdPriceCheckWaiting));
+        OnPropertyChanged(nameof(IsCfdPriceCheckMiss));
         OnPropertyChanged(nameof(IdleCustomerText));
     }
 
@@ -3240,6 +3264,9 @@ public partial class PosSession : ObservableObject
         OnPropertyChanged(nameof(IsCfdShopping));
         OnPropertyChanged(nameof(IsCfdPayment));
         OnPropertyChanged(nameof(IsCfdCompleted));
+        OnPropertyChanged(nameof(IsCfdPriceCheck));
+        OnPropertyChanged(nameof(IsCfdPriceCheckWaiting));
+        OnPropertyChanged(nameof(IsCfdPriceCheckMiss));
         OnPropertyChanged(nameof(IdleCustomerText));
     }
 

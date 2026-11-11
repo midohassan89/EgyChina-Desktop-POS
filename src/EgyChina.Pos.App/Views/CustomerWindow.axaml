@@ -459,6 +459,97 @@
       </Grid>
     </Grid>
 
+    <!-- PRICE CHECK: Arabic + Chinese name + price (mirrors cashier price-check overlay) -->
+    <Grid IsVisible="{Binding IsCfdPriceCheck}">
+      <Grid.Background>
+        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+          <GradientStop Color="#0B1220" Offset="0" />
+          <GradientStop Color="#0C4A6E" Offset="0.55" />
+          <GradientStop Color="#082F49" Offset="1" />
+        </LinearGradientBrush>
+      </Grid.Background>
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="18" Margin="40" MaxWidth="900">
+        <Border Background="#0284C7" CornerRadius="18" Padding="18,10" HorizontalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="14">
+            <TextBlock Text="فحص السعر"
+                       FontSize="28"
+                       FontWeight="Bold"
+                       Foreground="White"
+                       VerticalAlignment="Center" />
+            <TextBlock Text="价格查询"
+                       FontSize="22"
+                       FontWeight="SemiBold"
+                       Foreground="#E0F2FE"
+                       VerticalAlignment="Center"
+                       FlowDirection="LeftToRight" />
+          </StackPanel>
+        </Border>
+
+        <StackPanel IsVisible="{Binding IsCfdPriceCheckWaiting}"
+                    Spacing="10"
+                    HorizontalAlignment="Center">
+          <TextBlock Text="مرر الباركود لمعرفة السعر"
+                     FontSize="40"
+                     FontWeight="Bold"
+                     Foreground="#F8FAFC"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap" />
+          <TextBlock Text="请扫描条形码查询价格"
+                     FontSize="26"
+                     Foreground="#BAE6FD"
+                     TextAlignment="Center"
+                     FlowDirection="LeftToRight" />
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding IsCfdPriceCheckMiss}"
+                    Spacing="10"
+                    HorizontalAlignment="Center">
+          <TextBlock Text="{Binding PriceCheckError}"
+                     FontSize="36"
+                     FontWeight="Bold"
+                     Foreground="#FCA5A5"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap" />
+          <TextBlock Text="未找到商品"
+                     FontSize="24"
+                     Foreground="#FECACA"
+                     TextAlignment="Center"
+                     FlowDirection="LeftToRight" />
+        </StackPanel>
+
+        <StackPanel IsVisible="{Binding HasPriceCheckResult}"
+                    Spacing="14"
+                    HorizontalAlignment="Center">
+          <TextBlock Text="{Binding PriceCheckResult.NameAr}"
+                     FontSize="44"
+                     FontWeight="Bold"
+                     Foreground="#F8FAFC"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap" />
+          <TextBlock Text="{Binding PriceCheckResult.NameZh}"
+                     IsVisible="{Binding PriceCheckResult.HasNameZh}"
+                     FontSize="30"
+                     FontWeight="SemiBold"
+                     Foreground="#E0F2FE"
+                     TextAlignment="Center"
+                     TextWrapping="Wrap"
+                     FlowDirection="LeftToRight" />
+          <TextBlock Text="{Binding PriceCheckResult.PriceEgpText}"
+                     FontSize="72"
+                     FontWeight="Bold"
+                     Foreground="#7DD3FC"
+                     TextAlignment="Center"
+                     Margin="0,8,0,0" />
+          <TextBlock Text="{Binding PriceCheckResult.Barcode}"
+                     FontSize="22"
+                     Foreground="#94A3B8"
+                     TextAlignment="Center"
+                     FlowDirection="LeftToRight"
+                     FontFamily="Consolas, Cascadia Mono, monospace" />
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+
     <!-- COMPLETED: Arabic + Chinese only -->
     <Grid IsVisible="{Binding IsCfdCompleted}">
       <Grid.Background>

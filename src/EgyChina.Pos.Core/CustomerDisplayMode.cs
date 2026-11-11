@@ -2,7 +2,7 @@ namespace EgyChina.Pos.Core;
 
 /// <summary>
 /// Customer-facing display modes aligned with the web CFD
-/// (<c>IDLE</c> / <c>SHOPPING</c> / <c>PAYMENT</c> / <c>COMPLETED</c>).
+/// (<c>IDLE</c> / <c>SHOPPING</c> / <c>PAYMENT</c> / <c>COMPLETED</c> / <c>PRICE_CHECK</c>).
 /// </summary>
 public enum CustomerDisplayMode
 {
@@ -10,6 +10,7 @@ public enum CustomerDisplayMode
     Shopping = 1,
     Payment = 2,
     Completed = 3,
+    PriceCheck = 4,
 }
 
 public static class CustomerDisplayTiming
@@ -31,8 +32,13 @@ public static class CustomerDisplayProjector
         bool isTendering,
         bool showCompleted,
         DateTimeOffset? completedAt,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        bool showPriceCheck = false)
     {
+        // Price check is an explicit till action — show it on CFD above cart/idle.
+        if (showPriceCheck)
+            return CustomerDisplayMode.PriceCheck;
+
         if (hasLines && isTendering)
             return CustomerDisplayMode.Payment;
 

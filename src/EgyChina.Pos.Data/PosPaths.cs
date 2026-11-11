@@ -21,6 +21,11 @@ public static class PosPaths
 
     public static string LogDirectory() => Path.Combine(Root(), "logs");
 
+    /// <summary>Errors-only support paste file under <see cref="LogDirectory"/>.</summary>
+    public static string ProblemsLogFile() => Path.Combine(LogDirectory(), PosLog.ProblemsLogFileName);
+
+    public static string FullLogFile() => Path.Combine(LogDirectory(), PosLog.FullLogFileName);
+
     public static string BackupDirectory() => Path.Combine(Root(), "backups");
 
     public static string AssetsDirectory() => Path.Combine(Root(), "assets");

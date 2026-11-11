@@ -64,6 +64,29 @@ public sealed class CustomerDisplayProjectorTests
     }
 
     [Fact]
+    public void Resolve_price_check_overrides_shopping_and_idle()
+    {
+        var withCart = CustomerDisplayProjector.Resolve(
+            hasLines: true,
+            isTendering: false,
+            showCompleted: false,
+            completedAt: null,
+            now: DateTimeOffset.Parse("2026-11-07T12:00:00Z"),
+            showPriceCheck: true);
+
+        var idle = CustomerDisplayProjector.Resolve(
+            hasLines: false,
+            isTendering: false,
+            showCompleted: false,
+            completedAt: null,
+            now: DateTimeOffset.Parse("2026-11-07T12:00:00Z"),
+            showPriceCheck: true);
+
+        Assert.Equal(CustomerDisplayMode.PriceCheck, withCart);
+        Assert.Equal(CustomerDisplayMode.PriceCheck, idle);
+    }
+
+    [Fact]
     public void IdleGreeting_rotates_arabic_and_chinese_only()
     {
         var t0 = DateTimeOffset.FromUnixTimeSeconds(0);

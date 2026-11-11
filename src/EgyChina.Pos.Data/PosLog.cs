@@ -2,15 +2,19 @@ namespace EgyChina.Pos.Data;
 
 /// <summary>
 /// Local rolling log. Secrets are redacted. Old files are pruned after 14 days.
+/// Full trail: <c>pos.log</c>. Errors only (for support paste): <c>problems.log</c>.
 /// </summary>
 public static class PosLog
 {
+    public const string FullLogFileName = "pos.log";
+    public const string ProblemsLogFileName = "problems.log";
     public const long RotateBytes = 2_000_000;
     public static readonly TimeSpan Retention = TimeSpan.FromDays(14);
 
     private static readonly object Gate = new();
     private static string? _directory;
     private static string? _path;
+    private static string? _problemsPath;
 
     public static void SetDirectory(string logDirectory)
     {
@@ -18,10 +22,31 @@ public static class PosLog
         lock (Gate)
         {
             _directory = logDirectory;
-            _path = Path.Combine(logDirectory, "pos.log");
+            _path = Path.Combine(logDirectory, FullLogFileName);
+            _problemsPath = Path.Combine(logDirectory, ProblemsLogFileName);
         }
 
         PurgeOldFiles();
+    }
+
+    /// <summary>Absolute path of the support paste file, or null before startup.</summary>
+    public static string? ProblemsLogPath
+    {
+        get
+        {
+            lock (Gate)
+                return _problemsPath;
+        }
+    }
+
+    /// <summary>Absolute path of the full rolling log, or null before startup.</summary>
+    public static string? FullLogPath
+    {
+        get
+        {
+            lock (Gate)
+                return _path;
+        }
     }
 
     /// <summary>Clears the log target. Used by tests so a temp folder can be deleted safely.</summary>
@@ -31,6 +56,7 @@ public static class PosLog
         {
             _directory = null;
             _path = null;
+            _problemsPath = null;
         }
     }
 
@@ -78,6 +104,19 @@ public static class PosLog
         {
             var detail = LogRedactor.Redact(exception.GetType().Name + ": " + exception.Message);
             line += " " + detail;
+            if (!string.IsNullOrWhiteSpace(exception.StackTrace))
+            {
+                var stack = LogRedactor.Redact(exception.StackTrace);
+                if (stack.Length > 1200)
+                    stack = stack[..1200] + "…";
+                line += Environment.NewLine + "  STACK " + stack.Replace("\r", string.Empty).Replace("\n", " | ");
+            }
+
+            if (exception.InnerException is { } inner)
+            {
+                var innerText = LogRedactor.Redact(inner.GetType().Name + ": " + inner.Message);
+                line += Environment.NewLine + "  INNER " + innerText;
+            }
         }
 
         lock (Gate)
@@ -88,8 +127,15 @@ public static class PosLog
             try
             {
                 Directory.CreateDirectory(_directory);
-                RotateIfNeeded(_path, _directory);
+                RotateIfNeeded(_path, _directory, "pos");
                 File.AppendAllText(_path, line + Environment.NewLine);
+
+                if (string.Equals(level, "ERROR", StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(_problemsPath))
+                {
+                    RotateIfNeeded(_problemsPath, _directory, "problems");
+                    File.AppendAllText(_problemsPath, line + Environment.NewLine + Environment.NewLine);
+                }
             }
             catch (IOException)
             {
@@ -100,7 +146,7 @@ public static class PosLog
         }
     }
 
-    private static void RotateIfNeeded(string path, string directory)
+    private static void RotateIfNeeded(string path, string directory, string prefix)
     {
         var info = new FileInfo(path);
         if (!info.Exists || info.Length <= RotateBytes)
@@ -108,7 +154,7 @@ public static class PosLog
 
         var archive = Path.Combine(
             directory,
-            "pos-" + DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+            prefix + "-" + DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss") + ".log");
         try
         {
             if (File.Exists(archive))

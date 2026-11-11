@@ -72,6 +72,19 @@ public partial class App : Application
         var root = PosPaths.Root();
         Directory.CreateDirectory(root);
         PosLog.SetDirectory(PosPaths.LogDirectory());
+        PosLog.Info($"problems log path={PosPaths.ProblemsLogFile()}");
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            if (args.ExceptionObject is Exception ex)
+                PosLog.Error("unhandled exception", ex);
+            else
+                PosLog.Error("unhandled exception: " + args.ExceptionObject);
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            PosLog.Error("unobserved task exception", args.Exception);
+            args.SetObserved();
+        };
         try
         {
             PosPaths.EnsureUiAssets();

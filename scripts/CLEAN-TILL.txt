@@ -1,0 +1,23 @@
+تنظيف جهاز الكاشير المعطّل + تثبيت نسخة نظيفة
+===========================================
+
+1) أغلق البرنامج تماماً (EgyChina.Pos.App).
+
+2) من PowerShell (كمستخدم الكاشير):
+   cd <مسار المشروع أو مجلد النسخة>
+   powershell -ExecutionPolicy Bypass -File .\scripts\reset-local-till.ps1
+   (يعمل نسخة احتياطية على سطح المكتب ثم يحذف pos.db و device.cred)
+
+3) انسخ مجلد النسخة المنشورة (artifacts\win-x64\0.3.17) إلى الجهاز
+   وشغّل EgyChina.Pos.App.exe
+
+4) انتظر مزامنة الأصناف والموظفين من ERP، ثم افتح وردية وبيع تجربة.
+
+ملف الأخطاء للصق في الشات لاحقاً:
+  %LOCALAPPDATA%\EgyChina\Pos\logs\problems.log
+
+نسخه لسطح المكتب بسرعة:
+  powershell -ExecutionPolicy Bypass -File .\scripts\copy-problems-log.ps1
+
+السجل الكامل (كل العمليات):
+  %LOCALAPPDATA%\EgyChina\Pos\logs\pos.log

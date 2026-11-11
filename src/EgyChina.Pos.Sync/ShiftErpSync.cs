@@ -17,9 +17,7 @@ public static class ShiftErpSync
         string? deviceBearerToken,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(deviceBearerToken))
-            return new ShiftErpSyncResult(false, 0, 0, "missing-device-token");
-
+        // Store shift routes do not require Bearer; token is optional for future protected paths.
         var pending = database.ListShiftsNeedingErpSync(20);
         if (pending.Count == 0)
             return new ShiftErpSyncResult(true, 0, 0, null);
@@ -73,7 +71,7 @@ public static class ShiftErpSync
         ShiftRecord localShift,
         CancellationToken cancellationToken)
     {
-        if (erpOrigin is null || string.IsNullOrWhiteSpace(deviceBearerToken))
+        if (erpOrigin is null)
             return false;
         using var client = new ErpPosClient(erpOrigin, deviceBearerToken);
         var bound = await EnsureOpenedAsync(database, client, localShift, cancellationToken).ConfigureAwait(false);
@@ -88,7 +86,7 @@ public static class ShiftErpSync
         ShiftRecord localShift,
         CancellationToken cancellationToken)
     {
-        if (erpOrigin is null || string.IsNullOrWhiteSpace(deviceBearerToken))
+        if (erpOrigin is null)
             return false;
         using var client = new ErpPosClient(erpOrigin, deviceBearerToken);
         var bound = localShift;
@@ -144,7 +142,10 @@ public static class ShiftErpSync
         }
 
         PosLog.Info($"shift open rejected local={localShift.Id} status={result.StatusCode} err={result.Error}");
-        database.MarkShiftSyncStatus(localShift.Id, "error");
+        // Keep retrying after ERP deploy / brief outages (do not stick on permanent error).
+        database.MarkShiftSyncStatus(
+            localShift.Id,
+            result.StatusCode is 401 or 404 or 502 or 503 ? "pending" : "error");
         return null;
     }
 

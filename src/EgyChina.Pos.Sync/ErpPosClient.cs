@@ -80,9 +80,13 @@ public sealed class ErpPosClient : IDisposable
 
     public Uri OnlineOrdersUri => Combine("api/pos/online-orders");
 
-    public Uri ShiftOpenUri => Combine("api/shifts/open");
+    /// <summary>
+    /// Public store shift open (no Bearer) — production-safe for desktop tills.
+    /// Protected <c>/api/shifts/open</c> still exists for browser/device session.
+    /// </summary>
+    public Uri ShiftOpenUri => Combine("api/store/pos-shifts/open");
 
-    public Uri ShiftCloseUri => Combine("api/shifts/close");
+    public Uri ShiftCloseUri => Combine("api/store/pos-shifts/close");
 
     public Uri ShiftCurrentUri(string? cashierUserId)
     {

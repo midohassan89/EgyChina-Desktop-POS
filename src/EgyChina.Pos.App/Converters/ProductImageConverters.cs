@@ -21,7 +21,22 @@ public sealed class ProductImageConverter : IValueConverter
         if (string.IsNullOrWhiteSpace(productId))
             return null;
 
-        return ProductImageBitmapCache.Get(productId);
+        try
+        {
+            return ProductImageBitmapCache.Get(productId);
+        }
+        catch (ObjectDisposedException)
+        {
+            ProductImageBitmapCache.Invalidate(productId);
+            try
+            {
+                return ProductImageBitmapCache.Get(productId);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>

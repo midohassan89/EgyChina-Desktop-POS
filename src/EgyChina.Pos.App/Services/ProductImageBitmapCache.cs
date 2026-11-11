@@ -8,11 +8,12 @@ namespace EgyChina.Pos.App.Services;
 
 /// <summary>
 /// Decodes small product thumbnails and keeps a bounded in-memory cache.
-/// Prevents the non-virtualized catalog grid from decoding thousands of full-size images.
+/// Never disposes bitmaps that may still be bound to virtualized <c>Image</c> controls —
+/// disposing while ItemsRepeater measures them crashes with ObjectDisposedException.
 /// </summary>
 public static class ProductImageBitmapCache
 {
-    private const int MaxEntries = 128;
+    private const int MaxEntries = 768;
     /// <summary>In-memory shelf thumbs (CDN full files stay on disk; decode is bounded).</summary>
     private const int MaxEdge = 220;
     private static readonly object Gate = new();
@@ -21,6 +22,21 @@ public static class ProductImageBitmapCache
 
     public static bool HasFile(string productId) =>
         !string.IsNullOrWhiteSpace(productId) && ProductImageCache.TryLocalPath(productId) is not null;
+
+    public static void Invalidate(string productId)
+    {
+        if (string.IsNullOrWhiteSpace(productId))
+            return;
+        lock (Gate)
+        {
+            if (!Cache.Remove(productId, out _))
+                return;
+            var node = Lru.Find(productId);
+            if (node is not null)
+                Lru.Remove(node);
+            // Intentionally do not Dispose — UI may still reference the instance.
+        }
+    }
 
     public static Bitmap? Get(string productId)
     {
@@ -31,8 +47,16 @@ public static class ProductImageBitmapCache
         {
             if (Cache.TryGetValue(productId, out var hit))
             {
-                Touch(productId);
-                return hit;
+                if (IsUsable(hit))
+                {
+                    Touch(productId);
+                    return hit;
+                }
+
+                Cache.Remove(productId);
+                var dead = Lru.Find(productId);
+                if (dead is not null)
+                    Lru.Remove(dead);
             }
         }
 
@@ -68,7 +92,7 @@ public static class ProductImageBitmapCache
 
         lock (Gate)
         {
-            if (Cache.TryGetValue(productId, out var race))
+            if (Cache.TryGetValue(productId, out var race) && IsUsable(race))
             {
                 decoded.Dispose();
                 Touch(productId);
@@ -79,13 +103,26 @@ public static class ProductImageBitmapCache
             {
                 var oldKey = Lru.Last.Value;
                 Lru.RemoveLast();
-                if (Cache.Remove(oldKey, out var oldBitmap))
-                    oldBitmap.Dispose();
+                // Drop from cache only — do not Dispose (virtualized Image may still hold it).
+                Cache.Remove(oldKey);
             }
 
             Cache[productId] = decoded;
             Lru.AddFirst(productId);
             return decoded;
+        }
+    }
+
+    private static bool IsUsable(Bitmap bitmap)
+    {
+        try
+        {
+            var size = bitmap.PixelSize;
+            return size.Width > 0 && size.Height > 0;
+        }
+        catch (ObjectDisposedException)
+        {
+            return false;
         }
     }
 

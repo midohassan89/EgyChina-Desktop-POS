@@ -110,6 +110,13 @@ public partial class CashierWindow : Window
         double width = Math.Max(360, Bounds.Width - CartColumnReserve - 20);
         var tenderPad = ReferenceEquals(_oskTarget, TenderBox);
 
+        var priceCheckPad = ReferenceEquals(_oskTarget, PriceCheckBox);
+        if (priceCheckPad)
+        {
+            // Keep the pad short so the top price-check strip stays fully visible.
+            heightCap = Math.Clamp(Bounds.Height * 0.32, 150, 240);
+        }
+
         if (CatalogStage.Bounds.Width > 1
             && CatalogStage.TranslatePoint(new Avalonia.Point(0, 0), OskLayer) is { } origin)
         {

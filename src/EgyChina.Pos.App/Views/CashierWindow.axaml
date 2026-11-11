@@ -1299,62 +1299,113 @@
     </Border>
   </Border>
 
-  <Border Background="#CC0F172A" IsVisible="{Binding ShowPriceCheck}" ZIndex="39">
+  <!-- Top strip so the OSK at the bottom never covers price / name -->
+  <Border Background="#990B1220" IsVisible="{Binding ShowPriceCheck}" ZIndex="39"
+          VerticalAlignment="Top" HorizontalAlignment="Stretch" Padding="12,8,12,0">
     <Border Background="White" BorderBrush="#0284C7" BorderThickness="3" CornerRadius="16"
-            Padding="0" Width="520" HorizontalAlignment="Center" VerticalAlignment="Center">
-      <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#0284C7" Padding="20,16">
+            Padding="0" MaxWidth="920" HorizontalAlignment="Center"
+            MaxHeight="280" BoxShadow="0 12 32 0 #66000000">
+      <DockPanel LastChildFill="True">
+        <Border DockPanel.Dock="Top" Background="#0284C7" Padding="14,10">
           <Grid ColumnDefinitions="*,Auto">
-            <StackPanel Spacing="2">
-              <TextBlock Text="فحص السعر" FontSize="24" FontWeight="Bold" Foreground="White" />
-              <TextBlock Text="استعلام فقط — لا يُضاف للسلة" FontSize="13" Foreground="#E0F2FE" />
+            <StackPanel Spacing="1">
+              <TextBlock Text="فحص السعر" FontSize="20" FontWeight="Bold" Foreground="White" />
+              <TextBlock Text="استعلام فقط — لا يُضاف للسلة" FontSize="12" Foreground="#E0F2FE" />
             </StackPanel>
             <Button Grid.Column="1"
                     Content="إغلاق"
                     Command="{Binding ClosePriceCheckCommand}"
                     Background="#0369A1"
                     Foreground="White"
-                    MinWidth="88" />
+                    MinWidth="88"
+                    MinHeight="40" />
           </Grid>
         </Border>
-        <StackPanel Margin="24" Spacing="12">
-          <Grid ColumnDefinitions="*,8,Auto">
-            <TextBox x:Name="PriceCheckBox"
-                     GotFocus="OnTouchInputGotFocus"
-                     Grid.Column="0"
-                     Text="{Binding PriceCheckQuery}"
-                     PlaceholderText="امسح أو اكتب الباركود"
-                     FontSize="20"
-                     MinHeight="50"
-                     FlowDirection="LeftToRight"
-                     KeyDown="OnPriceCheckKeyDown" />
-            <Button Grid.Column="2"
-                    Content="بحث"
-                    Command="{Binding SubmitPriceCheckCommand}"
-                    Background="#0284C7"
-                    Foreground="White"
-                    MinWidth="88" />
-          </Grid>
-          <Border IsVisible="{Binding HasPriceCheckResult}"
+        <!-- Input | Result side-by-side (RTL flips columns naturally) -->
+        <Grid Margin="14" ColumnDefinitions="*,12,*" RowDefinitions="Auto">
+          <StackPanel Grid.Column="0" Spacing="8" VerticalAlignment="Top">
+            <TextBlock Text="الباركود" FontSize="12" FontWeight="SemiBold" Foreground="#64748B" />
+            <Grid ColumnDefinitions="*,8,Auto">
+              <TextBox x:Name="PriceCheckBox"
+                       GotFocus="OnTouchInputGotFocus"
+                       Grid.Column="0"
+                       Text="{Binding PriceCheckQuery}"
+                       PlaceholderText="امسح أو اكتب الباركود"
+                       FontSize="18"
+                       MinHeight="48"
+                       FlowDirection="LeftToRight"
+                       KeyDown="OnPriceCheckKeyDown" />
+              <Button Grid.Column="2"
+                      Content="بحث"
+                      Command="{Binding SubmitPriceCheckCommand}"
+                      Background="#0284C7"
+                      Foreground="White"
+                      MinWidth="80"
+                      MinHeight="48" />
+            </Grid>
+            <TextBlock Text="اكتب باللمس ثم اضغط بحث — النتيجة تظهر بجانبك"
+                       FontSize="11"
+                       Foreground="#94A3B8"
+                       TextWrapping="Wrap" />
+          </StackPanel>
+
+          <Border Grid.Column="2"
                   Background="#F0F9FF"
-                  BorderBrush="#BAE6FD"
-                  BorderThickness="1"
+                  BorderBrush="#7DD3FC"
+                  BorderThickness="2"
                   CornerRadius="12"
-                  Padding="16">
-            <StackPanel Spacing="6">
-              <TextBlock Text="{Binding PriceCheckResult.NameAr}" FontSize="22" FontWeight="Bold" Foreground="#0F172A" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding PriceCheckResult.NameZh}" FontSize="14" Foreground="#64748B"
-                         IsVisible="{Binding PriceCheckResult.HasNameZh}" FlowDirection="LeftToRight" />
-              <TextBlock Text="{Binding PriceCheckResult.PriceEgpText}" FontSize="28" FontWeight="Bold" Foreground="#0284C7" />
-              <TextBlock Text="{Binding PriceCheckResult.Barcode}" FontSize="13" Foreground="#64748B" FlowDirection="LeftToRight" />
-            </StackPanel>
+                  Padding="14,12"
+                  MinHeight="120">
+            <Panel>
+              <StackPanel Spacing="4"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding !HasPriceCheckResult}">
+                <TextBlock Text="{Binding PriceCheckError}"
+                           IsVisible="{Binding HasPriceCheckError}"
+                           Foreground="#B91C1C"
+                           FontWeight="SemiBold"
+                           FontSize="16"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center" />
+                <TextBlock Text=" السعر يظهر هنا بعد المسح أو البحث"
+                           IsVisible="{Binding !HasPriceCheckError}"
+                           Foreground="#64748B"
+                           FontSize="15"
+                           TextAlignment="Center"
+                           TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Spacing="4"
+                          VerticalAlignment="Center"
+                          IsVisible="{Binding HasPriceCheckResult}">
+                <TextBlock Text="{Binding PriceCheckResult.NameAr}"
+                           FontSize="18"
+                           FontWeight="Bold"
+                           Foreground="#0F172A"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxLines="2"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Text="{Binding PriceCheckResult.NameZh}"
+                           FontSize="13"
+                           Foreground="#64748B"
+                           IsVisible="{Binding PriceCheckResult.HasNameZh}"
+                           FlowDirection="LeftToRight"
+                           TextAlignment="Center" />
+                <TextBlock Text="{Binding PriceCheckResult.PriceEgpText}"
+                           FontSize="32"
+                           FontWeight="Bold"
+                           Foreground="#0369A1"
+                           FlowDirection="LeftToRight"
+                           TextAlignment="Center" />
+                <TextBlock Text="{Binding PriceCheckResult.Barcode}"
+                           FontSize="12"
+                           Foreground="#64748B"
+                           FlowDirection="LeftToRight"
+                           TextAlignment="Center" />
+              </StackPanel>
+            </Panel>
           </Border>
-          <TextBlock Text="{Binding PriceCheckError}"
-                     IsVisible="{Binding HasPriceCheckError}"
-                     Foreground="#B91C1C"
-                     FontWeight="SemiBold"
-                     TextWrapping="Wrap" />
-        </StackPanel>
+        </Grid>
       </DockPanel>
     </Border>
   </Border>

@@ -58,7 +58,15 @@ The base URL must be absolute. A trailing slash is safer. The worker GETs `{base
 
 ## Publish / install for a till
 
-Run on Windows, from the repo root:
+Preferred installer (Velopack one-click `Setup.exe`):
+
+```powershell
+.\scripts\build-setup.ps1
+```
+
+Output: `artifacts\Setup.exe`. Installs **EgyChina POS** with desktop/Start Menu shortcuts. Self-contained win-x64 (no separate .NET install). Cashier data stays in `%LOCALAPPDATA%\EgyChina\Pos` and is **not** removed on uninstall.
+
+Legacy folder publish (optional):
 
 ```powershell
 .\scripts\publish-win-x64.ps1
@@ -69,13 +77,12 @@ Run on Windows, from the repo root:
 Layout on the PC:
 
 ```text
-C:\EgyChina\Pos\app\<version>\   self-contained build
-C:\EgyChina\Pos\current\         junction → active version
-C:\EgyChina\Pos\previous.version
-%LOCALAPPDATA%\EgyChina\Pos\     pos.db, logs, backups, heartbeat.json
+%LOCALAPPDATA%\EgyChinaPOS\      Velopack install (program files)
+%LOCALAPPDATA%\EgyChina\Pos\     pos.db, logs, backups, device.cred, heartbeat.json
+C:\EgyChina\Pos\…                legacy manual install only
 ```
 
-Update with heartbeat check + automatic rollback:
+Legacy update with heartbeat check + automatic rollback:
 
 ```powershell
 .\scripts\apply-update.ps1 -Source .\artifacts\win-x64\0.1.0

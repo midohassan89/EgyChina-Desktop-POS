@@ -15,27 +15,30 @@ public static class ShiftErpSync
         PosDatabase database,
         Uri erpOrigin,
         string? deviceBearerToken,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        HttpClient? httpClient = null) =>
         PushPendingAsync(
             database,
             erpOrigin,
             deviceBearerToken,
             ShiftErpSyncPhase.All,
-            cancellationToken);
+            cancellationToken,
+            httpClient);
 
     public static async Task<ShiftErpSyncResult> PushPendingAsync(
         PosDatabase database,
         Uri erpOrigin,
         string? deviceBearerToken,
         ShiftErpSyncPhase phase,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HttpClient? httpClient = null)
     {
         // Store shift routes do not require Bearer; token is optional for future protected paths.
         var pending = database.ListShiftsNeedingErpSync(20);
         if (pending.Count == 0)
             return new ShiftErpSyncResult(true, 0, 0, null);
 
-        using var client = new ErpPosClient(erpOrigin, deviceBearerToken);
+        using var client = new ErpPosClient(erpOrigin, deviceBearerToken, httpClient);
         var opened = 0;
         var closed = 0;
         var doOpens = phase is ShiftErpSyncPhase.Opens or ShiftErpSyncPhase.All;

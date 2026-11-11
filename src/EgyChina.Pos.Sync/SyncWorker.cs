@@ -165,7 +165,8 @@ public sealed class SyncWorker : IAsyncDisposable
                     _options.BaseAddress,
                     deviceToken,
                     ShiftErpSyncPhase.Opens,
-                    cancellationToken)
+                    cancellationToken,
+                    _http)
                 .ConfigureAwait(false);
             if (opens.Opened > 0)
                 PosLog.Info($"shift erp sync opened={opens.Opened}");
@@ -264,7 +265,8 @@ public sealed class SyncWorker : IAsyncDisposable
                         _options.BaseAddress,
                         deviceToken,
                         ShiftErpSyncPhase.Closes,
-                        cancellationToken)
+                        cancellationToken,
+                        _http)
                     .ConfigureAwait(false);
                 if (closes.Closed > 0)
                     PosLog.Info($"shift erp sync closed={closes.Closed}");
@@ -393,7 +395,8 @@ public sealed class SyncWorker : IAsyncDisposable
                         _options.BaseAddress,
                         deviceToken,
                         ShiftErpSyncPhase.Opens,
-                        openCts.Token)
+                        openCts.Token,
+                        _http)
                     .ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -494,7 +497,8 @@ public sealed class SyncWorker : IAsyncDisposable
                     _options.BaseAddress,
                     deviceToken,
                     ShiftErpSyncPhase.All,
-                    linked.Token)
+                    linked.Token,
+                    _http)
                 .ConfigureAwait(false);
             if (shifts.Opened > 0 || shifts.Closed > 0)
                 PosLog.Info($"shift flush on exit opened={shifts.Opened} closed={shifts.Closed}");
@@ -526,29 +530,23 @@ public sealed class SyncWorker : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        try
+        // Only the long-lived background worker (Start) flushes on exit.
+        // One-shot TickAsync used by tests must not re-post outbox on Dispose.
+        var ranBackgroundLoop = _loop is not null;
+        if (ranBackgroundLoop)
         {
-            await FlushShiftsAsync().ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            PosLog.Error("shift flush before dispose failed", ex);
-        }
-
-        _cts?.Cancel();
-        try
-        {
-            _pulse.Release();
-        }
-        catch (SemaphoreFullException)
-        {
-        }
-
-        if (_loop is not null)
-        {
+            _cts?.Cancel();
             try
             {
-                await _loop.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                _pulse.Release();
+            }
+            catch (SemaphoreFullException)
+            {
+            }
+
+            try
+            {
+                await _loop!.WaitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
             }
             catch (TimeoutException)
             {
@@ -556,6 +554,16 @@ public sealed class SyncWorker : IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
+            }
+
+            try
+            {
+                using var exitCts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                await FlushShiftsAsync(exitCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                PosLog.Error("shift flush before dispose failed", ex);
             }
         }
 

@@ -87,7 +87,11 @@ public sealed class OutboxRecoveryTests : IDisposable
             """);
         await using var server = await StubServer.Start(context =>
         {
-            Assert.Fail("must not POST an unlinked product");
+            var path = context.Request.Url?.AbsolutePath ?? "";
+            if (path.Contains("checkout", StringComparison.OrdinalIgnoreCase))
+                Assert.Fail("must not POST an unlinked product");
+            context.Response.StatusCode = 404;
+            context.Response.Close();
             return Task.CompletedTask;
         });
 
@@ -129,7 +133,12 @@ public sealed class OutboxRecoveryTests : IDisposable
             {"saleId":"sale-1","totalMinor":8500,"lines":[]}
             """);
 
-        await using var server = await StubServer.Start(_ => Task.CompletedTask);
+        await using var server = await StubServer.Start(context =>
+        {
+            context.Response.StatusCode = 404;
+            context.Response.Close();
+            return Task.CompletedTask;
+        });
         await Tick(database, server.BaseAddress);
 
         Assert.Equal(0, database.CountPendingOutbox());
@@ -158,7 +167,9 @@ public sealed class OutboxRecoveryTests : IDisposable
             DeviceToken = "test-device-token",
             PaymentMethod = "cash",
             MoneyScale = ErpMoneyScale.MajorUnits,
+            CatalogPull = false,
             Interval = TimeSpan.FromHours(1),
+            HttpTimeout = TimeSpan.FromSeconds(5),
         });
         await worker.TickAsync(CancellationToken.None);
         await worker.DisposeAsync();

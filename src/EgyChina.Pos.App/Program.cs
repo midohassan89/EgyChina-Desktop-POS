@@ -2,6 +2,7 @@
 using System;
 using System.Globalization;
 using System.Threading;
+using Velopack;
 
 namespace EgyChina.Pos.App;
 
@@ -12,6 +13,9 @@ sealed class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // Must run before UI / single-instance so install/update hooks can exit cleanly.
+        VelopackApp.Build().Run();
+
         // Arabic copy, Western digits. ar-EG would rewrite money formatting.
         CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;

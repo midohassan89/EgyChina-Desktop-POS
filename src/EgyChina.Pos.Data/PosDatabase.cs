@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using EgyChina.Pos.Core;
 using Microsoft.Data.Sqlite;
@@ -2177,9 +2178,100 @@ public sealed class PosDatabase
                 insert.ExecuteNonQuery();
             }
 
-            // Shift push to ERP is not wired yet; keep sync_status=pending for a later phase.
             tx.Commit();
-            return new ShiftRecord(shiftId, cashierId, now, null, openingFloatMinor, null, "open", "pending");
+            return new ShiftRecord(shiftId, cashierId, now, null, openingFloatMinor, null, "open", "pending", null);
+        }
+    }
+
+    public string? GetShiftServerId(string localShiftId)
+    {
+        if (string.IsNullOrWhiteSpace(localShiftId))
+            return null;
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "SELECT server_id FROM shift WHERE id = $id LIMIT 1;";
+            cmd.Parameters.AddWithValue("$id", localShiftId.Trim());
+            var value = cmd.ExecuteScalar();
+            return value is string s && !string.IsNullOrWhiteSpace(s) ? s : null;
+        }
+    }
+
+    public void BindShiftServerId(string localShiftId, string serverShiftId, string syncStatus = "synced")
+    {
+        if (string.IsNullOrWhiteSpace(localShiftId))
+            throw new ArgumentException("Shift id is required.", nameof(localShiftId));
+        if (string.IsNullOrWhiteSpace(serverShiftId))
+            throw new ArgumentException("Server shift id is required.", nameof(serverShiftId));
+
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                UPDATE shift
+                SET server_id = $server,
+                    sync_status = $sync
+                WHERE id = $id;
+                """;
+            cmd.Parameters.AddWithValue("$server", serverShiftId.Trim());
+            cmd.Parameters.AddWithValue("$sync", syncStatus.Trim());
+            cmd.Parameters.AddWithValue("$id", localShiftId.Trim());
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    public void MarkShiftSyncStatus(string localShiftId, string syncStatus)
+    {
+        if (string.IsNullOrWhiteSpace(localShiftId))
+            return;
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = "UPDATE shift SET sync_status = $sync WHERE id = $id;";
+            cmd.Parameters.AddWithValue("$sync", syncStatus.Trim());
+            cmd.Parameters.AddWithValue("$id", localShiftId.Trim());
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Shifts that still need ERP open and/or close push.</summary>
+    public IReadOnlyList<ShiftRecord> ListShiftsNeedingErpSync(int limit = 20)
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            using var cmd = connection.CreateCommand();
+            cmd.CommandText = """
+                SELECT id, cashier_id, opened_at, closed_at, opening_float_minor, closing_cash_minor,
+                       status, sync_status, server_id
+                FROM shift
+                WHERE sync_status IN ('pending', 'error')
+                   OR (status = 'closed' AND sync_status != 'synced')
+                   OR (status = 'open' AND server_id IS NULL)
+                ORDER BY opened_at ASC
+                LIMIT $limit;
+                """;
+            cmd.Parameters.AddWithValue("$limit", limit);
+            var rows = new List<ShiftRecord>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                rows.Add(new ShiftRecord(
+                    reader.GetString(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetString(3),
+                    reader.GetInt64(4),
+                    reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                    reader.GetString(6),
+                    reader.GetString(7),
+                    reader.IsDBNull(8) ? null : reader.GetString(8)));
+            }
+
+            return rows;
         }
     }
 
@@ -2247,8 +2339,8 @@ public sealed class PosDatabase
         CompleteSale(lines, tenderMinor, cashierId, shiftId, PosPaymentMethod.Cash);
 
     /// <summary>
-    /// Commits a sale under an open local shift. ERP still receives <c>shiftId: null</c> until shift push exists.
-    /// Sync continues to require env gates; the outbox stores the real method for later mapping.
+    /// Commits a sale under an open local shift.
+    /// Outbox payload includes ERP <c>shiftId</c> when the local shift is already bound to a server id.
     /// </summary>
     public CompletedCashSale CompleteSale(
         IReadOnlyList<CashSaleLine> lines,
@@ -2418,9 +2510,18 @@ public sealed class PosDatabase
             }
 
             var idempotencyKey = $"{terminalId}:sale:{saleId}";
+            object? erpShiftId = null;
+            if (!string.IsNullOrWhiteSpace(open.ServerId)
+                && long.TryParse(open.ServerId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var boundShift)
+                && boundShift > 0)
+            {
+                erpShiftId = boundShift;
+            }
+
             var payload = BuildSalePayload(
                 saleId,
                 shiftId,
+                erpShiftId,
                 cashierId,
                 receiptNo,
                 checked(subtotal * sign),
@@ -2634,6 +2735,7 @@ public sealed class PosDatabase
     private static string BuildSalePayload(
         string saleId,
         string localShiftId,
+        object? erpShiftId,
         string cashierId,
         int receiptNo,
         long subtotalMinor,
@@ -2650,16 +2752,17 @@ public sealed class PosDatabase
         int pointsEarned = 0,
         int pointsRedeemed = 0)
     {
-        // Local outbox document. ErpCheckoutMapper still posts env paymentMethod until it reads this field.
+        // Local outbox document — ErpCheckoutMapper posts shiftId + cashierUserId to ERP.
         object? fx = wechatEgpPerCny is { } rate
             ? new { quote = "CNY", egpPerCny = rate }
             : null;
         var payload = new
         {
             saleId,
-            shiftId = (string?)null,
+            shiftId = erpShiftId,
             localShiftId,
             cashierId,
+            cashierUserId = cashierId,
             receiptNo,
             currency = "EGP",
             paymentMethod = erpPaymentMethod,
@@ -2784,7 +2887,7 @@ public sealed class PosDatabase
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, cashier_id, opened_at, closed_at, opening_float_minor, closing_cash_minor, status, sync_status
+            SELECT id, cashier_id, opened_at, closed_at, opening_float_minor, closing_cash_minor, status, sync_status, server_id
             FROM shift
             WHERE status = 'open'
             ORDER BY opened_at DESC
@@ -2801,7 +2904,8 @@ public sealed class PosDatabase
             reader.GetInt64(4),
             reader.IsDBNull(5) ? null : reader.GetInt64(5),
             reader.GetString(6),
-            reader.GetString(7));
+            reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8));
     }
 
     private static CashierRecord? ReadCashier(SqliteConnection connection, string id)

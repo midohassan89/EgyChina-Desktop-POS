@@ -83,7 +83,14 @@ public sealed class SaleOutboxSync
         foreach (var row in rows)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ErpCheckoutMapper.TryMap(row.PayloadJson, _options.MoneyScale, _options.PaymentMethod, _database.TryGetErpNumericId, out var template, out var block))
+            if (!ErpCheckoutMapper.TryMap(
+                    row.PayloadJson,
+                    _options.MoneyScale,
+                    _options.PaymentMethod,
+                    _database.TryGetErpNumericId,
+                    out var template,
+                    out var block,
+                    _database.GetShiftServerId))
             {
                 var reason = block ?? "blocked";
                 if (IsPoisonBlock(reason))

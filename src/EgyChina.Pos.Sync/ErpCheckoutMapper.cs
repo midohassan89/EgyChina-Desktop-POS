@@ -16,7 +16,8 @@ public static class ErpCheckoutMapper
         string? paymentMethod,
         Func<string, long?> resolveNumericId,
         out string json,
-        out string? blockReason)
+        out string? blockReason,
+        Func<string, string?>? resolveShiftServerId = null)
     {
         json = string.Empty;
         blockReason = null;
@@ -88,6 +89,36 @@ public static class ErpCheckoutMapper
         if (root.TryGetProperty("pointsRedeemed", out var redeemedNode) && redeemedNode.TryGetInt32(out var redeemed))
             pointsRedeemed = Math.Max(0, redeemed);
 
+        long? shiftId = ReadPositiveLong(root, "shiftId");
+        if (shiftId is null
+            && resolveShiftServerId is not null
+            && root.TryGetProperty("localShiftId", out var localShiftNode)
+            && localShiftNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(localShiftNode.GetString()))
+        {
+            var bound = resolveShiftServerId(localShiftNode.GetString()!);
+            if (!string.IsNullOrWhiteSpace(bound)
+                && long.TryParse(bound, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedShift)
+                && parsedShift > 0)
+            {
+                shiftId = parsedShift;
+            }
+        }
+
+        string? cashierUserId = null;
+        if (root.TryGetProperty("cashierUserId", out var cashierUserNode)
+            && cashierUserNode.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(cashierUserNode.GetString()))
+        {
+            cashierUserId = cashierUserNode.GetString();
+        }
+        else if (root.TryGetProperty("cashierId", out var cashierNode)
+                 && cashierNode.ValueKind == JsonValueKind.String
+                 && !string.IsNullOrWhiteSpace(cashierNode.GetString()))
+        {
+            cashierUserId = cashierNode.GetString();
+        }
+
         json = Write(
             saleIdNode.GetString()!,
             resolvedPayment.Trim(),
@@ -97,7 +128,9 @@ public static class ErpCheckoutMapper
             isReturn,
             customerId,
             pointsEarned,
-            pointsRedeemed);
+            pointsRedeemed,
+            shiftId,
+            cashierUserId);
         return true;
     }
 
@@ -110,7 +143,9 @@ public static class ErpCheckoutMapper
         bool isReturn = false,
         string? customerId = null,
         int pointsEarned = 0,
-        int pointsRedeemed = 0)
+        int pointsRedeemed = 0,
+        long? shiftId = null,
+        string? cashierUserId = null)
     {
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream))
@@ -120,7 +155,10 @@ public static class ErpCheckoutMapper
             WriteMoney(writer, "amount", decimal.Abs(total));
             WriteMoney(writer, "total", total);
             writer.WriteBoolean("isReturn", isReturn);
-            writer.WriteNull("shiftId");
+            if (shiftId is > 0)
+                writer.WriteNumber("shiftId", shiftId.Value);
+            else
+                writer.WriteNull("shiftId");
             writer.WriteString("localId", localId);
             writer.WriteString("createdAt", createdAt);
             writer.WriteNull("customerName");
@@ -130,6 +168,10 @@ public static class ErpCheckoutMapper
                 writer.WriteNull("customerId");
             else
                 writer.WriteString("customerId", customerId);
+            if (string.IsNullOrWhiteSpace(cashierUserId))
+                writer.WriteNull("cashierUserId");
+            else
+                writer.WriteString("cashierUserId", cashierUserId.Trim());
             writer.WriteNumber("pointsEarned", Math.Max(0, pointsEarned));
             writer.WriteNumber("pointsRedeemed", Math.Max(0, pointsRedeemed));
             writer.WritePropertyName("lines");
@@ -151,6 +193,19 @@ public static class ErpCheckoutMapper
         }
 
         return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    public static long? ReadPositiveLong(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var node) || node.ValueKind == JsonValueKind.Null)
+            return null;
+        if (node.ValueKind == JsonValueKind.Number && node.TryGetInt64(out var n) && n > 0)
+            return n;
+        if (node.ValueKind == JsonValueKind.String
+            && long.TryParse(node.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed)
+            && parsed > 0)
+            return parsed;
+        return null;
     }
 
     public static decimal Scale(long minor, ErpMoneyScale scale) => scale switch

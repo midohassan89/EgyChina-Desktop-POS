@@ -157,6 +157,23 @@ public sealed class SyncWorker : IAsyncDisposable
             await RefreshCatalogAsync(deviceToken, cancellationToken).ConfigureAwait(false);
         }
 
+        // Shifts → ERP (open/close) so dashboard Z-reports stay complete — independent of sale money gates.
+        try
+        {
+            var shifts = await ShiftErpSync.PushPendingAsync(
+                    _database,
+                    _options.BaseAddress,
+                    deviceToken,
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (shifts.Opened > 0 || shifts.Closed > 0)
+                PosLog.Info($"shift erp sync opened={shifts.Opened} closed={shifts.Closed}");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("shift erp sync tick failed", ex);
+        }
+
         var effectiveOptions = new SyncOptions
         {
             BaseAddress = _options.BaseAddress,

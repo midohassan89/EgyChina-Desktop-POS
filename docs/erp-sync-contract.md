@@ -85,7 +85,7 @@ Readable beside this repo. Re-checked against current files (not the earlier clo
 | Auth (phase 3) | Desktop tills use enrolled **device Bearer** (`PosDevice.tokenHash`). Staff cookie still works for browser `/pos`. Cookie alone does **not** open desktop sync. Enroll/revoke: `/api/pos/device/*` (MANAGER/ADMIN). |
 | Outbox recovery (phase 4) | `inflight` → `pending` on worker start and each tick. Poison map blocks → `dead` (sale kept). `product-id-not-numeric` stays `pending`. First failure retries immediately (`delay=0`); later failures back off 15s…15m. Cashier bar shows pending + dead + last error. Proven by `OutboxRecoveryTests` (local stub only). |
 | Live catalog pull (phase 5) | With `EGYCHINA_POS_CATALOG_PULL=1`, worker calls `ApplyCatalogFromErpJson`: upsert shelf price/barcode/names, set `catalog.source=erp`, purge unused `DEMO-*` (referenced demos stay inactive for FK/history), deactivate `removedPrismaIds`. Cursor `catalog` stores `serverTime` for next `updatedSince`. Never rewrites `sale_line`. Proven by `CatalogPullTests` (local stub only). |
-| Local cashier/shift (phase 6) | Desktop requires PIN + open local shift before sale. Payload keeps ERP `shiftId: null` and stores `localShiftId` for audit. Staff/shift push to `/api/shifts/*` not wired (those routes still expect browser session). |
+| Local cashier/shift (phase 6+) | Desktop requires PIN + open local shift before sale. Open/close push to `POST /api/shifts/open|close` with device Bearer + `cashierUserId`. Checkout posts numeric ERP `shiftId` + `cashierUserId` once `shift.server_id` is bound. Offline tills keep local SQLite and retry on the next sync tick. |
 
 Default env with sync variables unset still posts nothing.
 

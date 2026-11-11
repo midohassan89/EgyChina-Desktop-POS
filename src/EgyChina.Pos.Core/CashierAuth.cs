@@ -21,7 +21,8 @@ public sealed record ShiftRecord(
     long OpeningFloatMinor,
     long? ClosingCashMinor,
     string Status,
-    string SyncStatus);
+    string SyncStatus,
+    string? ServerId = null);
 
 public enum PinAuthStatus
 {

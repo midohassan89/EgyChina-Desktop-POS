@@ -2355,6 +2355,7 @@ public partial class PosSession : ObservableObject
             RefreshCheckout();
             AnnounceHint("تم فتح الوردية.");
             RequestFocus(UiFocusTarget.Barcode);
+            _ = PushOpenShiftToErpAsync(_currentShift);
         }
         catch (Exception ex)
         {
@@ -2577,7 +2578,7 @@ public partial class PosSession : ObservableObject
                 "埃及中国商场",
                 closing);
 
-            _database.CloseShift(_currentShift.Id, _currentCashier.Id, closing);
+            var closedLocal = _database.CloseShift(_currentShift.Id, _currentCashier.Id, closing);
             _currentShift = null;
             ShowCloseShift = false;
             CurrentZReport = null;
@@ -2589,6 +2590,7 @@ public partial class PosSession : ObservableObject
             AnnounceHint("أُغلقت الوردية.");
             RequestFocus(UiFocusTarget.OpeningFloat);
             DatabaseBackup.Create(_database);
+            _ = PushCloseShiftToErpAsync(closedLocal);
 
             if (printDoc is not null)
                 _ = PrintZReportAsync(printDoc);
@@ -3044,6 +3046,65 @@ public partial class PosSession : ObservableObject
         {
             PosLog.Error(isReprint ? "reprint failed" : "print failed", ex);
             await SetPrintHintAsync("تعذر الطباعة. البيع محفوظ — جرّب إعادة الطباعة.").ConfigureAwait(false);
+        }
+    }
+
+    private async Task PushOpenShiftToErpAsync(ShiftRecord localShift)
+    {
+        try
+        {
+            var token = !string.IsNullOrWhiteSpace(_syncOptions.DeviceToken)
+                ? _syncOptions.DeviceToken
+                : DeviceCredentialStore.Load();
+            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
+            var ok = await ShiftErpSync.TryPushOpenNowAsync(
+                    _database,
+                    origin,
+                    token,
+                    localShift,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            if (ok)
+            {
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (_currentShift is not null &&
+                        string.Equals(_currentShift.Id, localShift.Id, StringComparison.Ordinal))
+                    {
+                        RefreshShiftState();
+                    }
+                });
+                _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+            }
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("push open shift to erp failed", ex);
+            _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+        }
+    }
+
+    private async Task PushCloseShiftToErpAsync(ShiftRecord closedLocal)
+    {
+        try
+        {
+            var token = !string.IsNullOrWhiteSpace(_syncOptions.DeviceToken)
+                ? _syncOptions.DeviceToken
+                : DeviceCredentialStore.Load();
+            var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
+            await ShiftErpSync.TryPushCloseNowAsync(
+                    _database,
+                    origin,
+                    token,
+                    closedLocal,
+                    CancellationToken.None)
+                .ConfigureAwait(false);
+            _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("push close shift to erp failed", ex);
+            _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
         }
     }
 

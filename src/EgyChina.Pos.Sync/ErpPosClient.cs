@@ -80,6 +80,22 @@ public sealed class ErpPosClient : IDisposable
 
     public Uri OnlineOrdersUri => Combine("api/pos/online-orders");
 
+    public Uri ShiftOpenUri => Combine("api/shifts/open");
+
+    public Uri ShiftCloseUri => Combine("api/shifts/close");
+
+    public Uri ShiftCurrentUri(string? cashierUserId)
+    {
+        var uri = Combine("api/shifts/current");
+        if (string.IsNullOrWhiteSpace(cashierUserId))
+            return uri;
+        var builder = new UriBuilder(uri)
+        {
+            Query = "cashierUserId=" + Uri.EscapeDataString(cashierUserId.Trim()),
+        };
+        return builder.Uri;
+    }
+
     public async Task<ErpCallResult> GetProductsAsync(string? updatedSince, CancellationToken cancellationToken)
     {
         try
@@ -173,6 +189,60 @@ public sealed class ErpPosClient : IDisposable
         try
         {
             using var response = await _http.GetAsync(OnlineOrdersUri, cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> PostShiftOpenAsync(string json, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(ShiftOpenUri, content, cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> PostShiftCloseAsync(string json, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(ShiftCloseUri, content, cancellationToken).ConfigureAwait(false);
+            return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
+        {
+            return ErpCallResult.Transport(ex.Message);
+        }
+    }
+
+    public async Task<ErpCallResult> GetShiftCurrentAsync(string? cashierUserId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await _http.GetAsync(ShiftCurrentUri(cashierUserId), cancellationToken)
+                .ConfigureAwait(false);
             return await ReadAsync(response, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

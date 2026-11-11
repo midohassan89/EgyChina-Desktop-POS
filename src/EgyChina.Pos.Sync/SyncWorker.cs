@@ -338,8 +338,49 @@ public sealed class SyncWorker : IAsyncDisposable
         }
     }
 
+    /// <summary>Push any pending shift open/close before process exit.</summary>
+    public async Task FlushShiftsAsync(CancellationToken cancellationToken = default)
+    {
+        if (_http is null || _options.BaseAddress is null)
+            return;
+
+        var deviceToken = !string.IsNullOrWhiteSpace(_options.DeviceToken)
+            ? _options.DeviceToken
+            : DeviceCredentialStore.Load();
+        try
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            linked.CancelAfter(TimeSpan.FromSeconds(15));
+            var shifts = await ShiftErpSync.PushPendingAsync(
+                    _database,
+                    _options.BaseAddress,
+                    deviceToken,
+                    linked.Token)
+                .ConfigureAwait(false);
+            if (shifts.Opened > 0 || shifts.Closed > 0)
+                PosLog.Info($"shift flush on exit opened={shifts.Opened} closed={shifts.Closed}");
+        }
+        catch (OperationCanceledException)
+        {
+            PosLog.Info("shift flush on exit cancelled/timeout");
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("shift flush on exit failed", ex);
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
+        try
+        {
+            await FlushShiftsAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            PosLog.Error("shift flush before dispose failed", ex);
+        }
+
         _cts?.Cancel();
         try
         {

@@ -175,11 +175,13 @@ public static class ShiftErpSync
             // 404 = already closed / missing on server — treat local as synced to avoid loops.
             database.BindShiftServerId(localShift.Id, localShift.ServerId!, "synced");
             PosLog.Info($"shift closed on ERP local={localShift.Id} server={localShift.ServerId} http={result.StatusCode}");
-            return result.Accepted;
+            return true;
         }
 
         PosLog.Info($"shift close rejected local={localShift.Id} status={result.StatusCode} err={result.Error}");
-        database.MarkShiftSyncStatus(localShift.Id, "error");
+        database.MarkShiftSyncStatus(
+            localShift.Id,
+            result.StatusCode is 401 or 502 or 503 ? "pending" : "error");
         return false;
     }
 

@@ -7,7 +7,7 @@
     <ApplicationTitle>ايجي شاينا — نقطة البيع</ApplicationTitle>
     <Product>EgyChina POS</Product>
     <Company>EgyChina</Company>
-    <Version>0.3.19</Version>
+    <Version>0.3.20</Version>
     <Description>Local-first cashier shell for Souq El Obour.</Description>
     <ServerGarbageCollection>false</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>

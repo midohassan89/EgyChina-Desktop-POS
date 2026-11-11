@@ -2579,7 +2579,7 @@ public partial class PosSession : ObservableObject
     }
 
     [RelayCommand]
-    private void ConfirmCloseShift()
+    private async Task ConfirmCloseShift()
     {
         ShiftError = string.Empty;
         if (_currentCashier is null || _currentShift is null)
@@ -2607,13 +2607,18 @@ public partial class PosSession : ObservableObject
             OnPropertyChanged(nameof(SessionChipText));
             OnPropertyChanged(nameof(HasZReport));
             RefreshCheckout();
-            AnnounceHint("أُغلقت الوردية.");
+            AnnounceHint("جاري رفع تقفيل الوردية للسيرفر…");
             RequestFocus(UiFocusTarget.OpeningFloat);
             DatabaseBackup.Create(_database);
-            _ = PushCloseShiftToErpAsync(closedLocal);
+
+            // Await ERP close so exiting the app right after Z-close does not leave the shift OPEN.
+            var uploaded = await PushCloseShiftToErpAsync(closedLocal).ConfigureAwait(true);
+            AnnounceHint(uploaded
+                ? "أُغلقت الوردية ورُفعت للسيرفر."
+                : "أُغلقت محلياً — التقفيل سيُرفع تلقائياً عند الاتصال.");
 
             if (printDoc is not null)
-                _ = PrintZReportAsync(printDoc);
+                await PrintZReportAsync(printDoc).ConfigureAwait(true);
         }
         catch (Exception ex)
         {
@@ -3104,7 +3109,7 @@ public partial class PosSession : ObservableObject
         }
     }
 
-    private async Task PushCloseShiftToErpAsync(ShiftRecord closedLocal)
+    private async Task<bool> PushCloseShiftToErpAsync(ShiftRecord closedLocal)
     {
         try
         {
@@ -3112,19 +3117,22 @@ public partial class PosSession : ObservableObject
                 ? _syncOptions.DeviceToken
                 : DeviceCredentialStore.Load();
             var origin = _syncOptions.BaseAddress ?? SyncOptions.DefaultErpOrigin;
-            await ShiftErpSync.TryPushCloseNowAsync(
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            var ok = await ShiftErpSync.TryPushCloseNowAsync(
                     _database,
                     origin,
                     token,
                     closedLocal,
-                    CancellationToken.None)
+                    cts.Token)
                 .ConfigureAwait(false);
             _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+            return ok;
         }
         catch (Exception ex)
         {
             PosLog.Error("push close shift to erp failed", ex);
             _syncWorker?.RequestImmediateTick(forceFullCatalog: false);
+            return false;
         }
     }
 

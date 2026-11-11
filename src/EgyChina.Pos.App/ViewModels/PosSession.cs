@@ -121,7 +121,10 @@ public partial class PosSession : ObservableObject
     /// <summary>Wire the background worker so «تحديث الأصناف» can pulse an immediate tick.</summary>
     public void BindSyncWorker(SyncWorker worker) => _syncWorker = worker;
 
-    /// <summary>Safe to apply a downloaded Velopack package (no open shift / tender).</summary>
+    /// <summary>
+    /// Safe to apply a downloaded Velopack package.
+    /// Open shift / tender / close-shift dialog block apply only — check &amp; download still work.
+    /// </summary>
     public bool CanApplyAppUpdate =>
         _currentShift is null && !IsTendering && !ShowCloseShift;
 
@@ -140,6 +143,7 @@ public partial class PosSession : ObservableObject
             return;
         UpdateHint = message.Trim();
         AnnounceHint(UpdateHint);
+        RefreshUpdateUiState();
     }
 
     [ObservableProperty]
@@ -153,26 +157,50 @@ public partial class PosSession : ObservableObject
 
     public bool HasUpdateHint => !string.IsNullOrWhiteSpace(UpdateHint);
 
+    public bool HasPendingAppUpdate => _updateService?.HasPendingUpdate == true;
+
     public bool CanCheckForUpdates => _updateService is not null && !IsCheckingUpdates;
 
+    public bool CanApplyPendingAppUpdate =>
+        HasPendingAppUpdate && CanApplyAppUpdate && !IsCheckingUpdates;
+
     public string CheckUpdatesButtonText =>
-        IsCheckingUpdates ? "جاري التحقق من التحديثات…" : "التحقق من وجود تحديثات";
+        IsCheckingUpdates ? "جاري التحقق / التنزيل…" : "التحقق من وجود تحديثات";
+
+    public string ApplyUpdateButtonText
+    {
+        get
+        {
+            var ver = _updateService?.PendingVersion;
+            return string.IsNullOrWhiteSpace(ver)
+                ? "تطبيق التحديث وإعادة التشغيل"
+                : $"تطبيق التحديث {ver} وإعادة التشغيل";
+        }
+    }
 
     partial void OnUpdateHintChanged(string value) =>
         OnPropertyChanged(nameof(HasUpdateHint));
 
     partial void OnIsCheckingUpdatesChanged(bool value)
     {
-        OnPropertyChanged(nameof(CanCheckForUpdates));
-        OnPropertyChanged(nameof(CheckUpdatesButtonText));
-        CheckForUpdatesCommand.NotifyCanExecuteChanged();
+        RefreshUpdateUiState();
     }
 
     public void BindUpdateService(PosUpdateService service)
     {
         _updateService = service;
+        RefreshUpdateUiState();
+    }
+
+    private void RefreshUpdateUiState()
+    {
+        OnPropertyChanged(nameof(HasPendingAppUpdate));
         OnPropertyChanged(nameof(CanCheckForUpdates));
+        OnPropertyChanged(nameof(CanApplyPendingAppUpdate));
+        OnPropertyChanged(nameof(CheckUpdatesButtonText));
+        OnPropertyChanged(nameof(ApplyUpdateButtonText));
         CheckForUpdatesCommand.NotifyCanExecuteChanged();
+        ApplyPendingAppUpdateCommand.NotifyCanExecuteChanged();
     }
 
     [ObservableProperty]
@@ -2689,9 +2717,16 @@ public partial class PosSession : ObservableObject
             if (printDoc is not null)
                 await PrintZReportAsync(printDoc).ConfigureAwait(true);
 
-            // Till is idle — apply a downloaded update if one is waiting.
+            // Till is idle — apply a downloaded update if one is waiting (no need to open a new shift).
+            RefreshUpdateUiState();
             if (_updateService?.TryApplyAfterShiftClose() == true)
                 return;
+
+            if (HasPendingAppUpdate)
+            {
+                AnnounceUpdateHint(
+                    "الوردية اتقفلت والتحديث جاهز. اضغط «تطبيق التحديث» من غير ما تفتح وردية جديدة.");
+            }
         }
         catch (Exception ex)
         {
@@ -3123,16 +3158,24 @@ public partial class PosSession : ObservableObject
         IsCheckingUpdates = true;
         UpdateHint = "جاري التحقق من وجود تحديثات…";
         AnnounceHint(UpdateHint);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(15));
         try
         {
-            await _updateService.CheckOnceAsync().ConfigureAwait(true);
-            if (string.IsNullOrWhiteSpace(UpdateHint) || UpdateHint.Contains("جاري التحقق", StringComparison.Ordinal))
+            var result = await _updateService.CheckOnceAsync(timeout.Token).ConfigureAwait(true);
+            UpdateHint = result.Message;
+            AnnounceHint(UpdateHint);
+            RefreshUpdateUiState();
+
+            if (result.Status == UpdateCheckStatus.DownloadedDeferred && _currentShift is not null)
             {
-                UpdateHint = _updateService.HasPendingUpdate
-                    ? "يوجد تحديث جاهز — سيُطبَّق بعد قفل الوردية."
-                    : "لا يوجد تحديث جديد حالياً.";
-                AnnounceHint(UpdateHint);
+                AnnounceHint(
+                    "الوردية المفتوحة تمنع تطبيق التحديث فقط. بعد ما يخلص التنزيل: أقفل الوردية ثم طبّق التحديث من غير ما تفتح وردية جديدة.");
             }
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateHint = "انتهت مهلة التنزيل. حاول مرة أخرى على شبكة أسرع.";
+            AnnounceHint(UpdateHint);
         }
         catch (Exception ex)
         {
@@ -3143,7 +3186,22 @@ public partial class PosSession : ObservableObject
         finally
         {
             IsCheckingUpdates = false;
+            RefreshUpdateUiState();
         }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanApplyPendingAppUpdate))]
+    private void ApplyPendingAppUpdate()
+    {
+        if (_updateService is null || !CanApplyPendingAppUpdate)
+            return;
+
+        if (_updateService.TryApplyNow())
+            return;
+
+        AnnounceUpdateHint(
+            "التحديث جاهز لكن تعذر تطبيقه الآن. تأكد إن مفيش وردية مفتوحة ثم أعد المحاولة.");
+        RefreshUpdateUiState();
     }
 
     private async Task PrintSaleAsync(string saleId, bool isReprint, bool kickDrawer)
@@ -3411,7 +3469,11 @@ public partial class PosSession : ObservableObject
 
     partial void OnNeedsLoginChanged(bool value) => RefreshCheckout();
 
-    partial void OnNeedsOpenShiftChanged(bool value) => RefreshCheckout();
+    partial void OnNeedsOpenShiftChanged(bool value)
+    {
+        RefreshCheckout();
+        RefreshUpdateUiState();
+    }
 
     private void HandleSyncChanged()
     {

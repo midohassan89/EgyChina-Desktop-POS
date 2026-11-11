@@ -4,8 +4,24 @@ using Velopack;
 
 namespace EgyChina.Pos.App.Services;
 
+public enum UpdateCheckStatus
+{
+    NotApplicable,
+    UpToDate,
+    DownloadedDeferred,
+    DownloadedApplied,
+    Failed,
+    Cancelled,
+}
+
+public sealed record UpdateCheckResult(
+    UpdateCheckStatus Status,
+    string Message,
+    string? TargetVersion = null);
+
 /// <summary>
 /// Background Velopack check/download. Apply only when the till is idle (no open shift / tender).
+/// Open shift blocks apply — not check/download.
 /// </summary>
 public sealed class PosUpdateService : IAsyncDisposable
 {
@@ -18,6 +34,7 @@ public sealed class PosUpdateService : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private Task? _loop;
     private UpdateInfo? _downloaded;
+    private int _lastAnnouncedProgress = -1;
 
     public PosUpdateService(
         PosUpdateSettings settings,
@@ -42,6 +59,15 @@ public sealed class PosUpdateService : IAsyncDisposable
         }
     }
 
+    public string? PendingVersion
+    {
+        get
+        {
+            lock (_gate)
+                return _downloaded?.TargetFullRelease?.Version?.ToString();
+        }
+    }
+
     public void Start()
     {
         if (_loop is not null)
@@ -50,20 +76,39 @@ public sealed class PosUpdateService : IAsyncDisposable
         _loop = Task.Run(() => LoopAsync(_cts.Token));
     }
 
-    public async Task CheckOnceAsync(CancellationToken cancellationToken = default)
+    public async Task<UpdateCheckResult> CheckOnceAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            await CheckAndDownloadAsync(cancellationToken).ConfigureAwait(false);
-            TryApplyIfSafe(announce: true);
+            var result = await CheckAndDownloadAsync(cancellationToken).ConfigureAwait(false);
+            if (result.Status is UpdateCheckStatus.DownloadedDeferred or UpdateCheckStatus.DownloadedApplied)
+            {
+                if (TryApplyIfSafe(announce: true))
+                {
+                    return new UpdateCheckResult(
+                        UpdateCheckStatus.DownloadedApplied,
+                        "يتوفر تحديث — سيتم إعادة تشغيل البرنامج.",
+                        result.TargetVersion);
+                }
+
+                return new UpdateCheckResult(
+                    UpdateCheckStatus.DownloadedDeferred,
+                    BuildDeferredMessage(result.TargetVersion),
+                    result.TargetVersion);
+            }
+
+            return result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            throw;
+            return new UpdateCheckResult(UpdateCheckStatus.Cancelled, "تم إلغاء التحقق من التحديثات.");
         }
         catch (Exception ex)
         {
             PosLog.Error("update check failed", ex);
+            return new UpdateCheckResult(
+                UpdateCheckStatus.Failed,
+                "تعذر التحقق من التحديثات. تحقق من الاتصال.");
         }
     }
 
@@ -71,14 +116,20 @@ public sealed class PosUpdateService : IAsyncDisposable
     public bool TryApplyAfterShiftClose() =>
         TryApplyIfSafe(announce: true);
 
+    /// <summary>Manual apply from the open-shift gate (no need to open a new shift).</summary>
+    public bool TryApplyNow() =>
+        TryApplyIfSafe(announce: true);
+
     private async Task LoopAsync(CancellationToken cancellationToken)
     {
-        // First check shortly after startup (UI already up).
         try
         {
             await Task.Delay(TimeSpan.FromSeconds(20), cancellationToken).ConfigureAwait(false);
-            await CheckAndDownloadAsync(cancellationToken).ConfigureAwait(false);
-            TryApplyIfSafe(announce: true);
+            var startup = await CheckAndDownloadAsync(cancellationToken).ConfigureAwait(false);
+            if (startup.Status is UpdateCheckStatus.DownloadedDeferred or UpdateCheckStatus.DownloadedApplied)
+                TryApplyIfSafe(announce: true);
+            else if (startup.Status == UpdateCheckStatus.Failed)
+                PosLog.Info($"startup update: {startup.Message}");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -94,8 +145,9 @@ public sealed class PosUpdateService : IAsyncDisposable
             try
             {
                 await Task.Delay(CheckInterval, cancellationToken).ConfigureAwait(false);
-                await CheckAndDownloadAsync(cancellationToken).ConfigureAwait(false);
-                TryApplyIfSafe(announce: false);
+                var hourly = await CheckAndDownloadAsync(cancellationToken).ConfigureAwait(false);
+                if (hourly.Status is UpdateCheckStatus.DownloadedDeferred or UpdateCheckStatus.DownloadedApplied)
+                    TryApplyIfSafe(announce: false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -108,12 +160,14 @@ public sealed class PosUpdateService : IAsyncDisposable
         }
     }
 
-    private async Task CheckAndDownloadAsync(CancellationToken cancellationToken)
+    private async Task<UpdateCheckResult> CheckAndDownloadAsync(CancellationToken cancellationToken)
     {
         if (!VelopackRuntimeInfo.IsWindows)
         {
             PosLog.Info("update skipped — not a Windows Velopack install");
-            return;
+            return new UpdateCheckResult(
+                UpdateCheckStatus.NotApplicable,
+                "التحديث التلقائي متاح على ويندوز فقط.");
         }
 
         UpdateManager mgr;
@@ -124,25 +178,32 @@ public sealed class PosUpdateService : IAsyncDisposable
         catch (Exception ex)
         {
             PosLog.Error("update manager create failed", ex);
-            return;
+            return new UpdateCheckResult(
+                UpdateCheckStatus.Failed,
+                "تعذر تهيئة خدمة التحديث.");
         }
 
         if (!mgr.IsInstalled)
         {
             PosLog.Info("update skipped — app is not an installed Velopack package (dev/portable)");
-            return;
+            return new UpdateCheckResult(
+                UpdateCheckStatus.NotApplicable,
+                "ثبّت البرنامج من Setup.exe عشان يشتغل التحديث التلقائي.");
         }
 
         UpdateInfo? info;
         try
         {
             PosLog.Info($"update check start channel={_settings.Channel} feed={_settings.FeedUrl}");
+            _announce("جاري التحقق من وجود تحديثات…");
             info = await mgr.CheckForUpdatesAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             PosLog.Error("update check transport failed", ex);
-            return;
+            return new UpdateCheckResult(
+                UpdateCheckStatus.Failed,
+                "تعذر الوصول لخادم التحديثات. تحقق من الإنترنت.");
         }
 
         if (info is null)
@@ -150,19 +211,51 @@ public sealed class PosUpdateService : IAsyncDisposable
             PosLog.Info("update check: no newer release");
             lock (_gate)
                 _downloaded = null;
-            return;
+            return new UpdateCheckResult(
+                UpdateCheckStatus.UpToDate,
+                "أنت على أحدث نسخة حالياً.");
         }
 
         var target = info.TargetFullRelease?.Version?.ToString() ?? "(unknown)";
         PosLog.Info($"update available target={target}");
+        _lastAnnouncedProgress = -1;
+        _announce($"جاري تنزيل التحديث {target}…");
 
         try
         {
-            await mgr.DownloadUpdatesAsync(info, cancelToken: cancellationToken).ConfigureAwait(false);
+            await mgr.DownloadUpdatesAsync(
+                    info,
+                    progress =>
+                    {
+                        if (progress < 0 || progress > 100)
+                            return;
+                        if (progress == _lastAnnouncedProgress)
+                            return;
+                        if (progress is not (0 or 100) && progress - _lastAnnouncedProgress < 10)
+                            return;
+                        _lastAnnouncedProgress = progress;
+                        _announce($"جاري تنزيل التحديث {target}… {progress}%");
+                    },
+                    cancelToken: cancellationToken)
+                .ConfigureAwait(false);
             lock (_gate)
                 _downloaded = info;
             PosLog.Info($"update downloaded target={target}");
-            _announce($"تم تنزيل تحديث {target} — سيُطبَّق بعد قفل الوردية.");
+
+            if (_canApplyNow())
+            {
+                return new UpdateCheckResult(
+                    UpdateCheckStatus.DownloadedApplied,
+                    $"تم تنزيل التحديث {target} — جاري التطبيق…",
+                    target);
+            }
+
+            var deferred = BuildDeferredMessage(target);
+            _announce(deferred);
+            return new UpdateCheckResult(
+                UpdateCheckStatus.DownloadedDeferred,
+                deferred,
+                target);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -171,7 +264,16 @@ public sealed class PosUpdateService : IAsyncDisposable
         catch (Exception ex)
         {
             PosLog.Error("update download failed", ex);
+            return new UpdateCheckResult(
+                UpdateCheckStatus.Failed,
+                $"تعذر تنزيل التحديث {target}. حاول مرة أخرى.");
         }
+    }
+
+    private static string BuildDeferredMessage(string? targetVersion)
+    {
+        var ver = string.IsNullOrWhiteSpace(targetVersion) ? "" : $" {targetVersion}";
+        return $"تم تنزيل التحديث{ver}. أقفل الوردية ثم اضغط «تطبيق التحديث» — من غير ما تفتح وردية جديدة.";
     }
 
     private bool TryApplyIfSafe(bool announce)
@@ -205,6 +307,8 @@ public sealed class PosUpdateService : IAsyncDisposable
         if (!_canApplyNow())
         {
             PosLog.Info("update ready but till busy — defer apply");
+            if (announce)
+                _announce(BuildDeferredMessage(pending.TargetFullRelease?.Version?.ToString()));
             return false;
         }
 
@@ -215,12 +319,14 @@ public sealed class PosUpdateService : IAsyncDisposable
             PosLog.Info(
                 $"applying update target={pending.TargetFullRelease?.Version}");
             var mgr = CreateManager();
-            mgr.ApplyUpdatesAndRestart(pending.TargetFullRelease);
+            mgr.ApplyUpdatesAndRestart(pending);
             return true;
         }
         catch (Exception ex)
         {
             PosLog.Error("update apply failed", ex);
+            if (announce)
+                _announce("تعذر تطبيق التحديث. أعد المحاولة بعد قفل الوردية.");
             return false;
         }
     }

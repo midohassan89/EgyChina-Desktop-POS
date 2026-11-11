@@ -1442,6 +1442,32 @@
       <StackPanel Spacing="12">
         <TextBlock Text="فتح وردية" FontSize="24" FontWeight="Bold" Foreground="#0F172A" />
         <TextBlock Text="{Binding CashierName}" Foreground="#64748B" />
+        <Border IsVisible="{Binding HasPendingAppUpdate}"
+                Background="#ECFDF5"
+                BorderBrush="#6EE7B7"
+                BorderThickness="1"
+                CornerRadius="10"
+                Padding="12">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding UpdateHint}"
+                       IsVisible="{Binding HasUpdateHint}"
+                       FontSize="13"
+                       Foreground="#065F46"
+                       TextWrapping="Wrap" />
+            <TextBlock Text="مفيش حاجة تفتح وردية عشان التحديث. طبّقه دلوقتي والبرنامج هيعيد التشغيل."
+                       FontSize="13"
+                       Foreground="#047857"
+                       TextWrapping="Wrap" />
+            <Button Content="{Binding ApplyUpdateButtonText}"
+                    Classes="pos-primary"
+                    Background="#059669"
+                    Command="{Binding ApplyPendingAppUpdateCommand}"
+                    IsEnabled="{Binding CanApplyPendingAppUpdate}"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    MinHeight="48" />
+          </StackPanel>
+        </Border>
         <TextBlock Text="نقدية الافتتاح (ج.م)" Foreground="#64748B" />
         <TextBox x:Name="OpeningFloatBox"
                  GotFocus="OnTouchInputGotFocus"
@@ -1698,11 +1724,24 @@
         </Border>
         <TextBlock Text="{Binding UpdateHint}" IsVisible="{Binding HasUpdateHint}"
                    FontSize="13" Foreground="#A7F3D0" TextWrapping="Wrap" />
+        <TextBlock Text="الوردية المفتوحة تمنع تطبيق التحديث فقط — التحقق والتنزيل يشتغلوا عادي."
+                   FontSize="12"
+                   Foreground="#94A3B8"
+                   TextWrapping="Wrap" />
         <Button Content="{Binding CheckUpdatesButtonText}"
                 Classes="pos-tender"
                 Background="#7C3AED"
                 Command="{Binding CheckForUpdatesCommand}"
                 IsEnabled="{Binding CanCheckForUpdates}"
+                HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                MinHeight="44" />
+        <Button Content="{Binding ApplyUpdateButtonText}"
+                Classes="pos-tender"
+                Background="#059669"
+                IsVisible="{Binding HasPendingAppUpdate}"
+                Command="{Binding ApplyPendingAppUpdateCommand}"
+                IsEnabled="{Binding CanApplyPendingAppUpdate}"
                 HorizontalAlignment="Stretch"
                 HorizontalContentAlignment="Center"
                 MinHeight="44" />

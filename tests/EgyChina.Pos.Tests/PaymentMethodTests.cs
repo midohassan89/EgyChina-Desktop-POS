@@ -49,7 +49,7 @@ public sealed class PaymentMethodTests : IDisposable
     {
         var database = new PosDatabase(Path.Combine(_directory, "pos.db"));
         database.Initialize();
-        Assert.Equal(9, database.GetSchemaVersion());
+        Assert.Equal(10, database.GetSchemaVersion());
 
         var auth = database.TryAuthenticatePin(PinHasher.BootstrapCashierPin);
         Assert.Equal(PinAuthStatus.Ok, auth.Status);

@@ -13,8 +13,10 @@ Never run these against the ERP Prisma database.
 | 6 | `006_payment_wallet.sql` | Payment methods include `wallet` |
 | 7 | `007_product_image.sql` | Remote `image_url` on product |
 | 8 | `008_product_category.sql` | Local `category` table + `product.category_id` |
+| 9 | `009_favorite_stable_keys.sql` | Favorites keep barcode and prisma id across catalog upserts |
+| 10 | `010_query_indexes.sql` | Indexes for recent sales, last sale, Z-report, and `sale_line.product_id` |
 
-Current schema version on a fresh init: **6**.
+Current schema version on a fresh init: **10**.
 
 Adding a migration:
 

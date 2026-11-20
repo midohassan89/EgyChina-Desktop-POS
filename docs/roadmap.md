@@ -86,6 +86,10 @@ Exit: a supervisor can run a Saturday shift on this app without opening `/pos` f
 
 Exit: two tills offline at once, both selling the same SKU, both syncing without duplicate receipts or lost baskets.
 
+## Later — plaintext staff PIN
+
+`GET /api/store/pos-staff` returns each cashier `pinCode` in plaintext (`LiveStaffSync`). The till hashes it on every pull. A later phase should stop that: the ERP sends a verifier the till can store and check, and the plaintext PIN is not on the wire. Do not log or persist the plaintext PIN. Skipping unchanged hashes and moving PBKDF2 off the database lock is separate performance work and is not in the index migration.
+
 ## Not in this product
 
 - A rewrite of `egychina-pos-app`.

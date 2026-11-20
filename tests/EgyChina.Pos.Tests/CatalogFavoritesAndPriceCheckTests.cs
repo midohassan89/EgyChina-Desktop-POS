@@ -30,7 +30,7 @@ public sealed class CatalogFavoritesAndPriceCheckTests : IDisposable
     {
         var database = new PosDatabase(Path.Combine(_directory, "fav-schema.db"));
         database.Initialize();
-        Assert.Equal(9, database.GetSchemaVersion());
+        Assert.Equal(10, database.GetSchemaVersion());
 
         var rice = database.FindByBarcode(PosDatabase.DemoRiceBarcode);
         Assert.NotNull(rice);

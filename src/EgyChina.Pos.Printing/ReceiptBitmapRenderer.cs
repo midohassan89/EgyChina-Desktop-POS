@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text;
 using EgyChina.Pos.Core;
+using EgyChina.Pos.Data;
 using QRCoder;
 using SkiaSharp;
 using SkiaSharp.HarfBuzz;
@@ -33,6 +34,7 @@ public static class ReceiptBitmapRenderer
 
     private static SKBitmap Draw(Layout layout)
     {
+        using var slow = PosLog.Time("print-render");
         var arabic = ResolveArabicTypeface();
         var cjk = ResolveCjkTypeface();
         var height = Math.Max(140, (int)Math.Ceiling(layout.TotalHeight) + 16);

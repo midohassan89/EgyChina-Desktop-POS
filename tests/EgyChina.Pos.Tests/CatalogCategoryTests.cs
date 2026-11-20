@@ -14,7 +14,7 @@ public sealed class CatalogCategoryTests
         {
             var database = new PosDatabase(path);
             database.Initialize();
-            Assert.Equal(9, database.GetSchemaVersion());
+            Assert.Equal(10, database.GetSchemaVersion());
 
             database.UpsertCategories(
             [

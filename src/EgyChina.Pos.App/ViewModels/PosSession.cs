@@ -1826,6 +1826,7 @@ public partial class PosSession : ObservableObject
 
     private void ReloadRecentSales()
     {
+        using var slow = PosLog.Time("recent-sales");
         RecentSales.Clear();
         foreach (var sale in _database.ListRecentCompletedSales(3))
             RecentSales.Add(sale);
@@ -3478,10 +3479,14 @@ public partial class PosSession : ObservableObject
     private void HandleSyncChanged()
     {
         var snap = _sync.Read();
-        var products = _database.ListActiveProducts();
+        IReadOnlyList<CatalogProduct> products;
+        using (PosLog.Time("catalog-load"))
+            products = _database.ListActiveProducts();
         var demo = _database.GetSetting("catalog.source") == "demo";
         void Apply()
         {
+            using var slow = PosLog.Time("catalog-ui");
+            slow.SetDetail($"products={products.Count.ToString(CultureInfo.InvariantCulture)}");
             IsOnline = snap.IsOnline;
             SyncMessage = snap.Message;
             PendingOutbox = snap.PendingOutbox;

@@ -70,7 +70,7 @@ public sealed class BackupAndLogTests : IDisposable
     {
         var database = new PosDatabase(Path.Combine(_directory, "pos.db"));
         database.Initialize();
-        Assert.Equal(9, database.GetSchemaVersion());
+        Assert.Equal(10, database.GetSchemaVersion());
 
         var backups = Path.Combine(_directory, "backups");
         var first = DatabaseBackup.Create(
@@ -119,5 +119,40 @@ public sealed class BackupAndLogTests : IDisposable
         var database = new PosDatabase(path);
         database.Initialize();
         Assert.Throws<InvalidOperationException>(() => database.BackupTo(path));
+    }
+
+    [Fact]
+    public void Initialize_logs_schema_version_and_row_counts()
+    {
+        var database = new PosDatabase(Path.Combine(_directory, "counts.db"));
+        database.Initialize();
+        var text = File.ReadAllText(Path.Combine(_directory, "logs", "pos.log"));
+        Assert.Contains("schema ready version=10", text, StringComparison.Ordinal);
+        Assert.Contains("sales=", text, StringComparison.Ordinal);
+        Assert.Contains("lines=", text, StringComparison.Ordinal);
+        Assert.Contains("products=", text, StringComparison.Ordinal);
+        Assert.Contains("outbox_pending=", text, StringComparison.Ordinal);
+        Assert.Contains("outbox_inflight=", text, StringComparison.Ordinal);
+        Assert.Contains("outbox_done=", text, StringComparison.Ordinal);
+        Assert.Contains("outbox_dead=", text, StringComparison.Ordinal);
+        Assert.Contains("db_bytes=", text, StringComparison.Ordinal);
+        Assert.Contains("optimize_ms=", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PosLog_Time_logs_only_when_over_threshold()
+    {
+        using (PosLog.Time("fast-op", thresholdMs: 60_000))
+        {
+        }
+
+        using (var slow = PosLog.Time("slow-op-test", thresholdMs: 0))
+            slow.SetDetail("count=1");
+
+        var text = File.ReadAllText(Path.Combine(_directory, "logs", "pos.log"));
+        Assert.Contains("slow-op name=slow-op-test", text, StringComparison.Ordinal);
+        Assert.Contains("count=1", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("name=fast-op", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("246810", text, StringComparison.Ordinal);
     }
 }

@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using EgyChina.Pos.Core;
 using Microsoft.Data.Sqlite;
@@ -49,7 +51,7 @@ public sealed class PosDatabase
     public string DatabasePath => _path;
 
     /// <summary>Highest embedded schema migration version shipped with this build.</summary>
-    public const int LatestSchemaVersion = 9;
+    public const int LatestSchemaVersion = 10;
 
     /// <summary>Read schema version without migrating. Returns 0 if the DB/file is missing or empty.</summary>
     public static int PeekSchemaVersion(string databasePath)
@@ -90,7 +92,22 @@ public sealed class PosDatabase
     public bool HasPendingMigrations() =>
         PeekSchemaVersion(_path) < LatestSchemaVersion;
 
-    public void Initialize()
+    /// <summary>
+    /// Test hook: after this migration script runs, and before it is marked, throw.
+    /// The open transaction rolls the script back. Path match keeps other databases safe.
+    /// </summary>
+    internal static string? DebugFailAfterMigrationFile { get; set; }
+
+    /// <summary>Database path that <see cref="DebugFailAfterMigrationFile"/> applies to.</summary>
+    internal static string? DebugFailAfterMigrationPath { get; set; }
+
+    public void Initialize() => Initialize(applyMigrations: true);
+
+    /// <param name="applyMigrations">
+    /// False opens the last committed schema and does not run pending scripts.
+    /// Used after a failed upgrade so the till can sell on the previous schema.
+    /// </param>
+    public void Initialize(bool applyMigrations)
     {
         lock (_gate)
         {
@@ -115,66 +132,81 @@ public sealed class PosDatabase
                 """);
 
             var version = ScalarLong(connection, "SELECT COALESCE(MAX(version), 0) FROM schema_migration");
-            if (version < 1)
+            if (!applyMigrations)
+            {
+                PosLog.Info(
+                    $"migration kept previous schema version={version.ToString(CultureInfo.InvariantCulture)}");
+            }
+
+            if (applyMigrations && version < 1)
             {
                 ApplyMigrationScript(connection, "001_init.sql");
                 MarkMigration(connection, 1, "init");
                 version = 1;
             }
 
-            if (version < 2)
+            if (applyMigrations && version < 2)
             {
                 ApplyMigrationScript(connection, "002_erp_product_link.sql");
                 MarkMigration(connection, 2, "erp-product-link");
                 version = 2;
             }
 
-            if (version < 3)
+            if (applyMigrations && version < 3)
             {
                 ApplyMigrationScript(connection, "003_cashier_lockout.sql");
                 MarkMigration(connection, 3, "cashier-lockout");
                 version = 3;
             }
 
-            if (version < 4)
+            if (applyMigrations && version < 4)
             {
                 ApplyMigrationScript(connection, "004_product_favorite.sql");
                 MarkMigration(connection, 4, "product-favorite");
                 version = 4;
             }
 
-            if (version < 5)
+            if (applyMigrations && version < 5)
             {
                 ApplyMigrationScript(connection, "005_held_cart.sql");
                 MarkMigration(connection, 5, "held-cart");
                 version = 5;
             }
 
-            if (version < 6)
+            if (applyMigrations && version < 6)
             {
                 ApplyMigrationScript(connection, "006_payment_wallet.sql");
                 MarkMigration(connection, 6, "payment-wallet");
                 version = 6;
             }
 
-            if (version < 7)
+            if (applyMigrations && version < 7)
             {
                 ApplyMigrationScript(connection, "007_product_image.sql");
                 MarkMigration(connection, 7, "product-image");
                 version = 7;
             }
 
-            if (version < 8)
+            if (applyMigrations && version < 8)
             {
                 ApplyMigrationScript(connection, "008_product_category.sql");
                 MarkMigration(connection, 8, "product-category");
                 version = 8;
             }
 
-            if (version < 9)
+            if (applyMigrations && version < 9)
             {
                 ApplyMigrationScript(connection, "009_favorite_stable_keys.sql");
                 MarkMigration(connection, 9, "favorite-stable-keys");
+                version = 9;
+            }
+
+            if (applyMigrations && version < 10)
+            {
+                ApplyMigrationScript(connection, "010_query_indexes.sql");
+                if (IsForcedMigrationFailure("010_query_indexes.sql"))
+                    throw new InvalidOperationException("migration forced failure 010_query_indexes.sql");
+                MarkMigration(connection, 10, "query-indexes");
             }
 
             EnsureTerminal(connection);
@@ -182,6 +214,11 @@ public sealed class PosDatabase
             EnsureBootstrapCashiers(connection);
             SeedDemoCatalogIfNeeded(connection);
             tx.Commit();
+
+            var optimizeStarted = Stopwatch.GetTimestamp();
+            Exec(connection, "PRAGMA optimize;");
+            var optimizeMs = (long)Stopwatch.GetElapsedTime(optimizeStarted).TotalMilliseconds;
+            LogSchemaReady(connection, optimizeMs);
         }
     }
 
@@ -344,12 +381,13 @@ public sealed class PosDatabase
         if (staff.Count == 0)
             return 0;
 
+        using var slow = PosLog.Time("staff-upsert");
+        var upserted = 0;
         lock (_gate)
         {
             using var connection = Open();
             using var tx = connection.BeginTransaction();
             var now = Now();
-            var upserted = 0;
             foreach (var row in staff)
             {
                 if (string.IsNullOrWhiteSpace(row.Id) || string.IsNullOrWhiteSpace(row.DisplayName))
@@ -410,8 +448,10 @@ public sealed class PosDatabase
             }
 
             tx.Commit();
-            return upserted;
         }
+
+        slow.SetDetail($"count={upserted.ToString(CultureInfo.InvariantCulture)}");
+        return upserted;
     }
 
     /// <summary>
@@ -904,12 +944,7 @@ public sealed class PosDatabase
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT id, total_minor FROM sale
-                WHERE status = 'completed'
-                ORDER BY completed_at DESC, receipt_no DESC
-                LIMIT 1
-                """;
+            command.CommandText = LastCompletedSaleSummarySql;
             using var reader = command.ExecuteReader();
             if (!reader.Read())
                 return null;
@@ -929,24 +964,7 @@ public sealed class PosDatabase
         {
             using var connection = Open();
             using var command = connection.CreateCommand();
-            command.CommandText = """
-                SELECT
-                  s.id,
-                  s.receipt_no,
-                  s.total_minor,
-                  s.sync_status,
-                  (
-                    SELECT o.status
-                    FROM outbox o
-                    WHERE o.aggregate_type = 'sale' AND o.aggregate_id = s.id
-                    ORDER BY o.created_at DESC
-                    LIMIT 1
-                  ) AS outbox_status
-                FROM sale s
-                WHERE s.status = 'completed'
-                ORDER BY s.completed_at DESC, s.receipt_no DESC
-                LIMIT $limit
-                """;
+            command.CommandText = RecentCompletedSalesSql;
             command.Parameters.AddWithValue("$limit", limit);
             using var reader = command.ExecuteReader();
             var list = new List<RecentSaleSummary>();
@@ -1148,6 +1166,7 @@ public sealed class PosDatabase
     /// </summary>
     public CatalogApplyResult ApplyCatalogFromErpJson(string json)
     {
+        using var slow = PosLog.Time("catalog-apply");
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         string? serverTime = null;
@@ -1223,6 +1242,8 @@ public sealed class PosDatabase
             tx.Commit();
         }
 
+        slow.SetDetail(
+            $"upserted={upserted.ToString(CultureInfo.InvariantCulture)} deactivated={deactivated.ToString(CultureInfo.InvariantCulture)}");
         return new CatalogApplyResult(upserted, deactivated, demoRemoved, serverTime);
     }
 
@@ -2107,13 +2128,7 @@ public sealed class PosDatabase
 
             using (var sales = connection.CreateCommand())
             {
-                sales.CommandText = """
-                    SELECT s.total_minor, IFNULL(s.note, ''), IFNULL(p.method, 'cash_egp')
-                    FROM sale s
-                    LEFT JOIN payment p ON p.sale_id = s.id
-                    WHERE s.shift_id = $shift AND s.status = 'completed'
-                    ORDER BY s.completed_at
-                    """;
+                sales.CommandText = ShiftZReportSalesSql;
                 sales.Parameters.AddWithValue("$shift", shiftId);
                 using var reader = sales.ExecuteReader();
                 while (reader.Read())
@@ -2410,6 +2425,7 @@ public sealed class PosDatabase
         if (isReturn && discountMinor > 0)
             throw new InvalidOperationException("لا يُطبَّق خصم الولاء على الاسترجاع.");
 
+        using var slow = PosLog.Time("complete-sale");
         long subtotal = 0;
         foreach (var line in lines)
         {
@@ -2723,6 +2739,18 @@ public sealed class PosDatabase
         Exec(connection, "PRAGMA busy_timeout=5000;");
         Exec(connection, "PRAGMA synchronous=NORMAL;");
         return connection;
+    }
+
+    private bool IsForcedMigrationFailure(string fileName)
+    {
+        if (!string.Equals(DebugFailAfterMigrationFile, fileName, StringComparison.Ordinal))
+            return false;
+        if (string.IsNullOrWhiteSpace(DebugFailAfterMigrationPath))
+            return false;
+        return string.Equals(
+            Path.GetFullPath(DebugFailAfterMigrationPath),
+            Path.GetFullPath(_path),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static void ApplyMigrationScript(SqliteConnection connection, string fileName)
@@ -3540,4 +3568,117 @@ public sealed class PosDatabase
     }
 
     private static string Now() => DateTimeOffset.UtcNow.ToString("O");
+
+    private const string LastCompletedSaleSummarySql = """
+        SELECT id, total_minor FROM sale
+        WHERE status = 'completed'
+        ORDER BY completed_at DESC, receipt_no DESC
+        LIMIT 1
+        """;
+
+    private const string RecentCompletedSalesSql = """
+        SELECT
+          s.id,
+          s.receipt_no,
+          s.total_minor,
+          s.sync_status,
+          (
+            SELECT o.status
+            FROM outbox o
+            WHERE o.aggregate_type = 'sale' AND o.aggregate_id = s.id
+            ORDER BY o.created_at DESC
+            LIMIT 1
+          ) AS outbox_status
+        FROM sale s
+        WHERE s.status = 'completed'
+        ORDER BY s.completed_at DESC, s.receipt_no DESC
+        LIMIT $limit
+        """;
+
+    private const string ShiftZReportSalesSql = """
+        SELECT s.total_minor, IFNULL(s.note, ''), IFNULL(p.method, 'cash_egp')
+        FROM sale s
+        LEFT JOIN payment p ON p.sale_id = s.id
+        WHERE s.shift_id = $shift AND s.status = 'completed'
+        ORDER BY s.completed_at
+        """;
+
+    /// <summary>
+    /// Query plans for the three reads migration 010 exists to serve.
+    /// </summary>
+    public IReadOnlyList<HotQueryPlan> ExplainHotReadPlans()
+    {
+        lock (_gate)
+        {
+            using var connection = Open();
+            return
+            [
+                new HotQueryPlan("recent-sales", Explain(connection, RecentCompletedSalesSql, ("$limit", 3))),
+                new HotQueryPlan("last-sale", Explain(connection, LastCompletedSaleSummarySql)),
+                new HotQueryPlan("z-report", Explain(connection, ShiftZReportSalesSql, ("$shift", "plan"))),
+            ];
+        }
+    }
+
+    private void LogSchemaReady(SqliteConnection connection, long optimizeMs)
+    {
+        var schema = ScalarLong(connection, "SELECT COALESCE(MAX(version), 0) FROM schema_migration");
+        var sales = ScalarLong(connection, "SELECT COUNT(*) FROM sale");
+        var lines = ScalarLong(connection, "SELECT COUNT(*) FROM sale_line");
+        var products = ScalarLong(connection, "SELECT COUNT(*) FROM product");
+        var pending = ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'pending'");
+        var inflight = ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'inflight'");
+        var done = ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'done'");
+        var dead = ScalarLong(connection, "SELECT COUNT(*) FROM outbox WHERE status = 'dead'");
+        long dbBytes = 0;
+        try
+        {
+            if (File.Exists(_path))
+                dbBytes = new FileInfo(_path).Length;
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        PosLog.Info(
+            "schema ready"
+            + $" version={schema.ToString(CultureInfo.InvariantCulture)}"
+            + $" sales={sales.ToString(CultureInfo.InvariantCulture)}"
+            + $" lines={lines.ToString(CultureInfo.InvariantCulture)}"
+            + $" products={products.ToString(CultureInfo.InvariantCulture)}"
+            + $" outbox_pending={pending.ToString(CultureInfo.InvariantCulture)}"
+            + $" outbox_inflight={inflight.ToString(CultureInfo.InvariantCulture)}"
+            + $" outbox_done={done.ToString(CultureInfo.InvariantCulture)}"
+            + $" outbox_dead={dead.ToString(CultureInfo.InvariantCulture)}"
+            + $" db_bytes={dbBytes.ToString(CultureInfo.InvariantCulture)}"
+            + $" optimize_ms={optimizeMs.ToString(CultureInfo.InvariantCulture)}");
+    }
+
+    private static string Explain(
+        SqliteConnection connection,
+        string sql,
+        params (string Name, object Value)[] parameters)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "EXPLAIN QUERY PLAN " + sql;
+        foreach (var (name, value) in parameters)
+            command.Parameters.AddWithValue(name, value);
+
+        using var reader = command.ExecuteReader();
+        var lines = new StringBuilder();
+        while (reader.Read())
+        {
+            if (lines.Length > 0)
+                lines.Append('\n');
+            lines.Append(reader.GetString(3));
+        }
+
+        return lines.ToString();
+    }
 }
+
+/// <summary>One <c>EXPLAIN QUERY PLAN</c> detail block for a named hot read.</summary>
+public readonly record struct HotQueryPlan(string Name, string Text);

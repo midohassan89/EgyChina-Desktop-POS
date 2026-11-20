@@ -8,6 +8,9 @@ namespace EgyChina.Pos.Sync;
 /// <summary>
 /// Pulls ERP staff PINs from <c>GET /api/store/pos-staff</c> into the local cashier table
 /// (same pattern as live product catalog — no manager PIN dialog).
+/// Open item for a later phase: that route returns <c>pinCode</c> in plaintext. The till should
+/// receive a verifier it can store, and should not keep seeing or re-hashing the plaintext PIN.
+/// Do not log the PIN.
 /// </summary>
 public static class LiveStaffSync
 {

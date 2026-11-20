@@ -26,6 +26,38 @@ public static class ProductImageCache
         return dir;
     }
 
+    public readonly record struct ProductImageCacheFootprint(int Files, long Bytes);
+
+    /// <summary>File count and bytes of decoded shelf images. Sidecar <c>.src</c> stamps are excluded.</summary>
+    public static ProductImageCacheFootprint Measure()
+    {
+        var directory = CacheDirectory();
+        var files = 0;
+        long bytes = 0;
+        foreach (var path in Directory.EnumerateFiles(directory))
+        {
+            if (path.EndsWith(".src", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                var info = new FileInfo(path);
+                if (info.Length <= 0)
+                    continue;
+                files++;
+                bytes += info.Length;
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return new ProductImageCacheFootprint(files, bytes);
+    }
+
     public static string? TryLocalPath(string productId)
     {
         if (string.IsNullOrWhiteSpace(productId))

@@ -14,5 +14,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EgyChina.Pos.Core\EgyChina.Pos.Core.csproj" />
+    <ProjectReference Include="..\EgyChina.Pos.Data\EgyChina.Pos.Data.csproj" />
   </ItemGroup>
 </Project>

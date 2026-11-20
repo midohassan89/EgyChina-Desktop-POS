@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
@@ -103,21 +104,14 @@ public partial class App : Application
         }
 
         _database = new PosDatabase(PosPaths.DatabaseFile());
-        // Migrations must never run without a snapshot of the previous schema.
-        if (File.Exists(_database.DatabasePath) && _database.HasPendingMigrations())
-        {
-            var preMigrate = DatabaseBackup.Create(_database);
-            if (preMigrate.Created)
-                PosLog.Info($"pre-migration backup path={preMigrate.Path}");
-            else
-                PosLog.Error($"pre-migration backup skipped: {LogRedactor.Redact(preMigrate.Error)}");
-        }
-
-        _database.Initialize();
+        // Pending migrations are backed up first. A failed script restores that
+        // snapshot and the cashier still opens on the previous schema.
+        SchemaUpgrade.ApplyKeepingPreviousSchema(_database, PosPaths.BackupDirectory());
         var products = _database.ListActiveProducts();
         var demo = _database.GetSetting("catalog.source") == "demo";
+        var images = ProductImageCache.Measure();
         PosLog.Info(
-            $"database ready path={_database.DatabasePath} schema={_database.GetSchemaVersion()} products={products.Count} source={(demo ? "demo" : "other")}");
+            $"database ready path={_database.DatabasePath} schema={_database.GetSchemaVersion()} products={products.Count} source={(demo ? "demo" : "other")} images_files={images.Files.ToString(CultureInfo.InvariantCulture)} images_bytes={images.Bytes.ToString(CultureInfo.InvariantCulture)}");
 
         var backup = DatabaseBackup.Create(_database);
         if (!backup.Created)

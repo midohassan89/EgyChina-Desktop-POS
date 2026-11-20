@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Globalization;
+
 namespace EgyChina.Pos.Data;
 
 /// <summary>
@@ -63,6 +66,13 @@ public static class PosLog
     public static void Info(string message) => Write("INFO", message, null);
 
     public static void Error(string message, Exception? exception = null) => Write("ERROR", message, exception);
+
+    /// <summary>
+    /// Times one operation and writes <c>slow-op</c> when it exceeds <paramref name="thresholdMs"/>.
+    /// The line is a name and a duration only — do not put PINs, payloads, or tokens in <paramref name="name"/>.
+    /// </summary>
+    public static SlowOp Time(string name, int thresholdMs = SlowOp.DefaultThresholdMs) =>
+        new(name, thresholdMs);
 
     public static int PurgeOldFiles(DateTimeOffset? now = null)
     {
@@ -172,5 +182,41 @@ public static class PosLog
             {
             }
         }
+    }
+}
+
+/// <summary>Stopwatch scope for <see cref="PosLog.Time"/>. Logs only when the threshold is crossed.</summary>
+public sealed class SlowOp : IDisposable
+{
+    public const int DefaultThresholdMs = 100;
+
+    private readonly string _name;
+    private readonly int _thresholdMs;
+    private readonly long _start;
+    private string _detail = string.Empty;
+    private int _disposed;
+
+    internal SlowOp(string name, int thresholdMs)
+    {
+        _name = name;
+        _thresholdMs = thresholdMs;
+        _start = Stopwatch.GetTimestamp();
+    }
+
+    /// <summary>Extra counters appended to the slow-op line. Not written when the call is fast.</summary>
+    public void SetDetail(string detail) => _detail = detail ?? string.Empty;
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
+        var elapsedMs = Stopwatch.GetElapsedTime(_start).TotalMilliseconds;
+        if (elapsedMs < _thresholdMs)
+            return;
+
+        var ms = ((long)elapsedMs).ToString(CultureInfo.InvariantCulture);
+        var suffix = string.IsNullOrEmpty(_detail) ? string.Empty : " " + _detail.Trim();
+        PosLog.Info($"slow-op name={_name} ms={ms}{suffix}");
     }
 }
